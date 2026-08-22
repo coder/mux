@@ -11,7 +11,7 @@ import {
   stripOrphanedToolCalls,
 } from "./modelMessageTransform";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 describe("modelMessageTransform", () => {
   describe("transformModelMessages", () => {
@@ -634,7 +634,7 @@ describe("modelMessageTransform", () => {
 
   describe("addInterruptedSentinel", () => {
     it("should insert user message after partial assistant message", () => {
-      const messages: MuxMessage[] = [
+      const messages: XumMessage[] = [
         {
           id: "user-1",
           role: "user",
@@ -663,7 +663,7 @@ describe("modelMessageTransform", () => {
     });
 
     it("should not insert sentinel for non-partial assistant messages", () => {
-      const messages: MuxMessage[] = [
+      const messages: XumMessage[] = [
         {
           id: "user-1",
           role: "user",
@@ -686,7 +686,7 @@ describe("modelMessageTransform", () => {
     });
 
     it("should insert sentinel for reasoning-only partial messages", () => {
-      const messages: MuxMessage[] = [
+      const messages: XumMessage[] = [
         {
           id: "user-1",
           role: "user",
@@ -710,7 +710,7 @@ describe("modelMessageTransform", () => {
     });
 
     it("should handle multiple partial messages", () => {
-      const messages: MuxMessage[] = [
+      const messages: XumMessage[] = [
         {
           id: "user-1",
           role: "user",
@@ -751,7 +751,7 @@ describe("modelMessageTransform", () => {
     });
 
     it("should skip sentinel when user message follows partial", () => {
-      const messages: MuxMessage[] = [
+      const messages: XumMessage[] = [
         {
           id: "user-1",
           role: "user",
@@ -1045,7 +1045,7 @@ describe("stripOrphanedToolCalls", () => {
 
 describe("injectAgentTransition", () => {
   it("should inject transition message when agent changes", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1086,7 +1086,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should not inject transition when agent is the same", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1115,7 +1115,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should not inject transition when no previous agent exists", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1132,7 +1132,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should not inject transition when no agent specified", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1161,7 +1161,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should handle conversation with no user messages", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -1178,7 +1178,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should include tool names in transition message when provided", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1215,7 +1215,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should handle agent transition without tools parameter (backward compatibility)", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1247,7 +1247,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should handle agent transition with empty tool list", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1279,7 +1279,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should include plan content when transitioning from plan to exec", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1324,7 +1324,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should NOT include plan content when transitioning from exec to plan", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1360,7 +1360,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should NOT include plan content when no plan content provided", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1395,7 +1395,7 @@ describe("injectAgentTransition", () => {
   });
 
   it("should include both tools and plan content in transition message", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1432,7 +1432,7 @@ describe("injectAgentTransition", () => {
 
 describe("filterEmptyAssistantMessages", () => {
   it("should filter out assistant messages with only reasoning when preserveReasoningOnly=false", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1455,7 +1455,7 @@ describe("filterEmptyAssistantMessages", () => {
   });
 
   it("should filter out assistant messages with empty parts array (placeholder messages)", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1487,7 +1487,7 @@ describe("filterEmptyAssistantMessages", () => {
   });
 
   it("should preserve assistant messages with only reasoning when preserveReasoningOnly=true", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1511,7 +1511,7 @@ describe("filterEmptyAssistantMessages", () => {
   });
 
   it("should preserve assistant messages with text content regardless of preserveReasoningOnly", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -1535,7 +1535,7 @@ describe("filterEmptyAssistantMessages", () => {
   });
 
   it("should filter out assistant messages with only incomplete tool calls (input-available)", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1571,7 +1571,7 @@ describe("filterEmptyAssistantMessages", () => {
   });
 
   it("should preserve assistant messages with completed tool calls (output-available)", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1602,7 +1602,7 @@ describe("filterEmptyAssistantMessages", () => {
     const emptyTexts = ["", "\n\n", "   "];
 
     for (const text of emptyTexts) {
-      const messages: MuxMessage[] = [
+      const messages: XumMessage[] = [
         {
           id: "assistant-1",
           role: "assistant",
@@ -1623,7 +1623,7 @@ describe("filterEmptyAssistantMessages", () => {
 
   it("should preserve messages interrupted during thinking phase when preserveReasoningOnly=true", () => {
     // Simulates an interrupted stream during Extended Thinking
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1653,7 +1653,7 @@ describe("filterEmptyAssistantMessages", () => {
 
 describe("injectPostCompactionAttachments", () => {
   it("inserts after the compaction summary and enforces a size budget", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "compaction-summary",
         role: "assistant",
@@ -1702,7 +1702,7 @@ describe("injectPostCompactionAttachments", () => {
   });
 
   it("falls back to a legacy compacted summary when durable boundary metadata is missing", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "legacy-summary",
         role: "assistant",
@@ -1750,7 +1750,7 @@ describe("injectPostCompactionAttachments", () => {
   });
 
   it("appends at the end when no compaction indicators are present", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -1793,7 +1793,7 @@ describe("injectPostCompactionAttachments", () => {
   });
 
   it("inserts after the latest compaction boundary when multiple summaries exist", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "summary-1",
         role: "assistant",

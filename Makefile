@@ -1,6 +1,6 @@
 # Build System
 # ============
-# This Makefile orchestrates the mux build process.
+# This Makefile orchestrates the Xum build process.
 #
 # Quick Start:
 #   make help          - Show all available targets
@@ -85,8 +85,8 @@ include fmt.mk
 .PHONY: docs-server check-docs-links
 .PHONY: storybook storybook-run storybook-build test-storybook
 .PHONY: benchmark-terminal
-.PHONY: ensure-deps rebuild-native mux
-.PHONY: check-eager-imports check-bundle-size check-startup
+.PHONY: ensure-deps rebuild-native xum mux
+.PHONY: check-eager-imports check-bundle-size check-startup check-xum-branding
 
 # Use the package binary instead of its internal path so native-preview can change wrappers safely.
 TSGO := bun run tsgo
@@ -139,13 +139,16 @@ rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty, Duc
 	@npx @electron/rebuild -f -m node_modules/@duckdb/node-bindings
 	@echo "Native modules rebuilt successfully"
 
-# Run compiled CLI with trailing arguments (builds only if missing)
-mux: ## Run the compiled mux CLI (e.g., make mux server --port 3000)
+# Run compiled CLI with trailing arguments (builds only if missing).
+xum: ## Run the compiled Xum CLI (e.g., make xum server --port 3000)
 	@test -f dist/cli/index.js -a -f dist/cli/api.mjs || $(MAKE) build-main
-	@node dist/cli/index.js $(filter-out $@,$(MAKECMDGOALS))
+	@node dist/cli/index.js $(filter-out xum mux,$(MAKECMDGOALS))
 
-# Catch unknown targets passed to mux (prevents "No rule to make target" errors)
-ifneq ($(filter mux,$(MAKECMDGOALS)),)
+# Compatibility target for scripts written before the CLI target rename.
+mux: xum ## Legacy alias for `make xum`
+
+# Catch trailing CLI arguments so make forwards them instead of treating them as targets.
+ifneq ($(filter xum mux,$(MAKECMDGOALS)),)
 %:
 	@:
 endif
@@ -348,7 +351,11 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 # verification stay in static-check-full so local validation remains responsive.
 static-check: lint typecheck fmt-check check-eager-imports check-code-docs-links lint-shellcheck lint-hadolint ## Run fast local static checks
 
-static-check-full: static-check check-bench-agent check-docs-links ## Run the full CI static check suite
+static-check-full: static-check check-bench-agent check-docs-links check-xum-branding ## Run the full CI static check suite
+
+check-xum-branding: ## Audit project-owned rename surfaces against the explicit compatibility allowlist
+	@python3 -m unittest scripts.audit_xum_branding_test
+	@python3 scripts/audit_xum_branding.py
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(WORKFLOW_RUNTIME_SOURCES_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -565,11 +572,11 @@ benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_HARBOR_PACKAGE
 	echo "Using Daytona package constraint: $$HARBOR_DAYTONA_PACKAGE"; \
 	echo "Using timeout: $$TB_TIMEOUT seconds"; \
 	echo "Running Terminal-Bench with dataset $$TB_DATASET (concurrency: $$TB_CONCURRENCY)"; \
-	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
+	export XUM_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
 	uvx --from "$$HARBOR_PACKAGE" --with "$$HARBOR_DAYTONA_PACKAGE" python -c 'import importlib.metadata as m; print("Resolved Harbor package:", m.version("harbor")); print("Resolved Daytona package:", m.version("daytona"))'; \
 	uvx --from "$$HARBOR_PACKAGE" --with "$$HARBOR_DAYTONA_PACKAGE" harbor run \
 		--dataset "$$TB_DATASET" \
-		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
+		--agent-import-path benchmarks.terminal_bench.xum_agent:XumAgent \
 		--agent-kwarg timeout=$$TB_TIMEOUT \
 		--n-concurrent $$TB_CONCURRENCY \
 		$$ENV_FLAG \

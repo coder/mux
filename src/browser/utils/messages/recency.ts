@@ -1,4 +1,4 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { computeRecencyFromMessages } from "@/common/utils/recency";
 
 /**
@@ -12,7 +12,7 @@ import { computeRecencyFromMessages } from "@/common/utils/recency";
  * - Last compacted message timestamp (fallback for compacted histories)
  */
 export function computeRecencyTimestamp(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   createdAt?: string,
   unarchivedAt?: string
 ): number | null {

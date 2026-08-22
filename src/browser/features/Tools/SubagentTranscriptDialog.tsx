@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { DisplayedMessage, MuxMessage } from "@/common/types/message";
+import type { DisplayedMessage, XumMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ChatMuxMessage } from "@/common/orpc/types";
+import type { ChatXumMessage } from "@/common/orpc/types";
 import { useAPI } from "@/browser/contexts/API";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import {
@@ -83,7 +83,7 @@ const SubagentTranscriptViewer: React.FC<{
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<MuxMessage[] | null>(null);
+  const [messages, setMessages] = useState<XumMessage[] | null>(null);
 
   useEffect(() => {
     // TaskToolCall renders this dialog component for each completed task even while closed.
@@ -146,7 +146,7 @@ const SubagentTranscriptViewer: React.FC<{
     aggregator.setShowAllMessages(true);
 
     for (const msg of messages) {
-      const event: ChatMuxMessage = { ...msg, type: "message" };
+      const event: ChatXumMessage = { ...msg, type: "message" };
       aggregator.handleMessage(event);
     }
 

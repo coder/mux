@@ -84,7 +84,7 @@ FROM node:22-slim
 # OCI image metadata — allows registries (GHCR, Docker Hub) to link the image
 # back to the source repository and display version/description.
 ARG VERSION=dev
-LABEL org.opencontainers.image.source="https://github.com/coder/mux"
+LABEL org.opencontainers.image.source="https://github.com/coder/xum"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.description="Xum server — parallel AI agent workflows"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
@@ -141,8 +141,9 @@ ENV MUX_ROOT=/root/.mux
 EXPOSE 3000
 
 # Health check
+# Exec form avoids invoking a shell and preserves the JavaScript probe as one argument.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+    CMD ["node", "-e", "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 
 # Run bundled xum server
 # --host 0.0.0.0: bind to all interfaces (required for Docker networking)

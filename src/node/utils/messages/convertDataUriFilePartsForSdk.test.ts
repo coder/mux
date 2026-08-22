@@ -1,11 +1,11 @@
 import { describe, expect, it } from "@jest/globals";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { convertDataUriFilePartsForSdk } from "./convertDataUriFilePartsForSdk";
 
 describe("convertDataUriFilePartsForSdk", () => {
   it("keeps base64 data URI file parts as canonical data URLs", () => {
     const base64 = Buffer.from("png-bytes", "utf8").toString("base64");
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "u1",
         role: "user",
@@ -34,7 +34,7 @@ describe("convertDataUriFilePartsForSdk", () => {
   });
 
   it("returns the original array when there are no data URI file parts", () => {
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "u2",
         role: "user",
@@ -51,7 +51,7 @@ describe("convertDataUriFilePartsForSdk", () => {
 
   it("does not rewrite assistant messages", () => {
     const base64 = Buffer.from("assistant", "utf8").toString("base64");
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a1",
         role: "assistant",
@@ -67,7 +67,7 @@ describe("convertDataUriFilePartsForSdk", () => {
     const pngBase64 = Buffer.from("png", "utf8").toString("base64");
     const pdfBase64 = Buffer.from("pdf", "utf8").toString("base64");
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "u3",
         role: "user",
@@ -97,7 +97,7 @@ describe("convertDataUriFilePartsForSdk", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>';
     const encodedSvg = encodeURIComponent(svg);
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "u4",
         role: "user",
@@ -123,7 +123,7 @@ describe("convertDataUriFilePartsForSdk", () => {
   });
 
   it("throws for malformed data URIs missing a comma separator", () => {
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "u5",
         role: "user",

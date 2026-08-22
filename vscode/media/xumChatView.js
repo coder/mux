@@ -10,7 +10,8 @@
 (function () {
   "use strict";
 
-  const traceId = (document.body && document.body.dataset && document.body.dataset.muxTraceId) || "unknown";
+  const traceId =
+    (document.body && document.body.dataset && document.body.dataset.muxTraceId) || "unknown";
   const startedAtMs = Date.now();
 
   const statusEl = document.getElementById("status");
@@ -139,7 +140,9 @@
       openBtn.disabled = !hasSelection;
     }
 
-    const canChat = Boolean(state.connectionStatus && state.connectionStatus.mode === "api" && hasSelection);
+    const canChat = Boolean(
+      state.connectionStatus && state.connectionStatus.mode === "api" && hasSelection
+    );
 
     if (sendBtn) {
       sendBtn.disabled = !canChat;
@@ -150,8 +153,8 @@
       inputEl.placeholder = canChat
         ? "Message mux…"
         : hasSelection
-          ? "Chat requires mux server connection."
-          : "Select a mux workspace to chat.";
+          ? "Chat requires Xum server connection."
+          : "Select an Xum workspace to chat.";
     }
   }
 
@@ -166,7 +169,8 @@
 
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = state.workspaces.length > 0 ? "Select workspace…" : "No workspaces found";
+    placeholder.textContent =
+      state.workspaces.length > 0 ? "Select workspace…" : "No workspaces found";
     workspaceSelectEl.appendChild(placeholder);
 
     for (const ws of state.workspaces) {
@@ -185,7 +189,7 @@
 
     const parts = [];
     if (status.mode === "api") {
-      parts.push("Connected to mux server");
+      parts.push("Connected to Xum server");
       if (status.baseUrl) {
         parts.push(status.baseUrl);
       }
@@ -315,7 +319,12 @@
   // --- Error handlers
 
   window.addEventListener("error", (ev) => {
-    appendDebug("window.error", { message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno });
+    appendDebug("window.error", {
+      message: ev.message,
+      filename: ev.filename,
+      lineno: ev.lineno,
+      colno: ev.colno,
+    });
     postToExtension({
       type: "debugLog",
       message: "window.error",
@@ -356,7 +365,11 @@
     clearInterval(readyInterval);
 
     appendDebug("handshake complete", { reason, attempts: readyAttempts });
-    postToExtension({ type: "debugLog", message: "handshake complete", data: { reason, attempts: readyAttempts } });
+    postToExtension({
+      type: "debugLog",
+      message: "handshake complete",
+      data: { reason, attempts: readyAttempts },
+    });
   }
 
   // Initial ready
@@ -383,7 +396,11 @@
       return;
     }
 
-    if (msg.type === "connectionStatus" || msg.type === "workspaces" || msg.type === "setSelectedWorkspace") {
+    if (
+      msg.type === "connectionStatus" ||
+      msg.type === "workspaces" ||
+      msg.type === "setSelectedWorkspace"
+    ) {
       markHandshakeComplete(msg.type);
     }
 

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { createMuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import { createXumMessage, type XumMessageMetadata } from "@/common/types/message";
 import { buildDisplayedMessagesForMessage } from "./displayedMessageBuilder";
 
-function buildUserRow(muxMetadata: MuxMessageMetadata) {
-  const message = createMuxMessage("wake-1", "user", "A background bash monitor matched output.", {
+function buildUserRow(muxMetadata: XumMessageMetadata) {
+  const message = createXumMessage("wake-1", "user", "A background bash monitor matched output.", {
     historySequence: 1,
     synthetic: true,
     uiVisible: true,
@@ -42,7 +42,7 @@ describe("buildDisplayedMessagesForMessage bash monitor wake metadata", () => {
     ["empty records", { type: "bash-monitor-wake", records: [] }],
     ["malformed record entry", { type: "bash-monitor-wake", records: [null, { kind: "match" }] }],
   ])("falls back to full-text rendering for %s", (_label, malformed) => {
-    const row = buildUserRow(malformed as unknown as MuxMessageMetadata);
+    const row = buildUserRow(malformed as unknown as XumMessageMetadata);
     expect(row.bashMonitorWake).toBeUndefined();
     expect(row.content).toBe("A background bash monitor matched output.");
   });

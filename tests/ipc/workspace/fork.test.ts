@@ -28,12 +28,12 @@ import {
 import type { RuntimeConfig } from "../../../src/common/types/runtime";
 import { getContainerName } from "../../../src/node/runtime/DockerRuntime";
 import { HistoryService } from "../../../src/node/services/historyService";
-import { createMuxMessage, type MuxMessage } from "../../../src/common/types/message";
+import { createXumMessage, type XumMessage } from "../../../src/common/types/message";
 import assert from "node:assert";
 
 /** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
 async function collectFullHistory(service: HistoryService, workspaceId: string) {
-  const messages: MuxMessage[] = [];
+  const messages: XumMessage[] = [];
   const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
     messages.push(...chunk);
   });
@@ -218,8 +218,8 @@ describeIntegration("Workspace fork", () => {
             const historyService = new HistoryService(env.config);
             const uniqueWord = `testword-${Date.now()}`;
             const historyMessages = [
-              createMuxMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
-              createMuxMessage(
+              createXumMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
+              createXumMessage(
                 "msg-2",
                 "assistant",
                 `I will remember the word "${uniqueWord}".`,
@@ -384,8 +384,8 @@ describeIntegration("Workspace fork", () => {
               const partial = await historyService.readPartial(sourceWorkspaceId);
               if (!partial) return false;
               partialText = (partial.parts ?? [])
-                .filter((part: MuxMessage["parts"][number]) => part.type === "text")
-                .map((part: MuxMessage["parts"][number]) => (part.type === "text" ? part.text : ""))
+                .filter((part: XumMessage["parts"][number]) => part.type === "text")
+                .map((part: XumMessage["parts"][number]) => (part.type === "text" ? part.text : ""))
                 .join(" ")
                 .trim();
               return partialText.length > 0;
@@ -689,8 +689,8 @@ describeIntegration("Workspace fork", () => {
         const historyService = new HistoryService(env.config);
         const uniqueWord = `localtest-${Date.now()}`;
         const historyMessages = [
-          createMuxMessage("msg-1", "user", `Remember this local word: ${uniqueWord}`, {}),
-          createMuxMessage(
+          createXumMessage("msg-1", "user", `Remember this local word: ${uniqueWord}`, {}),
+          createXumMessage(
             "msg-2",
             "assistant",
             `I will remember the local word "${uniqueWord}".`,

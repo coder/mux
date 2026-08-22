@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 
 import { extractLoadedSkillSnapshotsFromMessages } from "./loadedSkillSnapshots";
@@ -10,7 +10,7 @@ function createAgentSkillReadToolMessage(args: {
   skillName: string;
   body: string;
   scope?: "project" | "global" | "built-in";
-}): MuxMessage {
+}): XumMessage {
   const scope = args.scope ?? "project";
   return {
     id: args.id,
@@ -47,9 +47,9 @@ function createSyntheticSkillSnapshotMessage(args: {
   skillName: string;
   body: string;
   scope?: "project" | "global" | "built-in";
-}): MuxMessage {
+}): XumMessage {
   const scope = args.scope ?? "project";
-  return createMuxMessage(
+  return createXumMessage(
     args.id,
     "user",
     renderAgentSkillSnapshotText({

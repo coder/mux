@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { Ok, Err } from "@/common/types/result";
 import type { AIService, StreamMessageOptions } from "@/node/services/aiService";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
@@ -133,7 +133,7 @@ describe("AgentSession.setActiveTurnThinkingLevel", () => {
   });
 
   it("clears the holder when an onAccepted failure aborts the turn before streaming", async () => {
-    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const streamMessage = mock((_history: XumMessage[]) => Promise.resolve(Ok(undefined)));
     const { session, cleanup } = await createAgentSessionHarness({
       workspaceId: "thinking-override-onaccepted-failure",
       aiServiceOverrides: {

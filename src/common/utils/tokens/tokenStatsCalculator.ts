@@ -6,7 +6,7 @@
  * For renderer-safe usage utilities, use displayUsage.ts instead.
  */
 
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type { ChatStats, TokenConsumer } from "@/common/types/chatStats";
@@ -163,7 +163,7 @@ export interface TokenCountJob {
  * Creates all token counting jobs from messages
  * Jobs are executed immediately (promises start running)
  */
-function createTokenCountingJobs(messages: MuxMessage[], tokenizer: Tokenizer): TokenCountJob[] {
+function createTokenCountingJobs(messages: XumMessage[], tokenizer: Tokenizer): TokenCountJob[] {
   const jobs: TokenCountJob[] = [];
 
   for (const message of messages) {
@@ -230,7 +230,7 @@ function createTokenCountingJobs(messages: MuxMessage[], tokenizer: Tokenizer): 
 /**
  * Collects all unique tool names from messages
  */
-export function collectUniqueToolNames(messages: MuxMessage[]): Set<string> {
+export function collectUniqueToolNames(messages: XumMessage[]): Set<string> {
   const toolNames = new Set<string>();
 
   for (const message of messages) {
@@ -283,7 +283,7 @@ interface SyncMetadata {
  * Extracts synchronous metadata from messages (no token counting needed)
  */
 export function extractSyncMetadata(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   model: string,
   providersConfig: ProvidersConfigMap | null = null
 ): SyncMetadata {
@@ -402,7 +402,7 @@ export function mergeResults(
  * @returns ChatStats with token breakdown by consumer and usage history
  */
 export async function calculateTokenStats(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   model: string,
   providersConfig: ProvidersConfigMap | null,
   availableToolsOptions: Parameters<typeof getToolDefinitionTokens>[3]

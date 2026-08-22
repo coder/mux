@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 
 import {
   findLatestCompactionBoundaryIndex,
@@ -13,19 +13,19 @@ import {
 describe("findLatestCompactionBoundaryIndex", () => {
   it("returns the newest compaction boundary via reverse scan", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-1", "assistant", "first summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-1", "assistant", "first summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "middle"),
-      createMuxMessage("summary-2", "assistant", "second summary", {
+      createXumMessage("u1", "user", "middle"),
+      createXumMessage("summary-2", "assistant", "second summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 2,
       }),
-      createMuxMessage("u2", "user", "latest"),
+      createXumMessage("u2", "user", "latest"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(3);
@@ -33,13 +33,13 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
   it("treats heartbeat reset boundaries as durable compaction boundaries", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("heartbeat-reset", "assistant", "heartbeat reset", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("heartbeat-reset", "assistant", "heartbeat reset", {
         compacted: "heartbeat",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
@@ -47,11 +47,11 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
   it("returns -1 when only legacy compacted summaries exist", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("legacy-summary", "assistant", "legacy summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("legacy-summary", "assistant", "legacy summary", {
         compacted: "user",
       }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(-1);
@@ -59,19 +59,19 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
   it("ignores boundary markers that are missing compactionEpoch", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-valid", "assistant", "valid summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-valid", "assistant", "valid summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "middle"),
-      createMuxMessage("summary-missing-epoch", "assistant", "malformed summary", {
+      createXumMessage("u1", "user", "middle"),
+      createXumMessage("summary-missing-epoch", "assistant", "malformed summary", {
         compacted: "user",
         compactionBoundary: true,
         // Corrupted/normalized persisted metadata: missing epoch must not be durable.
       }),
-      createMuxMessage("u2", "user", "after"),
+      createXumMessage("u2", "user", "after"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
@@ -79,26 +79,26 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
   it("skips malformed boundary markers and keeps scanning for the latest durable boundary", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-valid", "assistant", "valid summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-valid", "assistant", "valid summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "middle"),
-      createMuxMessage("summary-malformed", "assistant", "malformed summary", {
+      createXumMessage("u1", "user", "middle"),
+      createXumMessage("summary-malformed", "assistant", "malformed summary", {
         // Corrupted persisted metadata: looks like a boundary but is not a compacted summary.
         compacted: false,
         compactionBoundary: true,
         compactionEpoch: 2,
       }),
-      createMuxMessage("u2", "user", "after"),
+      createXumMessage("u2", "user", "after"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
   });
   it("ignores boundary markers with malformed compacted values", () => {
-    const malformedCompactedBoundary = createMuxMessage(
+    const malformedCompactedBoundary = createXumMessage(
       "summary-malformed-compacted",
       "assistant",
       "malformed summary",
@@ -112,14 +112,14 @@ describe("findLatestCompactionBoundaryIndex", () => {
     }
 
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-valid", "assistant", "valid summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-valid", "assistant", "valid summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
       malformedCompactedBoundary,
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
@@ -127,18 +127,18 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
   it("ignores user-role messages with boundary-like metadata", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-valid", "assistant", "valid summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-valid", "assistant", "valid summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "not-a-summary", {
+      createXumMessage("u1", "user", "not-a-summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 2,
       }),
-      createMuxMessage("u2", "user", "after"),
+      createXumMessage("u2", "user", "after"),
     ];
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
@@ -148,9 +148,9 @@ describe("findLatestCompactionBoundaryIndex", () => {
 describe("context boundary helpers", () => {
   it("recognizes context reset boundaries as latest context boundary", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      createXumMessage("u1", "user", "after"),
     ];
 
     expect(findLatestContextBoundaryIndex(messages)).toBe(1);
@@ -159,11 +159,11 @@ describe("context boundary helpers", () => {
 
   it("excludes reset boundaries and pre-reset messages from provider slices", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("a0", "assistant", "before reply"),
-      createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
-      createMuxMessage("u1", "user", "after"),
-      createMuxMessage("a1", "assistant", "after reply"),
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("a0", "assistant", "before reply"),
+      createXumMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      createXumMessage("u1", "user", "after"),
+      createXumMessage("a1", "assistant", "after reply"),
     ];
 
     const sliced = sliceMessagesForProviderFromLatestContextBoundary(messages);
@@ -173,13 +173,13 @@ describe("context boundary helpers", () => {
 
   it("keeps compaction summaries provider-visible in context slices", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary", "assistant", "summary text", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary", "assistant", "summary text", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     const sliced = sliceMessagesForProviderFromLatestContextBoundary(messages);
@@ -189,15 +189,15 @@ describe("context boundary helpers", () => {
 
   it("uses the latest boundary across mixed compaction and reset histories", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary", "assistant", "summary text", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary", "assistant", "summary text", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "middle"),
-      createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
-      createMuxMessage("u2", "user", "latest"),
+      createXumMessage("u1", "user", "middle"),
+      createXumMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+      createXumMessage("u2", "user", "latest"),
     ];
 
     expect(findLatestContextBoundaryIndex(messages)).toBe(3);
@@ -209,30 +209,30 @@ describe("context boundary helpers", () => {
   it("does not count reset boundaries as provider-eligible messages", () => {
     expect(
       hasProviderEligibleMessages([
-        createMuxMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
+        createXumMessage("reset", "assistant", "", { contextBoundaryKind: "reset" }),
       ])
     ).toBe(false);
-    expect(hasProviderEligibleMessages([createMuxMessage("u1", "user", "after")])).toBe(true);
+    expect(hasProviderEligibleMessages([createXumMessage("u1", "user", "after")])).toBe(true);
   });
 });
 
 describe("sliceMessagesFromLatestCompactionBoundary", () => {
   it("slices request payload history from the latest compaction boundary", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-1", "assistant", "first summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-1", "assistant", "first summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "middle"),
-      createMuxMessage("summary-2", "assistant", "second summary", {
+      createXumMessage("u1", "user", "middle"),
+      createXumMessage("summary-2", "assistant", "second summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 2,
       }),
-      createMuxMessage("u2", "user", "latest"),
-      createMuxMessage("a2", "assistant", "reply"),
+      createXumMessage("u2", "user", "latest"),
+      createXumMessage("a2", "assistant", "reply"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -243,14 +243,14 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
   it("slices from heartbeat reset boundaries", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("heartbeat-reset", "assistant", "heartbeat reset", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("heartbeat-reset", "assistant", "heartbeat reset", {
         compacted: "heartbeat",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "after"),
-      createMuxMessage("a1", "assistant", "reply"),
+      createXumMessage("u1", "user", "after"),
+      createXumMessage("a1", "assistant", "reply"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -260,11 +260,11 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
   it("falls back to full history when no durable boundary exists", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("legacy-summary", "assistant", "legacy summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("legacy-summary", "assistant", "legacy summary", {
         compacted: "user",
       }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -275,13 +275,13 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
   it("treats missing compactionEpoch boundary markers as non-boundaries", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-missing-epoch", "assistant", "malformed summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-missing-epoch", "assistant", "malformed summary", {
         compacted: "user",
         compactionBoundary: true,
         // Schema normalization can drop malformed epochs to undefined.
       }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -291,7 +291,7 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
   });
 
   it("treats malformed compacted boundary markers as non-boundaries", () => {
-    const malformedCompactedBoundary = createMuxMessage(
+    const malformedCompactedBoundary = createXumMessage(
       "summary-malformed-compacted",
       "assistant",
       "malformed summary",
@@ -305,9 +305,9 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
     }
 
     const messages = [
-      createMuxMessage("u0", "user", "before"),
+      createXumMessage("u0", "user", "before"),
       malformedCompactedBoundary,
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -318,18 +318,18 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
   it("does not slice from user-role messages with boundary-like metadata", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-valid", "assistant", "valid summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-valid", "assistant", "valid summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
       }),
-      createMuxMessage("u1", "user", "not-a-summary", {
+      createXumMessage("u1", "user", "not-a-summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 2,
       }),
-      createMuxMessage("a1", "assistant", "after"),
+      createXumMessage("a1", "assistant", "after"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -340,14 +340,14 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
   it("treats malformed boundary markers as non-boundaries instead of crashing", () => {
     const messages = [
-      createMuxMessage("u0", "user", "before"),
-      createMuxMessage("summary-malformed", "assistant", "malformed summary", {
+      createXumMessage("u0", "user", "before"),
+      createXumMessage("summary-malformed", "assistant", "malformed summary", {
         compacted: "user",
         compactionBoundary: true,
         // Corrupted persisted metadata: invalid epoch should not brick request assembly.
         compactionEpoch: 0,
       }),
-      createMuxMessage("u1", "user", "after"),
+      createXumMessage("u1", "user", "after"),
     ];
 
     const sliced = sliceMessagesFromLatestCompactionBoundary(messages);

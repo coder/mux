@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
 import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
-import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
+import type { XumMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { isGoalPendingPersistence, type GoalSnapshot } from "@/common/types/goal";
 import type {
@@ -49,7 +49,7 @@ import {
   isBashOutputEvent,
   isTaskCreatedEvent,
   isWorkflowRunAttachedEvent,
-  isMuxMessage,
+  isXumMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
   isRuntimeStatus,
@@ -187,7 +187,7 @@ export interface WorkspaceState {
   isHydratingTranscript: boolean;
   hasOlderHistory: boolean;
   loadingOlderHistory: boolean;
-  muxMessages: MuxMessage[];
+  muxMessages: XumMessage[];
   currentModel: string | null;
   currentThinkingLevel: string | null;
   recencyTimestamp: number | null;
@@ -338,7 +338,7 @@ export interface WorkflowToolLiveRunState {
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
   isHydratingTranscript: boolean;
-  historicalMessages: MuxMessage[];
+  historicalMessages: XumMessage[];
   pendingStreamEvents: WorkspaceChatMessage[];
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
@@ -575,7 +575,7 @@ function calculateSubscriptionBackoffMs(attempt: number): number {
   return Math.min(SUBSCRIPTION_RETRY_BASE_MS * 2 ** attempt, SUBSCRIPTION_RETRY_MAX_MS);
 }
 
-function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
+function getMaxHistorySequence(messages: XumMessage[]): number | undefined {
   let max: number | undefined;
   for (const message of messages) {
     const seq = message.metadata?.historySequence;
@@ -2522,7 +2522,7 @@ export class WorkspaceStore {
         );
       }
 
-      const historicalMessages = result.messages.filter(isMuxMessage);
+      const historicalMessages = result.messages.filter(isXumMessage);
       const ignoredCount = result.messages.length - historicalMessages.length;
       if (ignoredCount > 0) {
         console.warn(
@@ -4803,7 +4803,7 @@ export class WorkspaceStore {
     }
 
     // Regular messages (XumMessage without type field)
-    if (isMuxMessage(data)) {
+    if (isXumMessage(data)) {
       const transient = this.assertChatTransientState(workspaceId);
 
       if (!transient.caughtUp) {
@@ -5220,7 +5220,7 @@ export function showAllMessages(workspaceId: string): void {
  * Add an ephemeral message to a workspace and trigger a re-render.
  * Used for displaying frontend-only messages like /plan output.
  */
-export function addEphemeralMessage(workspaceId: string, message: MuxMessage): void {
+export function addEphemeralMessage(workspaceId: string, message: XumMessage): void {
   const store = getStoreInstance();
   const aggregator = store.getAggregator(workspaceId);
   if (aggregator) {

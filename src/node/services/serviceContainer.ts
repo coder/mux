@@ -7,8 +7,8 @@ import { createCoreServices, type CoreServices } from "@/node/services/coreServi
 import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import { ProjectService } from "@/node/services/projectService";
-import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
-import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
+import { XumGatewayOauthService } from "@/node/services/xumGatewayOauthService";
+import { XumGovernorOauthService } from "@/node/services/xumGovernorOauthService";
 import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CoderOauthService } from "@/node/services/coderOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
@@ -103,8 +103,8 @@ export class ServiceContainer {
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
   public readonly projectService: ProjectService;
-  public readonly muxGatewayOauthService: MuxGatewayOauthService;
-  public readonly muxGovernorOauthService: MuxGovernorOauthService;
+  public readonly xumGatewayOauthService: XumGatewayOauthService;
+  public readonly xumGovernorOauthService: XumGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
   public readonly coderOauthService: CoderOauthService;
   public readonly copilotOauthService: CopilotOauthService;
@@ -286,11 +286,11 @@ export class ServiceContainer {
     );
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
 
-    this.muxGatewayOauthService = new MuxGatewayOauthService(
+    this.xumGatewayOauthService = new XumGatewayOauthService(
       this.providerService,
       this.windowService
     );
-    this.muxGovernorOauthService = new MuxGovernorOauthService(
+    this.xumGovernorOauthService = new XumGovernorOauthService(
       config,
       this.windowService,
       this.policyService
@@ -547,7 +547,7 @@ export class ServiceContainer {
 
     // Refresh xum-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
-    void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
+    void this.coderService.ensureXumCoderSSHConfig().catch((error: unknown) => {
       log.warn("Background xum SSH config setup failed", { error });
     });
 
@@ -571,8 +571,8 @@ export class ServiceContainer {
       workspaceService: this.workspaceService,
       taskService: this.taskService,
       providerService: this.providerService,
-      muxGatewayOauthService: this.muxGatewayOauthService,
-      muxGovernorOauthService: this.muxGovernorOauthService,
+      xumGatewayOauthService: this.xumGatewayOauthService,
+      xumGovernorOauthService: this.xumGovernorOauthService,
       codexOauthService: this.codexOauthService,
       coderOauthService: this.coderOauthService,
       copilotOauthService: this.copilotOauthService,
@@ -670,8 +670,8 @@ export class ServiceContainer {
     this.policyService.dispose();
     this.mcpServerManager.dispose();
     await this.mcpOauthService.dispose();
-    await this.muxGatewayOauthService.dispose();
-    await this.muxGovernorOauthService.dispose();
+    await this.xumGatewayOauthService.dispose();
+    await this.xumGovernorOauthService.dispose();
     await this.codexOauthService.dispose();
     await this.coderOauthService.dispose();
 

@@ -5,11 +5,11 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { installDom } from "../dom";
 
-import { MuxGatewaySessionExpiredDialog } from "@/browser/components/MuxGatewaySessionExpiredDialog/MuxGatewaySessionExpiredDialog";
+import { XumGatewaySessionExpiredDialog } from "@/browser/components/XumGatewaySessionExpiredDialog/XumGatewaySessionExpiredDialog";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 
-describe("MuxGatewaySessionExpiredDialog", () => {
+describe("XumGatewaySessionExpiredDialog", () => {
   let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
@@ -23,7 +23,7 @@ describe("MuxGatewaySessionExpiredDialog", () => {
   });
 
   test("shows a Dialog when mux gateway session expires", async () => {
-    const view = render(<MuxGatewaySessionExpiredDialog />);
+    const view = render(<XumGatewaySessionExpiredDialog />);
 
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
 
@@ -63,7 +63,7 @@ describe("MuxGatewaySessionExpiredDialog", () => {
     };
 
     try {
-      const view = render(<MuxGatewaySessionExpiredDialog />);
+      const view = render(<XumGatewaySessionExpiredDialog />);
       window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
 
       await waitFor(() => {
@@ -89,7 +89,7 @@ describe("MuxGatewaySessionExpiredDialog", () => {
     window.open = () => null;
 
     try {
-      const view = render(<MuxGatewaySessionExpiredDialog />);
+      const view = render(<XumGatewaySessionExpiredDialog />);
       window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
 
       await waitFor(() => {

@@ -10,7 +10,7 @@ import {
   isInitEnd,
   isInitOutput,
   isInitStart,
-  isMuxMessage,
+  isXumMessage,
   isQueuedMessageChanged,
   isReasoningDelta,
   isReasoningEnd,
@@ -101,7 +101,7 @@ function dispatchGoalChildBudgetToast(workspaceId: string, message: string): voi
   );
 }
 
-function dispatchMuxGatewaySessionExpired(): void {
+function dispatchXumGatewaySessionExpired(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
 }
@@ -154,7 +154,7 @@ export function applyWorkspaceChatEventToAggregator(
     if (allowSideEffects && event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
       // Dispatch session-expired event; useGateway() listens for it and
       // optimistically marks the gateway as unconfigured to stop routing.
-      dispatchMuxGatewaySessionExpired();
+      dispatchXumGatewaySessionExpired();
     }
 
     aggregator.handleStreamError(event);
@@ -233,7 +233,7 @@ export function applyWorkspaceChatEventToAggregator(
   }
 
   // init-* and ChatXumMessage are handled via the aggregator's unified handleMessage.
-  if (isMuxMessage(event) || isInitStart(event) || isInitOutput(event) || isInitEnd(event)) {
+  if (isXumMessage(event) || isInitStart(event) || isInitOutput(event) || isInitEnd(event)) {
     aggregator.handleMessage(event);
     return "immediate";
   }

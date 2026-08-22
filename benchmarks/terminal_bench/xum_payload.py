@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 def build_app_archive(repo_root: Path, include_paths: Iterable[str]) -> bytes:
-    """Pack the mux workspace into a gzipped tarball."""
+    """Pack the xum workspace into a gzipped tarball."""
     if not repo_root.exists():
-        raise FileNotFoundError(f"mux repo root {repo_root} not found")
+        raise FileNotFoundError(f"xum repo root {repo_root} not found")
 
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:

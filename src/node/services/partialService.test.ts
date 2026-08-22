@@ -2,7 +2,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import { createTestHistoryService } from "./testHistoryService";
 import * as fs from "fs/promises";
@@ -22,7 +22,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
 
   test("commitPartial should strip error metadata and commit parts from errored partial", async () => {
     const workspaceId = "test-workspace";
-    const erroredPartial: MuxMessage = {
+    const erroredPartial: XumMessage = {
       id: "msg-1",
       role: "assistant",
       metadata: {
@@ -71,7 +71,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
 
   test("commitPartial should update existing placeholder when errored partial has more parts", async () => {
     const workspaceId = "test-workspace";
-    const erroredPartial: MuxMessage = {
+    const erroredPartial: XumMessage = {
       id: "msg-1",
       role: "assistant",
       metadata: {
@@ -94,7 +94,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
       ],
     };
 
-    const existingPlaceholder: MuxMessage = {
+    const existingPlaceholder: XumMessage = {
       id: "msg-1",
       role: "assistant",
       metadata: {
@@ -142,7 +142,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
 
   test("commitPartial should skip tool-only incomplete partials", async () => {
     const workspaceId = "test-workspace";
-    const toolOnlyPartial: MuxMessage = {
+    const toolOnlyPartial: XumMessage = {
       id: "msg-1",
       role: "assistant",
       metadata: {
@@ -182,7 +182,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
   });
   test("commitPartial should skip empty errored partial", async () => {
     const workspaceId = "test-workspace";
-    const emptyErrorPartial: MuxMessage = {
+    const emptyErrorPartial: XumMessage = {
       id: "msg-1",
       role: "assistant",
       metadata: {
@@ -225,7 +225,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
 
     await partialService.appendToHistory(
       workspaceId,
-      createMuxMessage("msg-1", "assistant", "", {
+      createXumMessage("msg-1", "assistant", "", {
         historySequence,
         timestamp: Date.now(),
         model: "test-model",
@@ -246,7 +246,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
           errorType: "empty_output",
         },
         parts: [],
-      } satisfies MuxMessage)
+      } satisfies XumMessage)
     );
 
     const deleteMessageSpy = spyOn(partialService, "deleteMessage");
@@ -265,16 +265,16 @@ describe("HistoryService partial persistence - Error Recovery", () => {
   test("commitPartial deletes stale pre-boundary partial instead of appending it", async () => {
     const workspaceId = "test-workspace-stale-partial";
     const rows = [
-      createMuxMessage("user-before", "user", "before", { historySequence: 0 }),
-      createMuxMessage("assistant-before", "assistant", "before reply", { historySequence: 1 }),
-      createMuxMessage("summary", "assistant", "summary", {
+      createXumMessage("user-before", "user", "before", { historySequence: 0 }),
+      createXumMessage("assistant-before", "assistant", "before reply", { historySequence: 1 }),
+      createXumMessage("summary", "assistant", "summary", {
         historySequence: 2,
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
         muxMetadata: { type: "compaction-summary" },
       }),
-      createMuxMessage("user-after", "user", "after", { historySequence: 3 }),
+      createXumMessage("user-after", "user", "after", { historySequence: 3 }),
     ];
 
     for (const row of rows) {
@@ -282,7 +282,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
       expect(appendResult.success).toBe(true);
     }
 
-    const stalePartial = createMuxMessage("assistant-before", "assistant", "stale partial", {
+    const stalePartial = createXumMessage("assistant-before", "assistant", "stale partial", {
       historySequence: 1,
       partial: true,
     });
@@ -304,7 +304,7 @@ describe("HistoryService partial persistence - Error Recovery", () => {
     expect(historyResult.data.map((message) => message.id)).toEqual(["summary", "user-after"]);
     expect(historyResult.data.at(-1)?.metadata?.historySequence).toBe(3);
 
-    const nextMessage = createMuxMessage("next-user", "user", "next");
+    const nextMessage = createXumMessage("next-user", "user", "next");
     const appendNextResult = await partialService.appendToHistory(workspaceId, nextMessage);
     expect(appendNextResult.success).toBe(true);
     expect(nextMessage.metadata?.historySequence).toBe(4);
@@ -329,7 +329,7 @@ describe("HistoryService partial persistence - Legacy compatibility", () => {
     const workspaceDir = config.getSessionDir(workspaceId);
     await fs.mkdir(workspaceDir, { recursive: true });
 
-    const partialMessage = createMuxMessage("partial-1", "assistant", "legacy", {
+    const partialMessage = createXumMessage("partial-1", "assistant", "legacy", {
       historySequence: 0,
     });
     (partialMessage.metadata as Record<string, unknown>).cmuxMetadata = { type: "normal" };

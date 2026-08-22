@@ -19,7 +19,7 @@ import {
 } from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { getPlanFilePath } from "../../../src/common/utils/planStorage";
-import { createMuxMessage } from "../../../src/common/types/message";
+import { createXumMessage } from "../../../src/common/types/message";
 import { expandTilde } from "../../../src/node/runtime/tildeExpansion";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -177,7 +177,7 @@ describeIntegration("Plan Commands Integration", () => {
         await fs.mkdir(path.dirname(expandedPlanPath), { recursive: true });
         await fs.writeFile(expandedPlanPath, "# Test Plan\n");
 
-        const summaryMessage = createMuxMessage(
+        const summaryMessage = createXumMessage(
           `start-here-test-${Date.now()}`,
           "assistant",
           "summary",
@@ -219,7 +219,7 @@ describeIntegration("Plan Commands Integration", () => {
       const workspaceId = createResult.metadata.id;
 
       try {
-        const summaryMessage = createMuxMessage(
+        const summaryMessage = createXumMessage(
           `start-here-test-${Date.now()}`,
           "assistant",
           "summary",
@@ -265,7 +265,7 @@ describeIntegration("Plan Commands Integration", () => {
     const workspaceId = createResult.metadata.id;
 
     try {
-      const legacySummary = createMuxMessage(
+      const legacySummary = createXumMessage(
         `legacy-summary-${Date.now()}`,
         "assistant",
         "legacy summary",
@@ -283,7 +283,7 @@ describeIntegration("Plan Commands Integration", () => {
 
       // Inject malformed boundary metadata directly to verify self-healing epoch derivation.
       const malformedBoundaryId = `malformed-boundary-${Date.now()}`;
-      const malformedBoundaryMessage = createMuxMessage(
+      const malformedBoundaryMessage = createXumMessage(
         malformedBoundaryId,
         "assistant",
         "malformed boundary",
@@ -301,7 +301,7 @@ describeIntegration("Plan Commands Integration", () => {
         JSON.stringify({ ...malformedBoundaryMessage, workspaceId }) + "\n"
       );
 
-      const appendSummary = createMuxMessage(
+      const appendSummary = createXumMessage(
         `append-summary-${Date.now()}`,
         "assistant",
         "append summary",

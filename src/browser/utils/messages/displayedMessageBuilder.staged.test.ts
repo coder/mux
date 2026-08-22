@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { buildDisplayedMessagesForMessage } from "./displayedMessageBuilder";
 
 const STAGED_ATTACHMENT = {
@@ -16,7 +16,7 @@ const STAGED_ATTACHMENT = {
 describe("buildDisplayedMessagesForMessage staged attachments", () => {
   test("preserves staged notices in compaction previews for chip rendering", () => {
     const followUpText = appendStagedAttachmentNotice("Continue work", [STAGED_ATTACHMENT]);
-    const message = createMuxMessage("msg-1", "user", "/compact", {
+    const message = createXumMessage("msg-1", "user", "/compact", {
       historySequence: 1,
       muxMetadata: {
         type: "compaction-request",
@@ -48,7 +48,7 @@ describe("buildDisplayedMessagesForMessage staged attachments", () => {
 
   test("preserves staged notices in one-shot raw commands for chip rendering", () => {
     const rawCommand = appendStagedAttachmentNotice("/opus inspect this", [STAGED_ATTACHMENT]);
-    const message = createMuxMessage("msg-2", "user", "inspect this", {
+    const message = createXumMessage("msg-2", "user", "inspect this", {
       historySequence: 2,
       muxMetadata: {
         type: "normal",
@@ -74,7 +74,7 @@ describe("buildDisplayedMessagesForMessage staged attachments", () => {
 
   test("preserves staged notices in skill raw commands for chip rendering", () => {
     const rawCommand = appendStagedAttachmentNotice("/review inspect this", [STAGED_ATTACHMENT]);
-    const message = createMuxMessage("msg-3", "user", "Using skill review: inspect this", {
+    const message = createXumMessage("msg-3", "user", "Using skill review: inspect this", {
       historySequence: 3,
       muxMetadata: {
         type: "agent-skill",

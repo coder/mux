@@ -41,7 +41,7 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
@@ -2104,7 +2104,7 @@ describe("WorkspaceService bash monitor wakes", () => {
         timestamp: Date.now(),
         matchedThroughOffset: 13,
       });
-      const malformedWake = createMuxMessage("malformed-wake", "user", "Malformed wake", {
+      const malformedWake = createXumMessage("malformed-wake", "user", "Malformed wake", {
         synthetic: true,
       });
       if (malformedWake.metadata) {
@@ -2113,7 +2113,7 @@ describe("WorkspaceService bash monitor wakes", () => {
           records: null,
         };
       }
-      const emptyIdentityWake = createMuxMessage(
+      const emptyIdentityWake = createXumMessage(
         "empty-identity-wake",
         "user",
         "Empty identity wake",
@@ -2129,7 +2129,7 @@ describe("WorkspaceService bash monitor wakes", () => {
       await historyService.appendToHistory(workspaceId, malformedWake);
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("accepted-wake", "user", "Accepted monitor wake", {
+        createXumMessage("accepted-wake", "user", "Accepted monitor wake", {
           synthetic: true,
           muxMetadata: buildBashMonitorWakeMetadata([record]),
         })
@@ -3209,7 +3209,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3222,7 +3222,7 @@ describe("WorkspaceService workflow invocation events", () => {
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("synthetic-await", "user", "Call task_await", {
+        createXumMessage("synthetic-await", "user", "Call task_await", {
           timestamp: 1_100,
           synthetic: true,
         })
@@ -3232,7 +3232,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("manual-user", "user", "Never mind, answer something else", {
+        createXumMessage("manual-user", "user", "Never mind, answer something else", {
           timestamp: 1_200,
         })
       );
@@ -3274,7 +3274,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3287,7 +3287,7 @@ describe("WorkspaceService workflow invocation events", () => {
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("manual-user", "user", "Never mind, answer something else", {
+        createXumMessage("manual-user", "user", "Never mind, answer something else", {
           timestamp: 1_100,
         })
       );
@@ -3297,7 +3297,7 @@ describe("WorkspaceService workflow invocation events", () => {
       // An unrelated tool output mentioning the run does not re-establish the invocation.
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-unrelated-tool", "assistant", "", { timestamp: 1_200 }, [
+        createXumMessage("assistant-unrelated-tool", "assistant", "", { timestamp: 1_200 }, [
           {
             type: "dynamic-tool",
             toolCallId: "task-list-1",
@@ -3315,7 +3315,7 @@ describe("WorkspaceService workflow invocation events", () => {
       // again and the terminal continuation would be delivered.
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-resume", "assistant", "", { timestamp: 1_300 }, [
+        createXumMessage("assistant-workflow-resume", "assistant", "", { timestamp: 1_300 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-resume-1",
@@ -3366,7 +3366,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
         await historyService.appendToHistory(
           workspaceId,
-          createMuxMessage(`assistant-${toolName}`, "assistant", "", { timestamp: 1_000 }, [
+          createXumMessage(`assistant-${toolName}`, "assistant", "", { timestamp: 1_000 }, [
             {
               type: "dynamic-tool",
               toolCallId: `${toolName}-call-1`,
@@ -3423,7 +3423,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3436,7 +3436,7 @@ describe("WorkspaceService workflow invocation events", () => {
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("midstream-auto-compaction", "user", "Compacting to continue", {
+        createXumMessage("midstream-auto-compaction", "user", "Compacting to continue", {
           timestamp: 1_100,
           synthetic: true,
           muxMetadata: {
@@ -3492,7 +3492,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3505,7 +3505,7 @@ describe("WorkspaceService workflow invocation events", () => {
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("auto-compaction", "user", "Compacting before a new user prompt", {
+        createXumMessage("auto-compaction", "user", "Compacting before a new user prompt", {
           timestamp: 1_100,
           synthetic: true,
           muxMetadata: {
@@ -3564,7 +3564,7 @@ describe("WorkspaceService workflow invocation events", () => {
       expect(persisted).toBe(true);
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("boundary", "assistant", "Compacted summary", {
+        createXumMessage("boundary", "assistant", "Compacted summary", {
           timestamp: 2_000,
           compactionBoundary: true,
         })
@@ -3607,7 +3607,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3622,7 +3622,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("reset-boundary", "assistant", "Context reset", {
+        createXumMessage("reset-boundary", "assistant", "Context reset", {
           timestamp: 1_100,
           contextBoundaryKind: "reset",
         })
@@ -3665,7 +3665,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3678,7 +3678,7 @@ describe("WorkspaceService workflow invocation events", () => {
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage(
+        createXumMessage(
           "assistant-task-await-active-error",
           "assistant",
           "",
@@ -3709,7 +3709,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage(
+        createXumMessage(
           "assistant-task-await-failed-error",
           "assistant",
           "",
@@ -3773,7 +3773,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+        createXumMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
           {
             type: "dynamic-tool",
             toolCallId: "workflow-call-1",
@@ -3788,7 +3788,7 @@ describe("WorkspaceService workflow invocation events", () => {
 
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("assistant-task-await", "assistant", "", { timestamp: 1_100 }, [
+        createXumMessage("assistant-task-await", "assistant", "", { timestamp: 1_100 }, [
           {
             type: "dynamic-tool",
             toolCallId: "task-await-1",
@@ -3942,7 +3942,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       });
       const appendResult = await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("clear-goal-message", "user", "please remember this", {})
+        createXumMessage("clear-goal-message", "user", "please remember this", {})
       );
       expect(appendResult.success).toBe(true);
 
@@ -3989,7 +3989,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       });
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("accepted-before-clear", "user", "Accepted wake", {
+        createXumMessage("accepted-before-clear", "user", "Accepted wake", {
           synthetic: true,
           muxMetadata: buildBashMonitorWakeMetadata([record]),
         })
@@ -4031,7 +4031,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       });
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("partial-delete-accepted", "user", "Accepted wake", {
+        createXumMessage("partial-delete-accepted", "user", "Accepted wake", {
           synthetic: true,
           muxMetadata: buildBashMonitorWakeMetadata([record]),
         })
@@ -4148,7 +4148,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       });
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("partial-clear-accepted", "user", "Accepted wake", {
+        createXumMessage("partial-clear-accepted", "user", "Accepted wake", {
           synthetic: true,
           muxMetadata: buildBashMonitorWakeMetadata([record]),
         })
@@ -4198,7 +4198,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
 
       const result = await workspaceService.replaceHistory(
         workspaceId,
-        createMuxMessage("replacement-summary", "assistant", "Replacement summary", {})
+        createXumMessage("replacement-summary", "assistant", "Replacement summary", {})
       );
 
       expect(result.success).toBe(true);
@@ -4244,7 +4244,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         (
           await historyService.appendToHistory(
             workspaceId,
-            createMuxMessage("pre-reset-user", "user", "before reset", {})
+            createXumMessage("pre-reset-user", "user", "before reset", {})
           )
         ).success
       ).toBe(true);
@@ -4300,11 +4300,11 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       });
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("pre-start-here-user", "user", "long conversation", {})
+        createXumMessage("pre-start-here-user", "user", "long conversation", {})
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("pre-start-here-assistant", "assistant", "long reply", {
+        createXumMessage("pre-start-here-assistant", "assistant", "long reply", {
           model: "openai:gpt-4o",
           contextUsage: { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
         })
@@ -4326,7 +4326,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         (
           await workspaceService.replaceHistory(
             workspaceId,
-            createMuxMessage("start-here-summary", "assistant", "Start Here summary", {
+            createXumMessage("start-here-summary", "assistant", "Start Here summary", {
               compacted: "user",
             }),
             { mode: "append-compaction-boundary" }
@@ -4376,7 +4376,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         (
           await historyService.appendToHistory(
             workspaceId,
-            createMuxMessage("pre-reset-user", "user", "before reset", {})
+            createXumMessage("pre-reset-user", "user", "before reset", {})
           )
         ).success
       ).toBe(true);
@@ -4513,7 +4513,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         (
           await historyService.appendToHistory(
             workspaceId,
-            createMuxMessage("pre-reset-user", "user", "before reset", {})
+            createXumMessage("pre-reset-user", "user", "before reset", {})
           )
         ).success
       ).toBe(true);
@@ -4545,7 +4545,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       );
       const seedResult = await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("pre-reset-user", "user", "before reset", {})
+        createXumMessage("pre-reset-user", "user", "before reset", {})
       );
       expect(seedResult.success).toBe(true);
       const appendSpy = spyOn(historyService, "appendToHistory").mockResolvedValueOnce(
@@ -4584,7 +4584,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       } as unknown as WorkspaceGoalService);
       const seedResult = await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("pre-reset-user", "user", "before reset", {})
+        createXumMessage("pre-reset-user", "user", "before reset", {})
       );
       expect(seedResult.success).toBe(true);
 
@@ -4668,7 +4668,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         (
           await historyService.appendToHistory(
             workspaceId,
-            createMuxMessage("pre-reset-user", "user", "before reset", {})
+            createXumMessage("pre-reset-user", "user", "before reset", {})
           )
         ).success
       ).toBe(true);
@@ -6118,7 +6118,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
       workspaceId,
       message: {
         type: "message",
-        ...createMuxMessage("user-accepted", "user", "hello"),
+        ...createXumMessage("user-accepted", "user", "hello"),
       },
     });
 
@@ -6154,7 +6154,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
       workspaceId,
       message: {
         type: "message",
-        ...createMuxMessage("user-synthetic", "user", "hello", { synthetic: true }),
+        ...createXumMessage("user-synthetic", "user", "hello", { synthetic: true }),
       },
     });
 
@@ -12284,7 +12284,7 @@ describe("WorkspaceService regenerateTitle", () => {
   test("returns updateTitle error when persisting generated title fails", async () => {
     const workspaceId = "ws-regenerate-title";
 
-    await historyService.appendToHistory(workspaceId, createMuxMessage("user-1", "user", "Fix CI"));
+    await historyService.appendToHistory(workspaceId, createXumMessage("user-1", "user", "Fix CI"));
 
     const generateIdentitySpy = spyOn(
       workspaceTitleGenerator,
@@ -12322,11 +12322,11 @@ describe("WorkspaceService regenerateTitle", () => {
 
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-before-boundary", "user", "Refactor sidebar loading")
+      createXumMessage("user-before-boundary", "user", "Refactor sidebar loading")
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("summary-boundary", "assistant", "Compacted summary", {
+      createXumMessage("summary-boundary", "assistant", "Compacted summary", {
         compacted: true,
         compactionBoundary: true,
         compactionEpoch: 1,
@@ -12334,7 +12334,7 @@ describe("WorkspaceService regenerateTitle", () => {
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-after-boundary", "assistant", "No new user messages yet")
+      createXumMessage("assistant-after-boundary", "assistant", "No new user messages yet")
     );
 
     const iterateSpy = spyOn(historyService, "iterateFullHistory");
@@ -12387,7 +12387,7 @@ describe("WorkspaceService regenerateTitle", () => {
       const text = `${role === "user" ? "User" : "Assistant"} turn ${turn}`;
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage(`${role}-${turn}`, role, text)
+        createXumMessage(`${role}-${turn}`, role, text)
       );
     }
 
@@ -12684,7 +12684,7 @@ describe("WorkspaceService fork", () => {
     // before we fork. The fork should keep this history but not inherit its costs.
     await historyService.appendToHistory(
       sourceWorkspaceId,
-      createMuxMessage("assistant-1", "assistant", "Hello", {
+      createXumMessage("assistant-1", "assistant", "Hello", {
         model: "claude-sonnet-4-20250514",
         usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       })
@@ -12805,7 +12805,7 @@ describe("WorkspaceService fork", () => {
       return current;
     });
 
-    const sourcePartial = createMuxMessage(
+    const sourcePartial = createXumMessage(
       "assistant-partial",
       "assistant",
       "Waiting on task_await",
@@ -14005,11 +14005,11 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u1", "user", "the prompt before compaction", { historySequence: 1 })
+        createXumMessage("u1", "user", "the prompt before compaction", { historySequence: 1 })
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("summary", "assistant", "Compacted summary", {
+        createXumMessage("summary", "assistant", "Compacted summary", {
           historySequence: 2,
           compacted: "user",
           compactionBoundary: true,
@@ -14025,15 +14025,15 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u1", "user", "typed by the user", { historySequence: 1 })
+        createXumMessage("u1", "user", "typed by the user", { historySequence: 1 })
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u2", "user", "   ", { historySequence: 2 })
+        createXumMessage("u2", "user", "   ", { historySequence: 2 })
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u3", "user", "injected turn", { historySequence: 3, synthetic: true })
+        createXumMessage("u3", "user", "injected turn", { historySequence: 3, synthetic: true })
       );
     });
 
@@ -14044,7 +14044,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("a1", "assistant", "hello", { historySequence: 1 })
+        createXumMessage("a1", "assistant", "hello", { historySequence: 1 })
       );
     });
 
@@ -14053,7 +14053,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
 
   test("prefers the raw slash command over its expanded provider text", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
-      const message = createMuxMessage("u1", "user", "Expanded skill body sent to the model", {
+      const message = createXumMessage("u1", "user", "Expanded skill body sent to the model", {
         historySequence: 1,
       });
       await historyService.appendToHistory(workspaceId, {
@@ -14067,7 +14067,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
 
   test("reconstructs a compaction command's follow-up text", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
-      const message = createMuxMessage("u1", "user", "Expanded compaction instructions", {
+      const message = createXumMessage("u1", "user", "Expanded compaction instructions", {
         historySequence: 1,
       });
       await historyService.appendToHistory(workspaceId, {
@@ -14088,7 +14088,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
 
   test("keeps the bare compaction command when the follow-up is the resume sentinel", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
-      const message = createMuxMessage("u1", "user", "Expanded compaction instructions", {
+      const message = createXumMessage("u1", "user", "Expanded compaction instructions", {
         historySequence: 1,
       });
       await historyService.appendToHistory(workspaceId, {
@@ -14111,7 +14111,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u1", "user", "summarize the attached data", { historySequence: 1 })
+        createXumMessage("u1", "user", "summarize the attached data", { historySequence: 1 })
       );
       const notice = buildStagedAttachmentNotice([
         {
@@ -14125,7 +14125,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
       ]);
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u2", "user", notice.trimStart(), { historySequence: 2 })
+        createXumMessage("u2", "user", notice.trimStart(), { historySequence: 2 })
       );
     });
 
@@ -14134,7 +14134,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
 
   test("survives a compaction row whose parsed metadata is missing", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
-      const message = createMuxMessage("u1", "user", "Expanded compaction instructions", {
+      const message = createXumMessage("u1", "user", "Expanded compaction instructions", {
         historySequence: 1,
       });
       await historyService.appendToHistory(workspaceId, {
@@ -14153,9 +14153,9 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u1", "user", "the older valid prompt", { historySequence: 1 })
+        createXumMessage("u1", "user", "the older valid prompt", { historySequence: 1 })
       );
-      const broken = createMuxMessage("u2", "user", "   ", { historySequence: 2 });
+      const broken = createXumMessage("u2", "user", "   ", { historySequence: 2 });
       await historyService.appendToHistory(workspaceId, {
         ...broken,
         metadata: { ...broken.metadata, muxMetadata: "corrupted" },
@@ -14169,9 +14169,9 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("u1", "user", "the older valid prompt", { historySequence: 1 })
+        createXumMessage("u1", "user", "the older valid prompt", { historySequence: 1 })
       );
-      const broken = createMuxMessage("u2", "user", "ignored", { historySequence: 2 });
+      const broken = createXumMessage("u2", "user", "ignored", { historySequence: 2 });
       await historyService.appendToHistory(workspaceId, {
         ...broken,
         parts: undefined,
@@ -14186,7 +14186,7 @@ describe("WorkspaceService.getLastUserPrompt", () => {
       for (const [index, text] of ["oldest prompt", "middle prompt", "newest prompt"].entries()) {
         await historyService.appendToHistory(
           workspaceId,
-          createMuxMessage(`u${index}`, "user", text, { historySequence: index + 1 })
+          createXumMessage(`u${index}`, "user", text, { historySequence: index + 1 })
         );
       }
     });

@@ -101,7 +101,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/coder/mux.git",
+    "url": "https://github.com/coder/xum.git",
     "directory": "vscode"
   },
   "license": "AGPL-3.0-only",

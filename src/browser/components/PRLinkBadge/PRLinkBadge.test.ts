@@ -6,7 +6,7 @@ import { getStatusColorClass, getTooltipContent } from "./PRLinkBadge";
 function makePRLink(statusOverrides: Partial<GitHubPRStatus> = {}): GitHubPRLinkWithStatus {
   return {
     type: "github-pr",
-    url: "https://github.com/coder/mux/pull/1",
+    url: "https://github.com/coder/xum/pull/1",
     owner: "coder",
     repo: "mux",
     number: 1,

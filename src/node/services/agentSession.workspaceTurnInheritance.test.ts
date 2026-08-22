@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 
-import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import { createXumMessage, type XumMessage, type XumMessageMetadata } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { AIService, StreamMessageOptions } from "@/node/services/aiService";
 
@@ -14,19 +14,19 @@ const correlation = {
   turnId: "turn",
 } as const;
 
-function turnPrompt(id: string): MuxMessage {
-  return createMuxMessage(id, "user", "Delegated prompt", { muxMetadata: correlation });
+function turnPrompt(id: string): XumMessage {
+  return createXumMessage(id, "user", "Delegated prompt", { muxMetadata: correlation });
 }
 
-function cutAssistant(id: string): MuxMessage {
-  return createMuxMessage(id, "assistant", "Working...", {
+function cutAssistant(id: string): XumMessage {
+  return createXumMessage(id, "assistant", "Working...", {
     finishReason: "tool-calls",
     muxMetadata: correlation,
   });
 }
 
-function wake(id: string): MuxMessage {
-  return createMuxMessage(id, "user", "A background bash monitor matched output.", {
+function wake(id: string): XumMessage {
+  return createXumMessage(id, "user", "A background bash monitor matched output.", {
     muxMetadata: { type: "bash-monitor-wake", records: [] },
   });
 }
@@ -51,7 +51,7 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
   test("a correlated assistant that finished with stop closes the turn", () => {
     const messages = [
       turnPrompt("prompt"),
-      createMuxMessage("final", "assistant", "Final report", {
+      createXumMessage("final", "assistant", "Final report", {
         finishReason: "stop",
         muxMetadata: correlation,
       }),
@@ -64,7 +64,7 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
     const messages = [
       turnPrompt("prompt"),
       cutAssistant("cut"),
-      createMuxMessage("manual", "user", "User takes over"),
+      createXumMessage("manual", "user", "User takes over"),
       wake("wake"),
     ];
     expect(inheritOpenWorkspaceTurnMetadata(messages)).toBeUndefined();
@@ -72,7 +72,7 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
 
   test("an uncorrelated assistant closes the chain", () => {
     const messages = [
-      createMuxMessage("plain", "assistant", "Unrelated turn", { finishReason: "tool-calls" }),
+      createXumMessage("plain", "assistant", "Unrelated turn", { finishReason: "tool-calls" }),
       wake("wake"),
     ];
     expect(inheritOpenWorkspaceTurnMetadata(messages)).toBeUndefined();
@@ -81,7 +81,7 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
   test("a partial correlated assistant does not leave the turn open", () => {
     const messages = [
       turnPrompt("prompt"),
-      createMuxMessage("partial", "assistant", "Crashed mid-work", {
+      createXumMessage("partial", "assistant", "Crashed mid-work", {
         finishReason: "tool-calls",
         partial: true,
         muxMetadata: correlation,
@@ -99,7 +99,7 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
     // On-send compaction consumed the wake: post-compaction history starts at
     // the summary, which carries the pre-compaction correlation stamp.
     const messages = [
-      createMuxMessage("summary", "assistant", "Compacted context", {
+      createXumMessage("summary", "assistant", "Compacted context", {
         finishReason: "stop",
         muxMetadata: {
           type: "compaction-summary",
@@ -118,7 +118,7 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
 
   test("an unstamped compaction summary closes the chain", () => {
     const messages = [
-      createMuxMessage("summary", "assistant", "Compacted context", {
+      createXumMessage("summary", "assistant", "Compacted context", {
         finishReason: "stop",
         muxMetadata: {
           type: "compaction-summary",
@@ -137,11 +137,11 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
 
 describe("AgentSession workspace-turn correlation inheritance", () => {
   async function sendAfterQueueCut(sendOptions: {
-    muxMetadata?: MuxMessageMetadata;
+    muxMetadata?: XumMessageMetadata;
   }): Promise<StreamMessageOptions["muxMetadata"]> {
-    let streamedMuxMetadata: StreamMessageOptions["muxMetadata"];
+    let streamedXumMetadata: StreamMessageOptions["muxMetadata"];
     const streamMessage = mock((opts: StreamMessageOptions) => {
-      streamedMuxMetadata = opts.muxMetadata;
+      streamedXumMetadata = opts.muxMetadata;
       return Promise.resolve(Ok(undefined));
     });
     const { session, cleanup, historyService } = await createAgentSessionHarness({
@@ -165,7 +165,7 @@ describe("AgentSession workspace-turn correlation inheritance", () => {
       });
       expect(result.success).toBe(true);
       expect(streamMessage.mock.calls).toHaveLength(1);
-      return streamedMuxMetadata;
+      return streamedXumMetadata;
     } finally {
       session.dispose();
       await cleanup();

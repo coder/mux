@@ -64,7 +64,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   buildWorkflowRunCardMessage,
@@ -90,7 +90,7 @@ function initGitRepo(projectPath: string): void {
 }
 
 async function collectFullHistory(service: HistoryService, workspaceId: string) {
-  const messages: MuxMessage[] = [];
+  const messages: XumMessage[] = [];
   const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
     messages.push(...chunk);
   });
@@ -2667,11 +2667,11 @@ describe("TaskService", () => {
 
   test("uncorrelated stream-end before queued workspace turn prompt does not interrupt it", async () => {
     const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
-    const oldAssistant = createMuxMessage("old-assistant", "assistant", "Previous turn", {
+    const oldAssistant = createXumMessage("old-assistant", "assistant", "Previous turn", {
       model: "anthropic:claude-opus-4-6",
       finishReason: "stop",
     });
-    const queuedPrompt = createMuxMessage("queued-prompt", "user", "Queued follow-up", {
+    const queuedPrompt = createXumMessage("queued-prompt", "user", "Queued follow-up", {
       muxMetadata: {
         type: "workspace-turn-task",
         taskHandleId: created.taskId,
@@ -2709,7 +2709,7 @@ describe("TaskService", () => {
     const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
     const appendResult = await historyService.appendToHistory(
       created.workspaceId,
-      createMuxMessage("msg_completed", "assistant", "Recovered final text", {
+      createXumMessage("msg_completed", "assistant", "Recovered final text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -2744,7 +2744,7 @@ describe("TaskService", () => {
     const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
     const appendResult = await historyService.appendToHistory(
       created.workspaceId,
-      createMuxMessage("msg_truncated_history", "assistant", "Partial text", {
+      createXumMessage("msg_truncated_history", "assistant", "Partial text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "length",
@@ -3134,9 +3134,9 @@ describe("TaskService", () => {
     const { historyService, taskService } = createTaskServiceHarness(config);
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("original-user", "user", "Start work", { timestamp: Date.now() })
+      createXumMessage("original-user", "user", "Start work", { timestamp: Date.now() })
     );
-    const reportMessage = createMuxMessage(
+    const reportMessage = createXumMessage(
       "terminal-report",
       "user",
       formatSubagentReportEnvelope({
@@ -3154,7 +3154,7 @@ describe("TaskService", () => {
 
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("stale-assistant", "assistant", "Response to the earlier request", {
+      createXumMessage("stale-assistant", "assistant", "Response to the earlier request", {
         timestamp: Date.now(),
         requestHistorySequence: reportSequence - 1,
       })
@@ -3167,7 +3167,7 @@ describe("TaskService", () => {
 
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("informed-assistant", "assistant", "Response including the report", {
+      createXumMessage("informed-assistant", "assistant", "Response including the report", {
         timestamp: Date.now(),
         requestHistorySequence: reportSequence,
       })
@@ -3193,7 +3193,7 @@ describe("TaskService", () => {
     );
     const { workspaceService } = createWorkspaceServiceMocks({ resumeStream });
     const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
-    const userMessage = createMuxMessage("user-request", "user", "Start delegated work", {
+    const userMessage = createXumMessage("user-request", "user", "Start delegated work", {
       timestamp: Date.now(),
     });
     await historyService.appendToHistory(parentId, userMessage);
@@ -3201,14 +3201,14 @@ describe("TaskService", () => {
     assert(typeof userSequence === "number", "user history sequence is required");
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("parent-final", "assistant", "The requested work is complete.", {
+      createXumMessage("parent-final", "assistant", "The requested work is complete.", {
         timestamp: Date.now(),
         requestHistorySequence: userSequence,
       })
     );
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage(
+      createXumMessage(
         "late-terminal-report",
         "user",
         formatSubagentReportEnvelope({
@@ -3251,7 +3251,7 @@ describe("TaskService", () => {
     );
     const { workspaceService } = createWorkspaceServiceMocks({ resumeStream });
     const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
-    const userMessage = createMuxMessage("user-before-compact", "user", "Start delegated work", {
+    const userMessage = createXumMessage("user-before-compact", "user", "Start delegated work", {
       timestamp: Date.now(),
     });
     await historyService.appendToHistory(parentId, userMessage);
@@ -3259,7 +3259,7 @@ describe("TaskService", () => {
     assert(typeof userSequence === "number", "user history sequence is required");
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("compact-output", "assistant", "Compaction summary", {
+      createXumMessage("compact-output", "assistant", "Compaction summary", {
         timestamp: Date.now(),
         agentId: "compact",
         requestHistorySequence: userSequence,
@@ -3267,7 +3267,7 @@ describe("TaskService", () => {
     );
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage(
+      createXumMessage(
         "terminal-report-after-compact",
         "user",
         formatSubagentReportEnvelope({
@@ -3382,7 +3382,7 @@ describe("TaskService", () => {
     const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage(
+      createXumMessage(
         "terminal-report",
         "user",
         formatSubagentReportEnvelope({
@@ -3456,7 +3456,7 @@ describe("TaskService", () => {
     });
     await historyService.appendToHistory(
       parentWorkspaceId,
-      createMuxMessage(
+      createXumMessage(
         "continuation-report",
         "user",
         formatSubagentReportEnvelope({
@@ -3548,7 +3548,7 @@ describe("TaskService", () => {
     });
     await historyService.appendToHistory(
       parentWorkspaceId,
-      createMuxMessage(
+      createXumMessage(
         "old-report",
         "user",
         formatSubagentReportEnvelope({
@@ -4507,7 +4507,7 @@ describe("TaskService", () => {
       disposableWorkspace: false,
     });
 
-    const reportMessage = createMuxMessage(
+    const reportMessage = createXumMessage(
       "existing-terminal-report",
       "user",
       formatSubagentReportEnvelope({
@@ -4593,7 +4593,7 @@ describe("TaskService", () => {
       ownerWorkspaceId: parentId,
       turnId: "turn-previous",
     };
-    const reportMessage = createMuxMessage(
+    const reportMessage = createXumMessage(
       "existing-terminal-report-previous-turn",
       "user",
       formatSubagentReportEnvelope({
@@ -4763,14 +4763,14 @@ describe("TaskService", () => {
     const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("pre-compact-exec", "assistant", "Waiting for delegated work", {
+      createXumMessage("pre-compact-exec", "assistant", "Waiting for delegated work", {
         timestamp: Date.now(),
         agentId: "exec",
       })
     );
     await historyService.appendToHistory(
       parentId,
-      createMuxMessage("bare-compact-output", "assistant", "Compaction summary", {
+      createXumMessage("bare-compact-output", "assistant", "Compaction summary", {
         timestamp: Date.now(),
         agentId: "compact",
       })
@@ -5185,7 +5185,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_prehandoff", "assistant", "Premature final text", {
+      createXumMessage("msg_prehandoff", "assistant", "Premature final text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -5252,7 +5252,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_prehandoff", "assistant", "Recovered final text", {
+      createXumMessage("msg_prehandoff", "assistant", "Recovered final text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -5315,7 +5315,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_recovered_list", "assistant", "Recovered list text", {
+      createXumMessage("msg_recovered_list", "assistant", "Recovered list text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -5382,7 +5382,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_truncated", "assistant", "Partial text", {
+      createXumMessage("msg_truncated", "assistant", "Partial text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "length",
@@ -5664,7 +5664,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+          createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
         )
       ).success
     ).toBe(true);
@@ -5759,7 +5759,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_queue_cut", "assistant", "Cut mid-work", {
+          createXumMessage("msg_queue_cut", "assistant", "Cut mid-work", {
             model: "anthropic:claude-opus-4-6",
             agentId: "exec",
             finishReason: "tool-calls",
@@ -5806,7 +5806,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_required_tool_stop", "assistant", "Stopped on required tool", {
+          createXumMessage("msg_required_tool_stop", "assistant", "Stopped on required tool", {
             model: "anthropic:claude-opus-4-6",
             agentId: "exec",
             finishReason: "tool-calls",
@@ -5819,7 +5819,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_unrelated_later_input", "user", "Unrelated later question")
+          createXumMessage("msg_unrelated_later_input", "user", "Unrelated later question")
         )
       ).success
     ).toBe(true);
@@ -5875,7 +5875,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_selfhealed", "assistant", "Self-healed final text", {
+      createXumMessage("msg_selfhealed", "assistant", "Self-healed final text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -5903,7 +5903,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           parentId,
-          createMuxMessage(
+          createXumMessage(
             "stale-direct-parent-failure",
             "user",
             [
@@ -5995,7 +5995,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_consumed_repair", "assistant", "Consumed repaired result", {
+          createXumMessage("msg_consumed_repair", "assistant", "Consumed repaired result", {
             model: "anthropic:claude-opus-4-6",
             agentId: "exec",
             finishReason: "stop",
@@ -6337,7 +6337,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+      createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
     );
     expect(appendResult.success).toBe(true);
     await new TaskHandleStore(config).upsertWorkspaceTurn({
@@ -6418,7 +6418,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_blocked_final", "assistant", "Blocked final text", {
+          createXumMessage("msg_blocked_final", "assistant", "Blocked final text", {
             model: "anthropic:claude-opus-4-6",
             agentId: "exec",
             finishReason: "stop",
@@ -6495,7 +6495,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+          createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
         )
       ).success
     ).toBe(true);
@@ -6543,7 +6543,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+          createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
         )
       ).success
     ).toBe(true);
@@ -6593,7 +6593,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+          createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
         )
       ).success
     ).toBe(true);
@@ -6649,7 +6649,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+          createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
         )
       ).success
     ).toBe(true);
@@ -6699,7 +6699,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+          createXumMessage("msg_prompt", "user", "Summarize", { muxMetadata })
         )
       ).success
     ).toBe(true);
@@ -6707,7 +6707,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_manual", "user", "Manual follow-up", {})
+          createXumMessage("msg_manual", "user", "Manual follow-up", {})
         )
       ).success
     ).toBe(true);
@@ -6794,7 +6794,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_selfhealed_final", "assistant", "Self-healed final text", {
+          createXumMessage("msg_selfhealed_final", "assistant", "Self-healed final text", {
             model: "anthropic:claude-opus-4-6",
             agentId: "exec",
             finishReason: "stop",
@@ -6807,7 +6807,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           "childworkspace",
-          createMuxMessage("msg_manual_later", "user", "Manual follow-up", {})
+          createXumMessage("msg_manual_later", "user", "Manual follow-up", {})
         )
       ).success
     ).toBe(true);
@@ -6859,7 +6859,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_prehandoff", "assistant", "Premature final text", {
+      createXumMessage("msg_prehandoff", "assistant", "Premature final text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -6938,7 +6938,7 @@ describe("TaskService", () => {
     };
     const appendResult = await historyService.appendToHistory(
       "childworkspace",
-      createMuxMessage("msg_workflow_blocked", "assistant", "Workflow-blocked final text", {
+      createXumMessage("msg_workflow_blocked", "assistant", "Workflow-blocked final text", {
         model: "anthropic:claude-opus-4-6",
         agentId: "exec",
         finishReason: "stop",
@@ -8101,7 +8101,7 @@ describe("TaskService", () => {
     const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
     const appendAcceptedPrompt = await historyService.appendToHistory(
       acceptedStartingTaskId,
-      createMuxMessage("accepted-starting-prompt", "user", acceptedPrompt)
+      createXumMessage("accepted-starting-prompt", "user", acceptedPrompt)
     );
     expect(appendAcceptedPrompt.success).toBe(true);
     expect(findWorkspaceInConfig(config, queuedTaskId)?.taskPrompt).toBeUndefined();
@@ -10827,7 +10827,7 @@ describe("TaskService", () => {
     });
     const appendManualUser = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
+      createXumMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
     );
     expect(appendManualUser.success).toBe(true);
 
@@ -10885,7 +10885,7 @@ describe("TaskService", () => {
     });
     const appendReset = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage("reset-boundary", "assistant", "Context reset", {
+      createXumMessage("reset-boundary", "assistant", "Context reset", {
         timestamp: 2_000,
         contextBoundaryKind: "reset",
       })
@@ -10946,7 +10946,7 @@ describe("TaskService", () => {
     });
     const appendManualUser = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
+      createXumMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
     );
     expect(appendManualUser.success).toBe(true);
 
@@ -11003,7 +11003,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           rootWorkspaceId,
-          createMuxMessage(assistantMessageId, "assistant", "", { timestamp: 1_000 })
+          createXumMessage(assistantMessageId, "assistant", "", { timestamp: 1_000 })
         )
       ).success
     ).toBe(true);
@@ -11011,7 +11011,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           rootWorkspaceId,
-          createMuxMessage("workflow-slash-trigger", "user", "/research new topic", {
+          createXumMessage("workflow-slash-trigger", "user", "/research new topic", {
             timestamp: 2_000,
           })
         )
@@ -11080,7 +11080,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           rootWorkspaceId,
-          createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 1_000 })
+          createXumMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 1_000 })
         )
       ).success
     ).toBe(true);
@@ -11088,7 +11088,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           rootWorkspaceId,
-          createMuxMessage(assistantMessageId, "assistant", "", { timestamp: 2_000 })
+          createXumMessage(assistantMessageId, "assistant", "", { timestamp: 2_000 })
         )
       ).success
     ).toBe(true);
@@ -11163,7 +11163,7 @@ describe("TaskService", () => {
     });
     const appendManualUser = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage("manual-user", "user", "Ignore the old workflow")
+      createXumMessage("manual-user", "user", "Ignore the old workflow")
     );
     expect(appendManualUser.success).toBe(true);
 
@@ -11221,7 +11221,7 @@ describe("TaskService", () => {
     });
     const appendCompaction = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage("midstream-auto-compaction", "user", "Compacting to continue", {
+      createXumMessage("midstream-auto-compaction", "user", "Compacting to continue", {
         timestamp: 2_000,
         synthetic: true,
         muxMetadata: {
@@ -11300,7 +11300,7 @@ describe("TaskService", () => {
     });
     const appendCompaction = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage("auto-compaction", "user", "Compacting before a new user prompt", {
+      createXumMessage("auto-compaction", "user", "Compacting before a new user prompt", {
         timestamp: 2_000,
         synthetic: true,
         muxMetadata: {
@@ -11378,7 +11378,7 @@ describe("TaskService", () => {
 
     const appendTaskAwaitDiscovery = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage(
+      createXumMessage(
         "assistant-task-await-discovery",
         "assistant",
         "",
@@ -12149,7 +12149,7 @@ describe("TaskService", () => {
 
     const appendResult = await historyService.appendToHistory(
       rootWorkspaceId,
-      createMuxMessage(
+      createXumMessage(
         "assistant-root-history",
         "assistant",
         "Parent is currently running in plan mode.",
@@ -12263,7 +12263,7 @@ describe("TaskService", () => {
 
     const appendResult = await historyService.appendToHistory(
       parentWorkspaceId,
-      createMuxMessage(
+      createXumMessage(
         "assistant-parent-history",
         "assistant",
         "Parent is currently running in plan mode.",
@@ -17458,7 +17458,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -17478,13 +17478,13 @@ describe("TaskService", () => {
 
     // Seed child history with the initial prompt + assistant placeholder so committing the final
     // partial updates the existing assistant message (matching real streaming behavior).
-    const childPrompt = createMuxMessage("user-child-prompt", "user", "do the thing", {
+    const childPrompt = createXumMessage("user-child-prompt", "user", "do the thing", {
       timestamp: Date.now(),
     });
     const appendChildPrompt = await historyService.appendToHistory(childId, childPrompt);
     expect(appendChildPrompt.success).toBe(true);
 
-    const childAssistantPlaceholder = createMuxMessage("assistant-child-partial", "assistant", "", {
+    const childAssistantPlaceholder = createXumMessage("assistant-child-partial", "assistant", "", {
       timestamp: Date.now(),
     });
     const appendChildPlaceholder = await historyService.appendToHistory(
@@ -17498,7 +17498,7 @@ describe("TaskService", () => {
       throw new Error("Expected child historySequence to be a number");
     }
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       "assistant-child-partial",
       "assistant",
       "",
@@ -17652,9 +17652,9 @@ describe("TaskService", () => {
     legacyVariants?: string[];
     timestamp: number;
     prompt?: string;
-    additionalParts?: MuxMessage["parts"];
+    additionalParts?: XumMessage["parts"];
   }): Promise<void> {
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       params.messageId,
       "assistant",
       "Waiting on best-of subagents…",
@@ -17682,7 +17682,7 @@ describe("TaskService", () => {
   }
 
   function getTaskToolPart(
-    message: MuxMessage | null
+    message: XumMessage | null
   ): (DynamicToolPart & { state: string; output?: unknown }) | undefined {
     return message?.parts.find((part) => isDynamicToolPart(part) && part.toolName === "task") as
       | (DynamicToolPart & { state: string; output?: unknown })
@@ -17728,7 +17728,7 @@ describe("TaskService", () => {
     title: string;
     prompt?: string;
   }): Promise<void> {
-    const childPrompt = createMuxMessage(
+    const childPrompt = createXumMessage(
       `user-${params.childId}-prompt`,
       "user",
       params.prompt ?? "compare options",
@@ -17740,7 +17740,7 @@ describe("TaskService", () => {
       true
     );
 
-    const childAssistantPlaceholder = createMuxMessage(
+    const childAssistantPlaceholder = createXumMessage(
       `assistant-${params.childId}-partial`,
       "assistant",
       "",
@@ -17756,7 +17756,7 @@ describe("TaskService", () => {
       throw new Error("Expected child historySequence to be a number");
     }
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       `assistant-${params.childId}-partial`,
       "assistant",
       "",
@@ -18220,7 +18220,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-fallback",
       "assistant",
       "Waiting on best-of subagents…",
@@ -18253,12 +18253,12 @@ describe("TaskService", () => {
     );
     expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
 
-    const childPrompt = createMuxMessage(`user-${childOneId}-prompt`, "user", "compare options", {
+    const childPrompt = createXumMessage(`user-${childOneId}-prompt`, "user", "compare options", {
       timestamp: Date.now(),
     });
     expect((await historyService.appendToHistory(childOneId, childPrompt)).success).toBe(true);
 
-    const childAssistantPlaceholder = createMuxMessage(
+    const childAssistantPlaceholder = createXumMessage(
       `assistant-${childOneId}-partial`,
       "assistant",
       "",
@@ -18273,7 +18273,7 @@ describe("TaskService", () => {
       throw new Error("Expected child historySequence to be a number");
     }
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       `assistant-${childOneId}-partial`,
       "assistant",
       "",
@@ -18359,7 +18359,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-deferred-fallback",
       "assistant",
       "Waiting on best-of subagents…",
@@ -18386,12 +18386,12 @@ describe("TaskService", () => {
       reportMarkdown: string,
       title: string
     ): Promise<void> {
-      const childPrompt = createMuxMessage(`user-${childId}-prompt`, "user", "compare options", {
+      const childPrompt = createXumMessage(`user-${childId}-prompt`, "user", "compare options", {
         timestamp: Date.now(),
       });
       expect((await historyService.appendToHistory(childId, childPrompt)).success).toBe(true);
 
-      const childAssistantPlaceholder = createMuxMessage(
+      const childAssistantPlaceholder = createXumMessage(
         `assistant-${childId}-partial`,
         "assistant",
         "",
@@ -18406,7 +18406,7 @@ describe("TaskService", () => {
         throw new Error("Expected child historySequence to be a number");
       }
 
-      const childPartial = createMuxMessage(
+      const childPartial = createXumMessage(
         `assistant-${childId}-partial`,
         "assistant",
         "",
@@ -18529,7 +18529,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -18547,7 +18547,7 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       "assistant-child-partial",
       "assistant",
       "",
@@ -18711,7 +18711,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -18728,7 +18728,7 @@ describe("TaskService", () => {
     );
     expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       "assistant-child-partial",
       "assistant",
       "",
@@ -18863,7 +18863,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -18881,7 +18881,7 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       "assistant-child-partial",
       "assistant",
       "",
@@ -19001,7 +19001,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentHistoryMessage = createMuxMessage(
+    const parentHistoryMessage = createXumMessage(
       "assistant-parent-history",
       "assistant",
       "Spawned subagent…",
@@ -19023,7 +19023,7 @@ describe("TaskService", () => {
     );
     expect(appendParentHistory.success).toBe(true);
 
-    const childPartial = createMuxMessage(
+    const childPartial = createXumMessage(
       "assistant-child-partial",
       "assistant",
       "",
@@ -19124,7 +19124,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -19932,7 +19932,7 @@ describe("TaskService", () => {
       for (const [index, agentId] of historyAgentIds.entries()) {
         await historyService.appendToHistory(
           parentId,
-          createMuxMessage(`${idSuffix}-assistant-${index}`, "assistant", "Parent turn output", {
+          createXumMessage(`${idSuffix}-assistant-${index}`, "assistant", "Parent turn output", {
             timestamp: Date.now(),
             agentId,
           })
@@ -20066,7 +20066,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -20208,7 +20208,7 @@ describe("TaskService", () => {
       aiService,
       workspaceService,
     });
-    const progressMessage = createMuxMessage(
+    const progressMessage = createXumMessage(
       "assistant-progress",
       "assistant",
       "",
@@ -20379,7 +20379,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           childId,
-          createMuxMessage("assistant-progress", "assistant", "", { timestamp: Date.now() }, [
+          createXumMessage("assistant-progress", "assistant", "", { timestamp: Date.now() }, [
             {
               type: "dynamic-tool",
               toolCallId: "agent-report-old",
@@ -20651,7 +20651,7 @@ describe("TaskService", () => {
       workspaceService,
     });
     for (const message of [
-      createMuxMessage("assistant-old-progress", "assistant", "", { timestamp: Date.now() - 2 }, [
+      createXumMessage("assistant-old-progress", "assistant", "", { timestamp: Date.now() - 2 }, [
         {
           type: "dynamic-tool",
           toolCallId: "agent-report-old",
@@ -20661,7 +20661,7 @@ describe("TaskService", () => {
           output: { success: true },
         },
       ]),
-      createMuxMessage(
+      createXumMessage(
         "assistant-failed-progress",
         "assistant",
         "",
@@ -21203,7 +21203,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-partial",
       "assistant",
       "Waiting on subagent…",
@@ -21420,7 +21420,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-pending-group-target",
       "assistant",
       "Waiting on best-of subagents…",
@@ -21538,7 +21538,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-stale-single-group",
       "assistant",
       "Waiting on best-of subagents…",
@@ -21656,7 +21656,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-finalize-ready",
       "assistant",
       "Waiting on best-of subagents…",
@@ -21796,7 +21796,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-concurrent-deferred-fallback",
       "assistant",
       "Waiting on best-of subagents…",
@@ -21918,7 +21918,7 @@ describe("TaskService", () => {
     // An output written by a newer release: extra fields fail the strict result schema, but
     // the referenced-task bookkeeping must still see these IDs or recovery would append a
     // duplicate fallback report after a downgrade.
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-future-fields-fallback",
       "assistant",
       "Waiting on best-of subagents…",
@@ -22023,7 +22023,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           parentId,
-          createMuxMessage(
+          createXumMessage(
             "progress-report",
             "user",
             formatSubagentReportEnvelope({
@@ -22108,7 +22108,7 @@ describe("TaskService", () => {
       (
         await historyService.appendToHistory(
           parentId,
-          createMuxMessage(
+          createXumMessage(
             "completed-report",
             "user",
             formatSubagentReportEnvelope({
@@ -22195,7 +22195,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-concurrent-direct-fallback",
       "assistant",
       "Waiting on best-of subagents…",
@@ -22322,7 +22322,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const parentPartial = createMuxMessage(
+    const parentPartial = createXumMessage(
       "assistant-parent-best-of-initialize-finalize-ready",
       "assistant",
       "Waiting on best-of subagents…",

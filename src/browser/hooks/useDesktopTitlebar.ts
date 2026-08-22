@@ -5,7 +5,7 @@
  * 1. Drag regions for window dragging
  * 2. Insets for native window controls (traffic lights on mac, overlay on win/linux)
  *
- * In browser/mux server mode, these are no-ops.
+ * In browser/Xum server mode, these are no-ops.
  *
  * ## Architecture
  *

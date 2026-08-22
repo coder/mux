@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
 import type { ProjectConfig } from "../../src/common/types/project";
 import type { OnChatMode, WorkspaceChatMessage } from "../../src/common/orpc/types";
-import { MuxAgent } from "../../src/node/acp/agent";
+import { XumAgent } from "../../src/node/acp/agent";
 import type { ORPCClient, ServerConnection } from "../../src/node/acp/serverConnection";
 
 const execFileAsyncForTest = promisify(execFile);
@@ -31,7 +31,7 @@ interface HarnessOptions {
 }
 
 interface Harness {
-  agent: MuxAgent;
+  agent: XumAgent;
   createdWorkspaceIds: string[];
   createCalls: WorkspaceCreateInput[];
   removeCalls: string[];
@@ -252,9 +252,9 @@ function createHarness(options?: HarnessOptions): Harness {
 
   const { stream, closeInput } = createControllableAcpStream();
 
-  let agentInstance: MuxAgent | null = null;
+  let agentInstance: XumAgent | null = null;
   const connection = new AgentSideConnection((connectionToAgent) => {
-    const createdAgent = new MuxAgent(connectionToAgent, server, {
+    const createdAgent = new XumAgent(connectionToAgent, server, {
       disconnectCleanupMaxWaitMs: options?.disconnectCleanupMaxWaitMs,
     });
     agentInstance = createdAgent;
@@ -262,7 +262,7 @@ function createHarness(options?: HarnessOptions): Harness {
   }, stream);
 
   if (agentInstance == null) {
-    throw new Error("createHarness: failed to construct MuxAgent");
+    throw new Error("createHarness: failed to construct XumAgent");
   }
 
   return {

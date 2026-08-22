@@ -531,13 +531,13 @@ describe("createOrpcServer", () => {
   test("includes app-proxy base paths in OAuth redirect and callback return URLs", async () => {
     let muxGatewayRedirectUri = "";
     const stubContext: Partial<ORPCContext> = {
-      muxGatewayOauthService: {
+      xumGatewayOauthService: {
         startServerFlow: (input: { redirectUri: string }) => {
           muxGatewayRedirectUri = input.redirectUri;
           return { authorizeUrl: "https://gateway.example.com/auth", state: "state-gateway" };
         },
         handleServerCallbackAndExchange: () => Promise.resolve({ success: true, data: undefined }),
-      } as unknown as ORPCContext["muxGatewayOauthService"],
+      } as unknown as ORPCContext["xumGatewayOauthService"],
     };
     let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
 
@@ -782,13 +782,13 @@ describe("createOrpcServer", () => {
     let muxGovernorRedirectUri = "";
 
     const stubContext: Partial<ORPCContext> = {
-      muxGatewayOauthService: {
+      xumGatewayOauthService: {
         startServerFlow: (input: { redirectUri: string }) => {
           muxGatewayRedirectUri = input.redirectUri;
           return { authorizeUrl: "https://gateway.example.com/auth", state: "state-gateway" };
         },
-      } as unknown as ORPCContext["muxGatewayOauthService"],
-      muxGovernorOauthService: {
+      } as unknown as ORPCContext["xumGatewayOauthService"],
+      xumGovernorOauthService: {
         startServerFlow: (input: { governorOrigin: string; redirectUri: string }) => {
           muxGovernorRedirectUri = input.redirectUri;
           return {
@@ -796,7 +796,7 @@ describe("createOrpcServer", () => {
             data: { authorizeUrl: "https://governor.example.com/auth", state: "state-governor" },
           };
         },
-      } as unknown as ORPCContext["muxGovernorOauthService"],
+      } as unknown as ORPCContext["xumGovernorOauthService"],
     };
 
     let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
@@ -845,12 +845,12 @@ describe("createOrpcServer", () => {
     let muxGatewayRedirectUri = "";
 
     const stubContext: Partial<ORPCContext> = {
-      muxGatewayOauthService: {
+      xumGatewayOauthService: {
         startServerFlow: (input: { redirectUri: string }) => {
           muxGatewayRedirectUri = input.redirectUri;
           return { authorizeUrl: "https://gateway.example.com/auth", state: "state-gateway-http" };
         },
-      } as unknown as ORPCContext["muxGatewayOauthService"],
+      } as unknown as ORPCContext["xumGatewayOauthService"],
     };
 
     let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
@@ -1115,9 +1115,9 @@ describe("createOrpcServer", () => {
 
   test("OAuth callback routes accept POST redirects (query + form_post)", async () => {
     const stubContext: Partial<ORPCContext> = {
-      muxGovernorOauthService: {
+      xumGovernorOauthService: {
         handleServerCallbackAndExchange: () => Promise.resolve({ success: true, data: undefined }),
-      } as unknown as ORPCContext["muxGovernorOauthService"],
+      } as unknown as ORPCContext["xumGovernorOauthService"],
     };
 
     let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
@@ -1155,12 +1155,12 @@ describe("createOrpcServer", () => {
   test("allows cross-origin POST requests on OAuth callback routes", async () => {
     const handleSuccessfulCallback = () => Promise.resolve({ success: true, data: undefined });
     const stubContext: Partial<ORPCContext> = {
-      muxGatewayOauthService: {
+      xumGatewayOauthService: {
         handleServerCallbackAndExchange: handleSuccessfulCallback,
-      } as unknown as ORPCContext["muxGatewayOauthService"],
-      muxGovernorOauthService: {
+      } as unknown as ORPCContext["xumGatewayOauthService"],
+      xumGovernorOauthService: {
         handleServerCallbackAndExchange: handleSuccessfulCallback,
-      } as unknown as ORPCContext["muxGovernorOauthService"],
+      } as unknown as ORPCContext["xumGovernorOauthService"],
       mcpOauthService: {
         handleServerCallbackAndExchange: handleSuccessfulCallback,
       } as unknown as ORPCContext["mcpOauthService"],

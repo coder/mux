@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { hasStartHerePlanSummary, isStartHerePlanSummaryMessage } from "./startHerePlanSummary";
 
-function createTextMessage(overrides: Partial<MuxMessage>): MuxMessage {
+function createTextMessage(overrides: Partial<XumMessage>): XumMessage {
   return {
     id: overrides.id ?? `msg-${Math.random().toString(36).slice(2)}`,
     role: overrides.role ?? "assistant",
@@ -79,7 +79,7 @@ describe("isStartHerePlanSummaryMessage", () => {
 
 describe("hasStartHerePlanSummary", () => {
   it("returns true when a Start Here plan summary exists anywhere in history", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       createTextMessage({
         id: "start-here-123",
         role: "assistant",

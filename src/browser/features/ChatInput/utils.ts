@@ -21,7 +21,7 @@ import {
   dedupeMcpPromptRefs,
   type AgentSkillReference,
   type MCPPromptReference,
-  type MuxMessageMetadata,
+  type XumMessageMetadata,
 } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/types";
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
@@ -90,7 +90,7 @@ export function buildSkillInvocationMetadata(
   rawCommand: string,
   descriptor: AgentSkillDescriptor,
   argumentText: string
-): MuxMessageMetadata {
+): XumMessageMetadata {
   return buildAgentSkillMetadata({
     rawCommand,
     commandPrefix: `/${descriptor.name}`,

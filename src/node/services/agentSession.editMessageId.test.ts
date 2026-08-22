@@ -4,7 +4,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { Config } from "@/node/config";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { SendMessageError } from "@/common/types/errors";
 import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
@@ -74,7 +74,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     const originalImageUrl = "data:image/png;base64,AAAA";
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage(messageId, "user", "original", { historySequence: 0 }, [
+      createXumMessage(messageId, "user", "original", { historySequence: 0 }, [
         { type: "file", mediaType: "image/png", url: originalImageUrl },
       ])
     );
@@ -129,11 +129,11 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     const { session, historyService, streamMessage } = await createSessionHarness(workspaceId);
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-original", "user", "original", { historySequence: 0 })
+      createXumMessage("user-original", "user", "original", { historySequence: 0 })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-original", "assistant", "reply", { historySequence: 1 })
+      createXumMessage("assistant-original", "assistant", "reply", { historySequence: 1 })
     );
     const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
     const appendToHistory = spyOn(historyService, "appendToHistory");
@@ -222,7 +222,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
 
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("snapshot-original", "user", "snapshot", {
+      createXumMessage("snapshot-original", "user", "snapshot", {
         historySequence: 0,
         synthetic: true,
         fileAtMentionSnapshot: ["@src/foo.ts"],
@@ -230,17 +230,17 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-original", "user", "original @src/foo.ts", {
+      createXumMessage("user-original", "user", "original @src/foo.ts", {
         historySequence: 1,
       })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-original", "assistant", "reply", { historySequence: 2 })
+      createXumMessage("assistant-original", "assistant", "reply", { historySequence: 2 })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("boundary", "assistant", "summary", {
+      createXumMessage("boundary", "assistant", "summary", {
         historySequence: 3,
         compacted: "user",
         compactionBoundary: true,
@@ -249,7 +249,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-after-boundary", "assistant", "after", { historySequence: 4 })
+      createXumMessage("assistant-after-boundary", "assistant", "after", { historySequence: 4 })
     );
     const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
     expect(activeWindow.success).toBe(true);

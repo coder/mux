@@ -6,7 +6,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { ProjectConfig } from "../../src/common/types/project";
 import type { OnChatMode, WorkspaceChatMessage } from "../../src/common/orpc/types";
-import { MuxAgent } from "../../src/node/acp/agent";
+import { XumAgent } from "../../src/node/acp/agent";
 import type { ORPCClient, ServerConnection } from "../../src/node/acp/serverConnection";
 
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
@@ -36,11 +36,11 @@ interface HarnessOptions {
   onChatStream?: AsyncIterable<WorkspaceChatMessage>;
   requireTrustedProjectForCreate?: boolean;
   projectEntries?: Array<[string, ProjectConfig]>;
-  agentOptions?: ConstructorParameters<typeof MuxAgent>[2];
+  agentOptions?: ConstructorParameters<typeof XumAgent>[2];
 }
 
 interface Harness {
-  agent: MuxAgent;
+  agent: XumAgent;
   onChatCalls: Array<{ workspaceId: string; mode?: OnChatMode }>;
   setTrustCalls: Array<{ projectPath: string; trusted: boolean }>;
   createCalls: WorkspaceCreateInput[];
@@ -216,19 +216,19 @@ function createMockServer(options?: HarnessOptions): MockServer {
 function createHarness(options?: HarnessOptions): Harness {
   const mockServer = createMockServer(options);
 
-  let agentInstance: MuxAgent | null = null;
+  let agentInstance: XumAgent | null = null;
   // Use a real ACP connection instead of casting a hand-rolled stub to
   // AgentSideConnection. This keeps the test harness type-safe and exercises
-  // the same connection surface MuxAgent uses in production.
+  // the same connection surface XumAgent uses in production.
   const _connection = new AgentSideConnection((connectionToAgent) => {
-    const createdAgent = new MuxAgent(connectionToAgent, mockServer.server, options?.agentOptions);
+    const createdAgent = new XumAgent(connectionToAgent, mockServer.server, options?.agentOptions);
     agentInstance = createdAgent;
     return createdAgent;
   }, createInMemoryAcpStream());
   void _connection;
 
   if (agentInstance == null) {
-    throw new Error("createHarness: failed to construct MuxAgent");
+    throw new Error("createHarness: failed to construct XumAgent");
   }
 
   return {
@@ -242,7 +242,7 @@ function createHarness(options?: HarnessOptions): Harness {
 }
 
 // Cross-wired in-memory pipes so a real ClientSideConnection talks to the real
-// AgentSideConnection over JSON-RPC. Unlike createHarness (which invokes MuxAgent
+// AgentSideConnection over JSON-RPC. Unlike createHarness (which invokes XumAgent
 // methods directly and therefore renames in lockstep with the implementation),
 // this exercises the SDK's wire dispatch: a missed Agent-interface rename (the
 // SDK declares listSessions/resumeSession as optional, e.g. unstable_listSessions
@@ -255,7 +255,7 @@ function createWireHarness(options?: HarnessOptions): { client: ClientSideConnec
 
   const _agentConnection = new AgentSideConnection(
     (connectionToAgent) =>
-      new MuxAgent(connectionToAgent, mockServer.server, options?.agentOptions),
+      new XumAgent(connectionToAgent, mockServer.server, options?.agentOptions),
     ndJsonStream(agentToClient.writable, clientToAgent.readable)
   );
   void _agentConnection;

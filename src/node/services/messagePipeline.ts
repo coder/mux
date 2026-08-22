@@ -16,7 +16,7 @@ import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToo
 import { sanitizeAnthropicPdfFilenames } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import { convertDataUriFilePartsForSdk } from "@/node/utils/messages/convertDataUriFilePartsForSdk";
 import { attachReasoningReplayMetadata } from "@/node/utils/messages/reasoningProviderOptions";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -33,7 +33,7 @@ import { log } from "./log";
 /** Options for the full message preparation pipeline. */
 export interface PrepareMessagesOptions {
   /** Pre-filtered messages (with interrupted-sentinel already added). */
-  messagesWithSentinel: MuxMessage[];
+  messagesWithSentinel: XumMessage[];
   /** Active agent ID for transition injection. */
   effectiveAgentId: string;
   /** Tool names for mode-transition sentinel detection. */

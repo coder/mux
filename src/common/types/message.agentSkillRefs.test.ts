@@ -5,7 +5,7 @@ import {
   mergeAgentSkillRefs,
   withAgentSkillRefs,
 } from "./message";
-import type { AgentSkillReference, MuxMessageMetadata } from "./message";
+import type { AgentSkillReference, XumMessageMetadata } from "./message";
 import type { ReviewNoteData } from "./review";
 
 function skillRef(
@@ -66,7 +66,7 @@ describe("agent skill refs metadata helpers", () => {
       selectedCode: "const value = true;",
       userNote: "please review",
     };
-    const metadata: MuxMessageMetadata = {
+    const metadata: XumMessageMetadata = {
       type: "agent-skill",
       rawCommand: "/tdd write tests",
       commandPrefix: "/tdd",

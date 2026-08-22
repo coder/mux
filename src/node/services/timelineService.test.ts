@@ -8,7 +8,7 @@ import {
   type TimelineEvent,
   type TimelineEventDraft,
 } from "@/common/orpc/schemas/timeline";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
 import { TimelineService } from "./timelineService";
 
@@ -26,8 +26,8 @@ function message(
   id: string,
   role: "user" | "assistant",
   text: string,
-  metadata: MuxMessage["metadata"] = {}
-): MuxMessage {
+  metadata: XumMessage["metadata"] = {}
+): XumMessage {
   return {
     id,
     role,

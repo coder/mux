@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:te
 import {
   AIService,
   prepareProviderRequestMessages,
-  resolveMuxProjectRootForHostFs,
+  resolveXumProjectRootForHostFs,
 } from "./aiService";
 import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 import {
@@ -41,8 +41,8 @@ import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 import { addInterruptedSentinel } from "@/browser/utils/messages/modelMessageTransform";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import { jsonSchema, tool, type LanguageModel, type Tool } from "ai";
-import { createMuxMessage } from "@/common/types/message";
-import type { ModelMessage, MuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
+import type { ModelMessage, XumMessage } from "@/common/types/message";
 import type { XumToolScope } from "@/common/types/toolScope";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { uniqueSuffix } from "@/common/utils/hasher";
@@ -414,14 +414,14 @@ function stubCommonStreamMessageDependencies(args: {
 
 describe("prepareProviderRequestMessages", () => {
   it("slices at reset boundaries before filtering empty assistant messages", () => {
-    const oldMessage = createMuxMessage("old-user", "user", "old context", {
+    const oldMessage = createXumMessage("old-user", "user", "old context", {
       historySequence: 1,
     });
-    const resetBoundary = createMuxMessage("reset-boundary", "assistant", "", {
+    const resetBoundary = createXumMessage("reset-boundary", "assistant", "", {
       historySequence: 2,
       contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
     });
-    const newMessage = createMuxMessage("new-user", "user", "new context", {
+    const newMessage = createXumMessage("new-user", "user", "new context", {
       historySequence: 3,
     });
 
@@ -436,7 +436,7 @@ describe("prepareProviderRequestMessages", () => {
   });
 
   it("filters workflow display rows while keeping provider-visible workflow results", () => {
-    const trigger = createMuxMessage("workflow-command", "user", "/shallow-review mux", {
+    const trigger = createXumMessage("workflow-command", "user", "/shallow-review mux", {
       historySequence: 1,
       muxMetadata: {
         type: "workflow-trigger-display",
@@ -456,7 +456,7 @@ describe("prepareProviderRequestMessages", () => {
       uiVisible: true,
       muxMetadata: { type: "workflow-run-card-display", runId: "wfr_1" },
     };
-    const result = createMuxMessage(
+    const result = createXumMessage(
       "workflow-result",
       "user",
       "/shallow-review mux\n\n<mux_workflow_result>{}</mux_workflow_result>",
@@ -470,7 +470,7 @@ describe("prepareProviderRequestMessages", () => {
         },
       }
     );
-    const nextUser = createMuxMessage("next-user", "user", "continue normal work", {
+    const nextUser = createXumMessage("next-user", "user", "continue normal work", {
       historySequence: 4,
     });
 
@@ -508,7 +508,7 @@ describe("AIService", () => {
   });
 });
 
-describe("resolveMuxProjectRootForHostFs", () => {
+describe("resolveXumProjectRootForHostFs", () => {
   const projectPath = "/home/user/projects/my-app";
   const workspacePath = "/home/user/.mux/src/my-app/feature-branch";
 
@@ -523,14 +523,14 @@ describe("resolveMuxProjectRootForHostFs", () => {
   }
 
   it("returns workspacePath for local runtime", () => {
-    expect(resolveMuxProjectRootForHostFs(createMetadata({ type: "local" }), workspacePath)).toBe(
+    expect(resolveXumProjectRootForHostFs(createMetadata({ type: "local" }), workspacePath)).toBe(
       workspacePath
     );
   });
 
   it("returns workspacePath for worktree runtime", () => {
     expect(
-      resolveMuxProjectRootForHostFs(
+      resolveXumProjectRootForHostFs(
         createMetadata({ type: "worktree", srcBaseDir: "/home/user/.mux/src" }),
         workspacePath
       )
@@ -539,7 +539,7 @@ describe("resolveMuxProjectRootForHostFs", () => {
 
   it("returns workspacePath for devcontainer runtime", () => {
     expect(
-      resolveMuxProjectRootForHostFs(
+      resolveXumProjectRootForHostFs(
         createMetadata({ type: "devcontainer", configPath: ".devcontainer/devcontainer.json" }),
         workspacePath
       )
@@ -548,7 +548,7 @@ describe("resolveMuxProjectRootForHostFs", () => {
 
   it("returns projectPath for ssh runtime", () => {
     expect(
-      resolveMuxProjectRootForHostFs(
+      resolveXumProjectRootForHostFs(
         createMetadata({
           type: "ssh",
           host: "remote",
@@ -561,7 +561,7 @@ describe("resolveMuxProjectRootForHostFs", () => {
 
   it("returns projectPath for docker runtime", () => {
     expect(
-      resolveMuxProjectRootForHostFs(
+      resolveXumProjectRootForHostFs(
         createMetadata({ type: "docker", image: "ubuntu:22.04" }),
         "/src"
       )
@@ -1336,7 +1336,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     workspaceId: string
   ): Promise<Awaited<ReturnType<AIService["streamMessage"]>>> {
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -1406,7 +1406,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     } as unknown as WorkspaceGoalService;
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -1432,7 +1432,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     } as unknown as WorkspaceGoalService;
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -1461,7 +1461,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     } as unknown as WorkspaceGoalService;
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -1496,7 +1496,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString: KNOWN_MODELS.SONNET.id,
       thinkingLevel: "off",
@@ -1512,7 +1512,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       throw new Error("Expected modelFallback options on startStream");
     }
 
-    const continuationAssistant: MuxMessage = {
+    const continuationAssistant: XumMessage = {
       id: "assistant-partial",
       role: "assistant",
       metadata: { partial: true, historySequence: 2 },
@@ -1594,7 +1594,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     );
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString: sourceModel,
       thinkingLevel: "off",
@@ -1687,7 +1687,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     stubPerModelRouteResolution(harness.service);
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId: options.workspaceId,
       modelString: options.sourceModel,
       thinkingLevel: "off",
@@ -1847,7 +1847,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString: sourceModel,
       thinkingLevel: "high",
@@ -1951,7 +1951,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString,
       thinkingLevel: "off",
@@ -2017,7 +2017,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString,
       thinkingLevel: "off",
@@ -2080,7 +2080,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString,
       thinkingLevel: "off",
@@ -2146,7 +2146,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString,
       thinkingLevel: "off",
@@ -2219,7 +2219,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      messages: [createXumMessage("latest-user", "user", "fix the issue")],
       workspaceId,
       modelString,
       thinkingLevel: "off",
@@ -2234,7 +2234,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
-    const continuationAssistant: MuxMessage = {
+    const continuationAssistant: XumMessage = {
       id: "assistant-reasoning-only",
       role: "assistant",
       metadata: { partial: true, historySequence: 2 },
@@ -2242,7 +2242,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     };
 
     const { providerRequestMessages } = prepareProviderRequestMessages(
-      [createMuxMessage("latest-user", "user", "fix the issue"), continuationAssistant],
+      [createXumMessage("latest-user", "user", "fix the issue"), continuationAssistant],
       "openai",
       "off"
     );
@@ -2252,7 +2252,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("keeps reasoning-only continuations and sentinels for Anthropic thinking fallbacks", () => {
-    const continuationAssistant: MuxMessage = {
+    const continuationAssistant: XumMessage = {
       id: "assistant-reasoning-only",
       role: "assistant",
       metadata: { partial: true, historySequence: 2 },
@@ -2265,7 +2265,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     };
 
     const { providerRequestMessages } = prepareProviderRequestMessages(
-      [createMuxMessage("latest-user", "user", "fix the issue"), continuationAssistant],
+      [createXumMessage("latest-user", "user", "fix the issue"), continuationAssistant],
       "anthropic",
       "medium"
     );
@@ -2293,7 +2293,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2360,7 +2360,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const harness = createHarness(xumHome.path, metadata);
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2392,7 +2392,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2426,7 +2426,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2460,7 +2460,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2611,7 +2611,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2652,7 +2652,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2676,7 +2676,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
+      messages: [createXumMessage("latest-user", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2701,18 +2701,18 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(xumHome.path, metadata);
 
-    const messages: MuxMessage[] = [
-      createMuxMessage("boundary-1", "assistant", "compaction epoch 1", {
+    const messages: XumMessage[] = [
+      createXumMessage("boundary-1", "assistant", "compaction epoch 1", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
         model: "openai:gpt-5.2",
       }),
-      createMuxMessage("assistant-old-response", "assistant", "older response", {
+      createXumMessage("assistant-old-response", "assistant", "older response", {
         model: "openai:gpt-5.2",
         providerMetadata: { openai: { responseId: "resp_epoch_1" } },
       }),
-      createMuxMessage(
+      createXumMessage(
         "start-here-summary",
         "assistant",
         "# Start Here\n\n- Existing plan context\n\n*Plan file preserved at:* /tmp/plan.md",
@@ -2721,14 +2721,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
           agentId: "plan",
         }
       ),
-      createMuxMessage("mid-user", "user", "mid conversation"),
-      createMuxMessage("boundary-2", "assistant", "compaction epoch 2", {
+      createXumMessage("mid-user", "user", "mid conversation"),
+      createXumMessage("boundary-2", "assistant", "compaction epoch 2", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 2,
         model: "openai:gpt-5.2",
       }),
-      createMuxMessage("latest-user", "user", "continue", { historySequence: 42 }),
+      createXumMessage("latest-user", "user", "continue", { historySequence: 42 }),
     ];
 
     const result = await harness.service.streamMessage({
@@ -2770,7 +2770,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const harness = createHarness(xumHome.path, metadata, { routeProvider: "openrouter" });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "medium",
@@ -2799,7 +2799,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const harness = createHarness(xumHome.path, metadata);
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "medium",
@@ -2839,7 +2839,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const harness = createHarness(xumHome.path, metadata);
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "medium",
@@ -2882,7 +2882,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -2905,19 +2905,19 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(xumHome.path, metadata);
 
-    const messages: MuxMessage[] = [
-      createMuxMessage("assistant-before-malformed", "assistant", "response before malformed", {
+    const messages: XumMessage[] = [
+      createXumMessage("assistant-before-malformed", "assistant", "response before malformed", {
         model: "openai:gpt-5.2",
         providerMetadata: { openai: { responseId: "resp_before_malformed" } },
       }),
-      createMuxMessage("malformed-boundary", "assistant", "not a durable boundary", {
+      createXumMessage("malformed-boundary", "assistant", "not a durable boundary", {
         compacted: "user",
         compactionBoundary: true,
         // Invalid durable marker: must not truncate request payload.
         compactionEpoch: 0,
         model: "openai:gpt-5.2",
       }),
-      createMuxMessage("latest-user", "user", "continue"),
+      createXumMessage("latest-user", "user", "continue"),
     ];
 
     const result = await harness.service.streamMessage({
@@ -3146,7 +3146,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -3282,7 +3282,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     }));
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -3373,7 +3373,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const harness = createHarness(xumHome.path, metadata, { sessionUsageService });
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "continue")],
+      messages: [createXumMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -3458,7 +3458,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
       const sessionHolder: ActiveTurnThinkingOverride = {};
       const result = await harness.service.streamMessage({
-        messages: [createMuxMessage("latest-user", "user", "hello")],
+        messages: [createXumMessage("latest-user", "user", "hello")],
         workspaceId,
         // Budget-token Anthropic model (no adaptive effort): level changes show
         // up as thinking.budgetTokens differences.
@@ -3502,7 +3502,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       });
 
       const result = await harness.service.streamMessage({
-        messages: [createMuxMessage("latest-user", "user", "hello")],
+        messages: [createXumMessage("latest-user", "user", "hello")],
         workspaceId,
         modelString: KNOWN_MODELS.SONNET.id,
         thinkingLevel: "medium",
@@ -3533,7 +3533,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       });
 
       const result = await harness.service.streamMessage({
-        messages: [createMuxMessage("latest-user", "user", "hello")],
+        messages: [createXumMessage("latest-user", "user", "hello")],
         workspaceId,
         modelString: "anthropic:claude-opus-4-7",
         thinkingLevel: "high",
@@ -3565,7 +3565,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       });
 
       const result = await harness.service.streamMessage({
-        messages: [createMuxMessage("latest-user", "user", "hello")],
+        messages: [createXumMessage("latest-user", "user", "hello")],
         workspaceId,
         modelString: "xai:grok-4-1-fast",
         thinkingLevel: "off",
@@ -3648,7 +3648,7 @@ describe("AIService.streamMessage multi-project trust gating", () => {
 
   async function streamOnce(harness: TrustGatingHarness, workspaceId: string): Promise<void> {
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("user-message", "user", "hello")],
+      messages: [createXumMessage("user-message", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -3743,7 +3743,7 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     const harness = createHarness(xumHome.path, metadata, false);
 
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("user-message", "user", "hello")],
+      messages: [createXumMessage("user-message", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
@@ -3822,7 +3822,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     modelString = ANTHROPIC_MODEL
   ): Promise<unknown[]> {
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("user-message", "user", "hello")],
+      messages: [createXumMessage("user-message", "user", "hello")],
       workspaceId,
       modelString,
       thinkingLevel: "off",
@@ -4276,7 +4276,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     );
 
     const result = await service.streamMessage({
-      messages: [createMuxMessage("user-message", "user", "hello")],
+      messages: [createXumMessage("user-message", "user", "hello")],
       workspaceId,
       modelString: "coder:google/gemini-2.5-pro",
       thinkingLevel: "medium",
@@ -4322,7 +4322,7 @@ describe("AIService.streamMessage turn envelope", () => {
 
   async function streamTurn(harness: TurnEnvelopeHarness, workspaceId: string): Promise<void> {
     const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("user-message", "user", "hello")],
+      messages: [createXumMessage("user-message", "user", "hello")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",

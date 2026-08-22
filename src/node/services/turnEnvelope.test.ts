@@ -10,7 +10,7 @@ import {
   type Tool,
 } from "ai";
 import { z } from "zod";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { sanitizeToolSchemaForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
@@ -247,7 +247,7 @@ describe("emitTurnEnvelope", () => {
     const journal = new DurableEventJournal(tmp.path);
     // Refusal-fallback continuation: never persisted to chat.jsonl at the
     // request's sequence, so the envelope's blob is replay's only source.
-    const continuation = createMuxMessage(
+    const continuation = createXumMessage(
       "assistant-partial-1",
       "assistant",
       "partial output before refusal",

@@ -1,4 +1,4 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { FILE_EDIT_TOOL_NAMES } from "@/common/types/tools";
 import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
@@ -31,7 +31,7 @@ export interface FileEditDiff {
  * @param messages - The message history to scan
  * @returns Array of unique absolute file paths that were edited (max MAX_EDITED_FILES)
  */
-export function extractEditedFilePaths(messages: MuxMessage[]): string[] {
+export function extractEditedFilePaths(messages: XumMessage[]): string[] {
   const editedFiles: string[] = [];
   const seen = new Set<string>();
 
@@ -176,7 +176,7 @@ function extractOriginalFromDiffs(diffs: string[]): string {
  * @param messages - The message history to scan
  * @returns Array of file diffs (max MAX_EDITED_FILES)
  */
-export function extractEditedFileDiffs(messages: MuxMessage[]): FileEditDiff[] {
+export function extractEditedFileDiffs(messages: XumMessage[]): FileEditDiff[] {
   // Collect all diffs per file path in chronological order
   const diffsByPath = new Map<string, string[]>();
   const editOrder: string[] = []; // Track order of last edit per file

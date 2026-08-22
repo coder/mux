@@ -1,4 +1,4 @@
-import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, ChatXumMessage } from "@/common/orpc/types";
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks, PIXEL_DISABLED, PIXEL_DUAL_THEME } from "@/browser/stories/meta.js";
 import {
@@ -400,9 +400,9 @@ export const Conversation: AppStory = {
             historySequence: 0,
             hiddenCount: 42,
           },
-        } as unknown as ChatMuxMessage;
+        } as unknown as ChatXumMessage;
 
-        const messages: ChatMuxMessage[] = [
+        const messages: ChatXumMessage[] = [
           hiddenIndicator,
           createUserMessage("msg-1", "Add authentication to the user API endpoint", {
             historySequence: 1,
@@ -523,7 +523,7 @@ export const WorkflowTriggeredCommand: AppStory = {
           { name: "shallow-review", args: workflowRun.args },
           { runId, status: workflowRun.status, result: null, run: workflowRun },
           STABLE_TIMESTAMP - 295000
-        ) as ChatMuxMessage;
+        ) as ChatXumMessage;
         workflowCard.type = "message";
         workflowCard.metadata = {
           historySequence: 2,

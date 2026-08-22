@@ -76,7 +76,7 @@ import {
 } from "@/common/utils/thinking/policy";
 import type { ActiveTurnThinkingOverride } from "@/node/services/thinkingOverride";
 import {
-  createMuxMessage,
+  createXumMessage,
   dedupeAgentSkillRefs,
   dedupeMcpPromptRefs,
   filterOrphanedMcpPromptSnapshots,
@@ -89,9 +89,9 @@ import {
   type AgentSkillReference,
   isSyntheticSnapshotUserMessage,
   type CompactionFollowUpRequest,
-  type MuxMessageMetadata,
-  type MuxFilePart,
-  type MuxMessage,
+  type XumMessageMetadata,
+  type XumFilePart,
+  type XumMessage,
   type ReviewNoteDataForDisplay,
   type StartupRetrySendOptions,
 } from "@/common/types/message";
@@ -189,7 +189,7 @@ interface CompactionRequestMetadata {
       text?: string;
       imageParts?: FilePart[];
       reviews?: ReviewNoteDataForDisplay[];
-      muxMetadata?: MuxMessageMetadata;
+      muxMetadata?: XumMessageMetadata;
       model?: string;
       agentId?: string;
       mode?: "exec" | "plan"; // Legacy: older versions stored mode instead of agentId
@@ -237,7 +237,7 @@ const PDF_MEDIA_TYPE = "application/pdf";
 const ACP_PROMPT_ID_METADATA_KEY = "acpPromptId";
 const ACP_DELEGATED_TOOLS_METADATA_KEY = "acpDelegatedTools";
 
-function extractAgentSkillRefs(metadata: MuxMessageMetadata | undefined): AgentSkillReference[] {
+function extractAgentSkillRefs(metadata: XumMessageMetadata | undefined): AgentSkillReference[] {
   if (!metadata) return [];
 
   const refs = sanitizeAgentSkillRefs(metadata.agentSkillRefs);
@@ -314,16 +314,16 @@ function extractAcpDelegatedTools(muxMetadata: unknown): string[] | undefined {
     (muxMetadata as Record<string, unknown>)[ACP_DELEGATED_TOOLS_METADATA_KEY]
   );
 }
-type WorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+type WorkspaceTurnXumMetadata = Extract<XumMessageMetadata, { type: "workspace-turn-task" }>;
 
-function getWorkspaceTurnMuxMetadata(muxMetadata: unknown): WorkspaceTurnMuxMetadata | undefined {
-  const metadata = muxMetadata as MuxMessageMetadata | undefined;
+function getWorkspaceTurnXumMetadata(muxMetadata: unknown): WorkspaceTurnXumMetadata | undefined {
+  const metadata = muxMetadata as XumMessageMetadata | undefined;
   return metadata?.type === "workspace-turn-task" ? metadata : undefined;
 }
 
 function hasSameWorkspaceTurnCorrelation(
-  first: WorkspaceTurnMuxMetadata | undefined,
-  second: WorkspaceTurnMuxMetadata | undefined
+  first: WorkspaceTurnXumMetadata | undefined,
+  second: WorkspaceTurnXumMetadata | undefined
 ): boolean {
   return (
     first != null &&
@@ -354,8 +354,8 @@ function hasSameWorkspaceTurnCorrelation(
  * restarts.
  */
 export function inheritOpenWorkspaceTurnMetadata(
-  messages: readonly MuxMessage[]
-): Extract<MuxMessageMetadata, { type: "workspace-turn-task" }> | undefined {
+  messages: readonly XumMessage[]
+): Extract<XumMessageMetadata, { type: "workspace-turn-task" }> | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     const muxMetadata = message.metadata?.muxMetadata;
@@ -713,10 +713,10 @@ export class AgentSession {
    * the dequeue→stream-start window without consulting stale stream context.
    */
   private dispatchingQueuedEntry = false;
-  private dispatchingQueuedEntryMuxMetadata?: unknown;
+  private dispatchingQueuedEntryXumMetadata?: unknown;
 
   /** Correlation of the direct send currently in the PREPARING phase, if any. */
-  private preparingWorkspaceTurnMetadata?: WorkspaceTurnMuxMetadata;
+  private preparingWorkspaceTurnMetadata?: WorkspaceTurnXumMetadata;
 
   /** Context needed to retry the current stream (cleared on stream end/abort/error). */
   private activeStreamContext?: {
@@ -726,7 +726,7 @@ export class AgentSession {
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
     goalKind?: GoalSyntheticMessageKind;
-    workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+    workspaceTurnMetadata?: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>;
   };
 
   private activeCompactionRequest?: {
@@ -1420,7 +1420,7 @@ export class AgentSession {
     return parsed.success ? parsed.data : undefined;
   }
 
-  private isPendingAskUserQuestion(message: MuxMessage | null | undefined): boolean {
+  private isPendingAskUserQuestion(message: XumMessage | null | undefined): boolean {
     if (!message || message.role !== "assistant") {
       return false;
     }
@@ -1433,7 +1433,7 @@ export class AgentSession {
     );
   }
 
-  private isSyntheticGoalPauseBoundaryMessage(message: MuxMessage): boolean {
+  private isSyntheticGoalPauseBoundaryMessage(message: XumMessage): boolean {
     return (
       message.role === "user" &&
       message.metadata?.synthetic === true &&
@@ -1442,7 +1442,7 @@ export class AgentSession {
   }
 
   private getEditTruncateTargetFromMessages(
-    messages: readonly MuxMessage[],
+    messages: readonly XumMessage[],
     editMessageId: string
   ): string | undefined {
     const editIndex = messages.findIndex((message) => message.id === editMessageId);
@@ -1474,7 +1474,7 @@ export class AgentSession {
       }
     }
 
-    const fullHistory: MuxMessage[] = [];
+    const fullHistory: XumMessage[] = [];
     const fullHistoryResult = await this.historyService.iterateFullHistory(
       this.workspaceId,
       "forward",
@@ -1489,7 +1489,7 @@ export class AgentSession {
     return this.getEditTruncateTargetFromMessages(fullHistory, editMessageId) ?? editMessageId;
   }
 
-  private getLastNonSystemHistoryMessage(historyTail: MuxMessage[]): MuxMessage | undefined {
+  private getLastNonSystemHistoryMessage(historyTail: XumMessage[]): XumMessage | undefined {
     for (let index = historyTail.length - 1; index >= 0; index -= 1) {
       const candidate = historyTail[index];
       if (candidate.role === "system") {
@@ -1597,7 +1597,7 @@ export class AgentSession {
     return metadataResult.data;
   }
 
-  private isVisibleCompletedSubagentReportMessage(message: MuxMessage): boolean {
+  private isVisibleCompletedSubagentReportMessage(message: XumMessage): boolean {
     if (
       message.role !== "user" ||
       message.metadata?.synthetic !== true ||
@@ -1612,7 +1612,7 @@ export class AgentSession {
     return parseSubagentReportEnvelope(text)?.status === "completed";
   }
 
-  private shouldUseUserMessageForRetry(message: MuxMessage): boolean {
+  private shouldUseUserMessageForRetry(message: XumMessage): boolean {
     if (message.role !== "user") {
       return false;
     }
@@ -1648,12 +1648,12 @@ export class AgentSession {
    * a fresh choice, and nothing here is promoted into new defaults.
    */
   private async deriveStartupAutoRetryRequest(params: {
-    partial: MuxMessage | null;
-    historyTail: MuxMessage[];
+    partial: XumMessage | null;
+    historyTail: XumMessage[];
   }): Promise<StartupRetrySendOptions | undefined> {
     const lastUserMessage = [...params.historyTail]
       .reverse()
-      .find((message): message is MuxMessage & { role: "user" } =>
+      .find((message): message is XumMessage & { role: "user" } =>
         this.shouldUseUserMessageForRetry(message)
       );
 
@@ -1663,7 +1663,7 @@ export class AgentSession {
         : [...params.historyTail]
             .reverse()
             .find(
-              (message): message is MuxMessage & { role: "assistant" } =>
+              (message): message is XumMessage & { role: "assistant" } =>
                 message.role === "assistant"
             );
 
@@ -1741,10 +1741,10 @@ export class AgentSession {
     const persistedProviderOptions = persistedRetrySendOptions?.providerOptions;
     const persistedExperiments = persistedRetrySendOptions?.experiments;
 
-    const lastUserMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
-    if (isCompactionRequestMetadata(lastUserMuxMetadata)) {
+    const lastUserXumMetadata = lastUserMessage?.metadata?.muxMetadata;
+    if (isCompactionRequestMetadata(lastUserXumMetadata)) {
       const compactionModel =
-        this.normalizeStartupModel(lastUserMuxMetadata.parsed.model) ?? baseModel;
+        this.normalizeStartupModel(lastUserXumMetadata.parsed.model) ?? baseModel;
       const requestedThinkingLevel =
         baseThinkingLevel ?? coerceThinkingLevel(compactSettings?.thinkingLevel) ?? "off";
 
@@ -1759,8 +1759,8 @@ export class AgentSession {
         thinkingLevel: requestedThinkingLevel,
         ...(requestedReasoningMode != null ? { reasoningMode: requestedReasoningMode } : {}),
         maxOutputTokens:
-          typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
-            ? lastUserMuxMetadata.parsed.maxOutputTokens
+          typeof lastUserXumMetadata.parsed.maxOutputTokens === "number"
+            ? lastUserXumMetadata.parsed.maxOutputTokens
             : persistedMaxOutputTokens,
         toolPolicy: [{ regex_match: ".*", action: "disable" }],
         allowAgentSetGoal: persistedAllowAgentSetGoal,
@@ -1786,17 +1786,17 @@ export class AgentSession {
       return compactionRequest;
     }
 
-    const workspaceTurnMuxMetadata =
-      lastUserMuxMetadata?.type === "workspace-turn-task"
-        ? lastUserMuxMetadata
+    const workspaceTurnXumMetadata =
+      lastUserXumMetadata?.type === "workspace-turn-task"
+        ? lastUserXumMetadata
         : persistedRetrySendOptions?.muxMetadata;
 
     const retryRequest: StartupRetrySendOptions = {
       model: baseModel,
       agentId: baseAgentId,
     };
-    if (workspaceTurnMuxMetadata != null) {
-      retryRequest.muxMetadata = workspaceTurnMuxMetadata;
+    if (workspaceTurnXumMetadata != null) {
+      retryRequest.muxMetadata = workspaceTurnXumMetadata;
     }
     if (baseThinkingLevel) {
       retryRequest.thinkingLevel = baseThinkingLevel;
@@ -1946,7 +1946,7 @@ export class AgentSession {
 
     const startupRetryUserMessage = [...historyResult.data]
       .reverse()
-      .find((message): message is MuxMessage & { role: "user" } =>
+      .find((message): message is XumMessage & { role: "user" } =>
         this.shouldUseUserMessageForRetry(message)
       );
 
@@ -2779,17 +2779,17 @@ export class AgentSession {
     // preserve the original message's attachments.
     // Only search the current compaction epoch — edits of pre-boundary messages are
     // blocked (the frontend only shows post-boundary messages).
-    let preservedEditFileParts: MuxFilePart[] | undefined;
+    let preservedEditFileParts: XumFilePart[] | undefined;
     if (editMessageId && fileParts === undefined) {
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(
         this.workspaceId
       );
       if (historyResult.success) {
-        const targetMessage: MuxMessage | undefined = historyResult.data.find(
+        const targetMessage: XumMessage | undefined = historyResult.data.find(
           (msg) => msg.id === editMessageId
         );
         const fileParts = targetMessage?.parts.filter(
-          (part): part is MuxFilePart => part.type === "file"
+          (part): part is XumFilePart => part.type === "file"
         );
         if (fileParts && fileParts.length > 0) {
           preservedEditFileParts = fileParts;
@@ -2995,13 +2995,13 @@ export class AgentSession {
     // toolPolicy is properly typed via Zod schema inference
     const typedToolPolicy = options?.toolPolicy;
     // muxMetadata is z.any() in schema - cast to proper type
-    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    const typedXumMetadata = options?.muxMetadata as XumMessageMetadata | undefined;
     const acpPromptId =
-      normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(typedMuxMetadata);
+      normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(typedXumMetadata);
     const delegatedToolNames =
       normalizeDelegatedToolNames(options?.delegatedToolNames) ??
-      extractAcpDelegatedTools(typedMuxMetadata);
-    const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
+      extractAcpDelegatedTools(typedXumMetadata);
+    const isCompactionRequest = isCompactionRequestMetadata(typedXumMetadata);
 
     // Internal callers can force Copilot billing attribution for non-user turns
     // (task orchestration, compaction, auto-resume, etc.).
@@ -3014,7 +3014,7 @@ export class AgentSession {
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
     });
 
-    const userMessage = createMuxMessage(
+    const userMessage = createXumMessage(
       messageId,
       "user",
       message,
@@ -3023,7 +3023,7 @@ export class AgentSession {
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
         retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated, goalKind),
-        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        muxMetadata: typedXumMetadata, // Pass through frontend metadata as black-box
         ...(acpPromptId != null ? { acpPromptId } : {}),
         ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
@@ -3054,7 +3054,7 @@ export class AgentSession {
     // the follow-up content sent after compaction completes. This avoids duplicating the user
     // turn in model context (the compaction would otherwise summarize a transcript that already
     // contains the new prompt, then replay it again post-compaction).
-    let autoCompactionMessage: MuxMessage | null = null;
+    let autoCompactionMessage: XumMessage | null = null;
     if (!isCompactionRequest && !editMessageId) {
       // Seed usage state from persisted history on the first send after restart
       // so the compaction monitor can detect context limits even before any live
@@ -3094,9 +3094,9 @@ export class AgentSession {
         // history now, because the correlated queue-cut assistant will be
         // hidden behind the new boundary when the follow-up dispatches.
         let inheritedWorkspaceTurnMetadata:
-          | Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+          | Extract<XumMessageMetadata, { type: "workspace-turn-task" }>
           | undefined;
-        if (typedMuxMetadata?.type === "bash-monitor-wake") {
+        if (typedXumMetadata?.type === "bash-monitor-wake") {
           const preCompactionHistory = await this.historyService.getHistoryFromLatestBoundary(
             this.workspaceId
           );
@@ -3114,7 +3114,7 @@ export class AgentSession {
           fileParts: followUpFileParts,
           agentInitiated,
           goalKind,
-          muxMetadata: typedMuxMetadata,
+          muxMetadata: typedXumMetadata,
           workspaceTurnMetadata: inheritedWorkspaceTurnMetadata,
         });
 
@@ -3131,7 +3131,7 @@ export class AgentSession {
           reason: "on-send",
         });
 
-        autoCompactionMessage = createMuxMessage(
+        autoCompactionMessage = createXumMessage(
           createUserMessageId(),
           "user",
           autoCompactionRequest.messageText,
@@ -3181,16 +3181,16 @@ export class AgentSession {
     // On on-send compaction paths, snapshots are deferred with the follow-up turn.
     const shouldPersistTurnSnapshots = autoCompactionMessage === null;
 
-    let skillSnapshotMessages: MuxMessage[] = [];
-    let mcpPromptSnapshotMessages: MuxMessage[] = [];
+    let skillSnapshotMessages: XumMessage[] = [];
+    let mcpPromptSnapshotMessages: XumMessage[] = [];
     if (shouldPersistTurnSnapshots) {
       try {
         skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
-          typedMuxMetadata,
+          typedXumMetadata,
           options?.disableWorkspaceAgents
         );
         mcpPromptSnapshotMessages = await this.materializeMcpPromptSnapshots(
-          typedMuxMetadata,
+          typedXumMetadata,
           userMessage.id,
           cancelSignal
         );
@@ -3371,7 +3371,7 @@ export class AgentSession {
 
     const preparedTurnAbortController = new AbortController();
     this.activePreparedTurnAbortController = preparedTurnAbortController;
-    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnXumMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
 
     const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
@@ -3513,7 +3513,7 @@ export class AgentSession {
     // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
     this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
-    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnXumMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
     // Open the mid-turn thinking override window for the resumed turn (after
     // setTurnPhase(PREPARING), which clears the holder on the IDLE transition).
@@ -3706,7 +3706,7 @@ export class AgentSession {
       return false;
     }
     try {
-      const userMessage = createMuxMessage(
+      const userMessage = createXumMessage(
         createUserMessageId(),
         "user",
         trimmed,
@@ -3790,8 +3790,8 @@ export class AgentSession {
     fileParts?: FilePart[];
     agentInitiated?: boolean;
     goalKind?: GoalSyntheticMessageKind;
-    muxMetadata?: MuxMessageMetadata;
-    workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+    muxMetadata?: XumMessageMetadata;
+    workspaceTurnMetadata?: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>;
   }): CompactionFollowUpRequest {
     const followUp: CompactionFollowUpRequest = {
       text: params.messageText,
@@ -3867,7 +3867,7 @@ export class AgentSession {
     reason: "on-send" | "mid-stream";
   }): {
     messageText: string;
-    metadata: MuxMessageMetadata;
+    metadata: XumMessageMetadata;
     sendOptions: SendMessageOptions;
     agentInitiated: boolean;
   } {
@@ -3923,7 +3923,7 @@ export class AgentSession {
 
     const messageText = buildCompactionMessageText({ followUpContent });
 
-    const metadata: MuxMessageMetadata = {
+    const metadata: XumMessageMetadata = {
       type: "compaction-request",
       rawCommand: "/compact",
       commandPrefix: "/compact",
@@ -4198,7 +4198,7 @@ export class AgentSession {
         workspaceId: this.workspaceId,
         messageId: lastMsg.id,
       });
-      const sentinelMessage = createMuxMessage(createUserMessageId(), "user", "[CONTINUE]", {
+      const sentinelMessage = createXumMessage(createUserMessageId(), "user", "[CONTINUE]", {
         timestamp: Date.now(),
         synthetic: true,
       });
@@ -4275,30 +4275,30 @@ export class AgentSession {
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
-    const optionsMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
-    const retryMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
+    const optionsXumMetadata = options?.muxMetadata as XumMessageMetadata | undefined;
+    const retryXumMetadata = lastUserMessage?.metadata?.muxMetadata;
     // Bash-monitor-wake continuations inherit the correlation of a delegated
     // workspace turn that was cut mid-work by the wake's queued dispatch, so
     // the turn's eventual terminal stream-end can settle the parent's handle.
-    const streamMuxMetadata =
-      optionsMuxMetadata?.type === "workspace-turn-task"
-        ? optionsMuxMetadata
-        : retryMuxMetadata?.type === "workspace-turn-task"
-          ? retryMuxMetadata
-          : retryMuxMetadata?.type === "bash-monitor-wake"
+    const streamXumMetadata =
+      optionsXumMetadata?.type === "workspace-turn-task"
+        ? optionsXumMetadata
+        : retryXumMetadata?.type === "workspace-turn-task"
+          ? retryXumMetadata
+          : retryXumMetadata?.type === "bash-monitor-wake"
             ? inheritOpenWorkspaceTurnMetadata(requestMessages)
             : undefined;
     // Mid-stream compaction runs after the original send options have already been resolved against
     // history (notably bash-monitor wakes). Persist the actual correlation used by this stream so the
     // post-compaction continuation remains the same delegated workspace turn.
     if (this.activeStreamContext != null) {
-      this.activeStreamContext.workspaceTurnMetadata = streamMuxMetadata;
+      this.activeStreamContext.workspaceTurnMetadata = streamXumMetadata;
     }
     const acpPromptId =
-      normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(optionsMuxMetadata);
+      normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(optionsXumMetadata);
     const delegatedToolNames =
       normalizeDelegatedToolNames(options?.delegatedToolNames) ??
-      extractAcpDelegatedTools(optionsMuxMetadata);
+      extractAcpDelegatedTools(optionsXumMetadata);
 
     const streamResult = await this.aiService.streamMessage({
       messages: requestMessages,
@@ -4317,7 +4317,7 @@ export class AgentSession {
       agentId: options?.agentId,
       acpPromptId,
       delegatedToolNames,
-      muxMetadata: streamMuxMetadata,
+      muxMetadata: streamXumMetadata,
       recordFileState,
       postCompactionAttachments,
       // Invoked by AIService after runtime.ensureReady() (project-scope
@@ -4374,7 +4374,7 @@ export class AgentSession {
   }
 
   private resolveCompactionRequest(
-    history: MuxMessage[],
+    history: XumMessage[],
     modelString: string,
     options?: SendMessageOptions
   ):
@@ -4582,7 +4582,7 @@ export class AgentSession {
 
     await this.finalizeCompactionRetry(data.messageId);
     this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated, retryGoalKind);
-    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnXumMetadata(
       retryOptionsForResume.muxMetadata
     );
     this.setTurnPhase(TurnPhase.PREPARING);
@@ -4679,7 +4679,7 @@ export class AgentSession {
     await this.clearFailedAssistantMessage(data.messageId, "post-compaction-retry");
 
     // Retry the same request, but without post-compaction injection.
-    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(context.options?.muxMetadata);
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnXumMetadata(context.options?.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -4891,7 +4891,7 @@ export class AgentSession {
     forward("stream-start", (payload) => {
       if (payload.type === "stream-start") {
         this.dispatchingQueuedEntry = false;
-        this.dispatchingQueuedEntryMuxMetadata = undefined;
+        this.dispatchingQueuedEntryXumMetadata = undefined;
         this.preparingWorkspaceTurnMetadata = undefined;
         this.activeStreamStartedAtMs = payload.startTime;
         this.queuedProviderToolEndAbortInFlight = false;
@@ -5390,7 +5390,7 @@ export class AgentSession {
 
     if (next === TurnPhase.IDLE) {
       this.dispatchingQueuedEntry = false;
-      this.dispatchingQueuedEntryMuxMetadata = undefined;
+      this.dispatchingQueuedEntryXumMetadata = undefined;
       this.preparingWorkspaceTurnMetadata = undefined;
       // Turn ended: expire any mid-turn thinking override. Safe unconditionally
       // because a replacement turn (e.g. an edit) only creates its holder after
@@ -5647,7 +5647,7 @@ export class AgentSession {
    * A predecessor with the same workspace-turn correlation remains part of the
    * continuation chain and does not supersede the proposed report.
    */
-  hasQueuedOrDispatchingEntry(continuationMetadata?: WorkspaceTurnMuxMetadata): boolean {
+  hasQueuedOrDispatchingEntry(continuationMetadata?: WorkspaceTurnXumMetadata): boolean {
     const hasDifferentPreparingSend =
       this.turnPhase === TurnPhase.PREPARING &&
       !hasSameWorkspaceTurnCorrelation(this.preparingWorkspaceTurnMetadata, continuationMetadata);
@@ -5656,8 +5656,8 @@ export class AgentSession {
     }
 
     if (this.dispatchingQueuedEntry) {
-      const dispatchingMetadata = getWorkspaceTurnMuxMetadata(
-        this.dispatchingQueuedEntryMuxMetadata
+      const dispatchingMetadata = getWorkspaceTurnXumMetadata(
+        this.dispatchingQueuedEntryXumMetadata
       );
       if (!hasSameWorkspaceTurnCorrelation(dispatchingMetadata, continuationMetadata)) {
         return true;
@@ -5692,7 +5692,7 @@ export class AgentSession {
     if (this.messageQueue.isNextEntryBashMonitorWake()) {
       return true;
     }
-    const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
+    const dispatching = this.dispatchingQueuedEntryXumMetadata as XumMessageMetadata | undefined;
     return dispatching?.type === "bash-monitor-wake";
   }
 
@@ -5700,7 +5700,7 @@ export class AgentSession {
    * Whether a queued or dispatching entry continues the exact workspace-turn correlation.
    */
   hasPendingWorkspaceTurnContinuation(
-    metadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+    metadata: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>
   ): boolean {
     if (hasSameWorkspaceTurnCorrelation(this.preparingWorkspaceTurnMetadata, metadata)) {
       return true;
@@ -5716,7 +5716,7 @@ export class AgentSession {
       return true;
     }
 
-    const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
+    const dispatching = this.dispatchingQueuedEntryXumMetadata as XumMessageMetadata | undefined;
     return (
       dispatching?.type === "workspace-turn-task" &&
       dispatching.taskHandleId === metadata.taskHandleId &&
@@ -5908,7 +5908,7 @@ export class AgentSession {
       // behind them dispatches on a later drain instead of batching into them.
       const { message, options, internal } = this.messageQueue.dequeueNext();
       this.dispatchingQueuedEntry = true;
-      this.dispatchingQueuedEntryMuxMetadata = options?.muxMetadata;
+      this.dispatchingQueuedEntryXumMetadata = options?.muxMetadata;
       this.emitQueuedMessageChanged();
 
       // Re-arm dispatch signals for the remaining entries so the stream we are
@@ -5922,7 +5922,7 @@ export class AgentSession {
 
       // Set PREPARING synchronously before the async sendMessage to prevent
       // incoming messages from bypassing the queue during the await gap.
-      this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(options?.muxMetadata);
+      this.preparingWorkspaceTurnMetadata = getWorkspaceTurnXumMetadata(options?.muxMetadata);
       this.setTurnPhase(TurnPhase.PREPARING);
 
       void this.sendMessage(message, options, internal)
@@ -5954,7 +5954,7 @@ export class AgentSession {
         })
         .catch(() => {
           this.dispatchingQueuedEntry = false;
-          this.dispatchingQueuedEntryMuxMetadata = undefined;
+          this.dispatchingQueuedEntryXumMetadata = undefined;
           if (this.turnPhase === TurnPhase.PREPARING) {
             this.setTurnPhase(TurnPhase.IDLE);
           }
@@ -6039,7 +6039,7 @@ export class AgentSession {
       return false;
     }
 
-    let summaryMessage: MuxMessage | undefined;
+    let summaryMessage: XumMessage | undefined;
     if (summaryMessageId) {
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(
         this.workspaceId
@@ -6150,7 +6150,7 @@ export class AgentSession {
     // when the compaction handoff was staged. Avoid forwarding internal-only recovery flags.
     const options: SendMessageOptions & {
       fileParts?: FilePart[];
-      muxMetadata?: MuxMessageMetadata;
+      muxMetadata?: XumMessageMetadata;
     } = {
       model: effectiveModel,
       agentId: effectiveAgentId,
@@ -6196,7 +6196,7 @@ export class AgentSession {
     return true;
   }
 
-  private async clearPendingFollowUpFromSummary(summaryMessage: MuxMessage): Promise<void> {
+  private async clearPendingFollowUpFromSummary(summaryMessage: XumMessage): Promise<void> {
     assert(
       summaryMessage.role === "assistant",
       "clearPendingFollowUpFromSummary requires an assistant summary message"
@@ -6448,7 +6448,7 @@ export class AgentSession {
    */
   private async materializeFileAtMentionsSnapshot(
     messageText: string
-  ): Promise<{ snapshotMessage: MuxMessage; materializedTokens: string[] } | null> {
+  ): Promise<{ snapshotMessage: XumMessage; materializedTokens: string[] } | null> {
     // Guard for test mocks that may not implement getWorkspaceMetadata
     if (typeof this.aiService.getWorkspaceMetadata !== "function") {
       return null;
@@ -6493,7 +6493,7 @@ export class AgentSession {
     const blocks = materialized.map((m) => m.block).join("\n\n");
 
     const snapshotId = createFileSnapshotMessageId();
-    const snapshotMessage = createMuxMessage(snapshotId, "user", blocks, {
+    const snapshotMessage = createXumMessage(snapshotId, "user", blocks, {
       timestamp: Date.now(),
       synthetic: true,
       fileAtMentionSnapshot: tokens,
@@ -6503,16 +6503,16 @@ export class AgentSession {
   }
 
   private async materializeMcpPromptSnapshots(
-    muxMetadata: MuxMessageMetadata | undefined,
+    muxMetadata: XumMessageMetadata | undefined,
     invokingMessageId: string,
     cancelSignal: AbortSignal | undefined
-  ): Promise<MuxMessage[]> {
+  ): Promise<XumMessage[]> {
     const mcpServerManager = this.mcpServerManager;
     if (!mcpServerManager) return [];
 
     const refs = dedupeMcpPromptRefs(sanitizeMcpPromptRefs(muxMetadata?.mcpPromptRefs));
     const snapshots = await Promise.all(
-      refs.map(async (ref): Promise<MuxMessage | null> => {
+      refs.map(async (ref): Promise<XumMessage | null> => {
         try {
           const prompt = await mcpServerManager.getPrompt(
             this.workspaceId,
@@ -6521,7 +6521,7 @@ export class AgentSession {
             ref.arguments ?? {},
             cancelSignal !== undefined ? { signal: cancelSignal } : undefined
           );
-          return createMuxMessage(createMcpPromptSnapshotMessageId(), "user", prompt.text, {
+          return createXumMessage(createMcpPromptSnapshotMessageId(), "user", prompt.text, {
             timestamp: Date.now(),
             synthetic: true,
             mcpPromptSnapshot: {
@@ -6553,13 +6553,13 @@ export class AgentSession {
         }
       })
     );
-    return snapshots.filter((snapshot): snapshot is MuxMessage => snapshot !== null);
+    return snapshots.filter((snapshot): snapshot is XumMessage => snapshot !== null);
   }
 
   private async materializeAgentSkillSnapshots(
-    muxMetadata: MuxMessageMetadata | undefined,
+    muxMetadata: XumMessageMetadata | undefined,
     disableWorkspaceAgents: boolean | undefined
-  ): Promise<MuxMessage[]> {
+  ): Promise<XumMessage[]> {
     const refs = extractAgentSkillRefs(muxMetadata);
     if (refs.length === 0) {
       return [];
@@ -6602,7 +6602,7 @@ export class AgentSession {
       }
     }
 
-    const snapshotMessages: MuxMessage[] = [];
+    const snapshotMessages: XumMessage[] = [];
     for (const ref of refs) {
       const parsedName = SkillNameSchema.safeParse(ref.skillName);
       if (!parsedName.success) {
@@ -6719,7 +6719,7 @@ export class AgentSession {
       const snapshotText = renderAgentSkillSnapshotText(snapshot);
       const snapshotId = createAgentSkillSnapshotMessageId();
       snapshotMessages.push(
-        createMuxMessage(snapshotId, "user", snapshotText, {
+        createXumMessage(snapshotId, "user", snapshotText, {
           timestamp: Date.now(),
           synthetic: true,
           agentSkillSnapshot: {

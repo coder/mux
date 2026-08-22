@@ -340,7 +340,7 @@ export function GovernorSection() {
     if (!api) return;
 
     try {
-      await api.config.unenrollMuxGovernor();
+      await api.config.unenrollXumGovernor();
       setEnrolled(false);
       setGovernorUrl(null);
       setRefreshPolicyError(null);

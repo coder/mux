@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import assert from "@/common/utils/assert";
 import { BASH_MONITOR_WAKE_HEADINGS } from "@/common/utils/machineTurnPrompts";
-import type { MuxMessageMetadata } from "@/common/types/message";
+import type { XumMessageMetadata } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import { isErrnoWithCode } from "@/node/utils/fs";
@@ -171,7 +171,7 @@ function removeDeliveredLineOverlap(
  */
 export function buildBashMonitorWakeMetadata(
   records: readonly BashMonitorWakeRecord[]
-): Extract<MuxMessageMetadata, { type: "bash-monitor-wake" }> {
+): Extract<XumMessageMetadata, { type: "bash-monitor-wake" }> {
   assert(records.length > 0, "buildBashMonitorWakeMetadata requires at least one record");
   return {
     type: "bash-monitor-wake",

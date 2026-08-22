@@ -28,7 +28,7 @@ import {
 
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -333,7 +333,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       const historyService = new HistoryService(env.config);
       const appendResult = await historyService.appendToHistory(
         parentWorkspace.id,
-        createMuxMessage("parent-unread-message", "user", "Mark this workspace unread")
+        createXumMessage("parent-unread-message", "user", "Mark this workspace unread")
       );
       if (!appendResult.success)
         throw new Error(`Failed to seed unread history: ${appendResult.error}`);

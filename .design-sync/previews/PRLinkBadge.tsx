@@ -8,7 +8,7 @@ import type { GitHubPRLinkWithStatus } from "@/common/types/links";
 // PRLinkBadge only needs theme + tooltip from the shell.
 const PR_LINK: GitHubPRLinkWithStatus = {
   type: "github-pr",
-  url: "https://github.com/coder/mux/pull/1623",
+  url: "https://github.com/coder/xum/pull/1623",
   owner: "coder",
   repo: "mux",
   number: 1623,

@@ -15,11 +15,11 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import {
-  createMuxMessage,
+  createXumMessage,
   getCompactionFollowUpContent,
   type CompactionFollowUpRequest,
   type CompactionSummaryMetadata,
-  type MuxMessage,
+  type XumMessage,
 } from "@/common/types/message";
 import { createCompactionSummaryMessageId } from "@/node/services/utils/messageIds";
 import type { TelemetryService } from "@/node/services/telemetryService";
@@ -246,11 +246,11 @@ function coercePersistedPostCompactionState(value: unknown): PersistedPostCompac
   };
 }
 
-function isCompactedSummaryMessage(message: MuxMessage): boolean {
+function isCompactedSummaryMessage(message: XumMessage): boolean {
   return isDurableCompactedMarker(message.metadata?.compacted);
 }
 
-function getLatestBoundaryHistorySequence(messages: readonly MuxMessage[]): number | undefined {
+function getLatestBoundaryHistorySequence(messages: readonly XumMessage[]): number | undefined {
   let latest: number | undefined;
   for (const message of messages) {
     if (!isDurableContextBoundaryMarker(message)) continue;
@@ -261,7 +261,7 @@ function getLatestBoundaryHistorySequence(messages: readonly MuxMessage[]): numb
   return latest;
 }
 
-function getNextCompactionEpoch(messages: MuxMessage[]): number {
+function getNextCompactionEpoch(messages: XumMessage[]): number {
   let epochCursor = 0;
 
   for (const message of messages) {
@@ -561,7 +561,7 @@ export class CompactionHandler {
     }
   }
 
-  private async preparePendingStateFromMessages(messages: MuxMessage[]): Promise<void> {
+  private async preparePendingStateFromMessages(messages: XumMessage[]): Promise<void> {
     await this.loadPersistedPendingStateIfNeeded();
 
     const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(messages);
@@ -579,7 +579,7 @@ export class CompactionHandler {
     await this.persistPendingStateBestEffort(this.cachedFileDiffs, this.cachedLoadedSkills);
   }
 
-  private getMaxExistingHistorySequence(messages: MuxMessage[]): number {
+  private getMaxExistingHistorySequence(messages: XumMessage[]): number {
     return messages.reduce((maxSeq, message) => {
       const sequence = message.metadata?.historySequence;
       if (sequence === undefined) {
@@ -635,7 +635,7 @@ export class CompactionHandler {
       "heartbeat reset boundary must compute a positive compaction epoch"
     );
 
-    const summaryMessage = createMuxMessage(
+    const summaryMessage = createXumMessage(
       createCompactionSummaryMessageId(),
       "assistant",
       params.boundaryText,
@@ -694,7 +694,7 @@ export class CompactionHandler {
   }
 
   async rollbackHeartbeatContextResetBoundary(
-    summaryMessage: MuxMessage
+    summaryMessage: XumMessage
   ): Promise<Result<void, string>> {
     assert(
       summaryMessage.role === "assistant",
@@ -972,9 +972,9 @@ export class CompactionHandler {
   }
 
   private findPersistedStreamSummaryMessage(
-    messages: MuxMessage[],
+    messages: XumMessage[],
     streamedSummaryMessageId: string
-  ): MuxMessage | null {
+  ): XumMessage | null {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const candidate = messages[i];
       if (candidate.id !== streamedSummaryMessageId) {
@@ -1030,7 +1030,7 @@ export class CompactionHandler {
       contextProviderMetadata?: Record<string, unknown>;
       systemMessageTokens?: number;
     },
-    messages: MuxMessage[],
+    messages: XumMessage[],
     streamedSummaryMessageId: string,
     compactionRequestMessageId: string,
     isIdleCompaction = false,
@@ -1089,7 +1089,7 @@ export class CompactionHandler {
     // The summary's muxMetadata stores the pending follow-up (if any) for crash-safe dispatch.
     // After compaction, agentSession checks if the last message is a summary with pendingFollowUp
     // and dispatches it. The user message persisted by that dispatch serves as proof of completion.
-    const summaryMuxMetadata: CompactionSummaryMetadata = {
+    const summaryXumMetadata: CompactionSummaryMetadata = {
       type: "compaction-summary",
       pendingFollowUp,
     };
@@ -1111,7 +1111,7 @@ export class CompactionHandler {
       metadata.contextProviderMetadata
     );
 
-    const summaryMessage = createMuxMessage(
+    const summaryMessage = createXumMessage(
       persistedStreamSummary?.id ?? createCompactionSummaryMessageId(),
       "assistant",
       summary,
@@ -1133,7 +1133,7 @@ export class CompactionHandler {
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,
         ...(postCompactionContextEstimate && { contextUsage: postCompactionContextEstimate }),
-        muxMetadata: summaryMuxMetadata,
+        muxMetadata: summaryXumMetadata,
       }
     );
     if (persistedSummaryHistorySequence !== undefined) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { expectContentOutputValue } from "./testToolOutputHelpers";
 import { extractToolMediaAsUserMessages } from "./extractToolMediaAsUserMessages";
 
@@ -20,7 +20,7 @@ describe("extractToolMediaAsUserMessages", () => {
         .toBuffer()
     ).toString("base64");
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a1",
         role: "assistant",
@@ -94,7 +94,7 @@ describe("extractToolMediaAsUserMessages", () => {
       .toBuffer();
     const base64 = oversizedPng.toString("base64");
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a1-resize",
         role: "assistant",
@@ -142,7 +142,7 @@ describe("extractToolMediaAsUserMessages", () => {
   it("rewrites attach_file PDF output into a synthetic user file part", async () => {
     const base64 = Buffer.from("%PDF-1.7").toString("base64");
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a2",
         role: "assistant",
@@ -187,7 +187,7 @@ describe("extractToolMediaAsUserMessages", () => {
   it("sanitizes extracted PDF filenames in synthetic user file parts", async () => {
     const base64 = Buffer.from("%PDF-1.7").toString("base64");
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a3",
         role: "assistant",
@@ -230,7 +230,7 @@ describe("extractToolMediaAsUserMessages", () => {
       "base64"
     );
 
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a4",
         role: "assistant",
@@ -270,7 +270,7 @@ describe("extractToolMediaAsUserMessages", () => {
 
   it("strips display-only file bytes without creating a model attachment", async () => {
     const base64 = Buffer.from("webm bytes").toString("base64");
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a5",
         role: "assistant",
@@ -321,7 +321,7 @@ describe("extractToolMediaAsUserMessages", () => {
 
   it("strips display-only file bytes even when metadata is missing", async () => {
     const base64 = Buffer.from("webm bytes").toString("base64");
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a6",
         role: "assistant",
@@ -370,7 +370,7 @@ describe("extractToolMediaAsUserMessages", () => {
   });
 
   it("does not rewrite unrelated tool outputs", async () => {
-    const input: MuxMessage[] = [
+    const input: XumMessage[] = [
       {
         id: "a1",
         role: "assistant",

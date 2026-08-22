@@ -1,5 +1,5 @@
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import {
   getWorkflowScriptDisplayPath,
@@ -78,7 +78,7 @@ function getProjectedWorkflowRunCardMessageId(runId: string): string {
   return `workflow-run-${runId}`;
 }
 
-function hasWorkflowRunCardMetadata(message: MuxMessage, runId: string): boolean {
+function hasWorkflowRunCardMetadata(message: XumMessage, runId: string): boolean {
   return (
     message.id === getProjectedWorkflowRunCardMessageId(runId) &&
     message.role === "assistant" &&
@@ -88,9 +88,9 @@ function hasWorkflowRunCardMetadata(message: MuxMessage, runId: string): boolean
 }
 
 function findWorkflowTriggerDisplayMessage(
-  messages: readonly MuxMessage[],
+  messages: readonly XumMessage[],
   runId: string
-): MuxMessage | null {
+): XumMessage | null {
   return (
     messages.find(
       (message) =>
@@ -101,9 +101,9 @@ function findWorkflowTriggerDisplayMessage(
 }
 
 function getWorkflowRunCardMetadata(
-  metadata: MuxMessage["metadata"] | undefined,
+  metadata: XumMessage["metadata"] | undefined,
   runId: string
-): MuxMessage["metadata"] {
+): XumMessage["metadata"] {
   return {
     ...metadata,
     muxMetadata: {
@@ -114,9 +114,9 @@ function getWorkflowRunCardMetadata(
 }
 
 export function findProjectedWorkflowRunCardMessage(
-  messages: readonly MuxMessage[],
+  messages: readonly XumMessage[],
   runId: string
-): MuxMessage | null {
+): XumMessage | null {
   assert(runId.length > 0, "findProjectedWorkflowRunCardMessage: run id is required");
   const metadataMatch = messages.find((message) => hasWorkflowRunCardMetadata(message, runId));
   if (metadataMatch != null) {
@@ -140,7 +140,7 @@ export function findProjectedWorkflowRunCardMessage(
 }
 
 export function hasWorkflowRunToolCallMessage(
-  messages: readonly MuxMessage[],
+  messages: readonly XumMessage[],
   run: Pick<WorkflowRunRecord, "id" | "workflow" | "args" | "source">
 ): boolean {
   assert(run.id.length > 0, "hasWorkflowRunToolCallMessage: run id is required");
@@ -164,9 +164,9 @@ export function hasWorkflowRunToolCallMessage(
 }
 
 export function getWorkflowRunCardProjection(
-  messages: readonly MuxMessage[],
+  messages: readonly XumMessage[],
   run: Pick<WorkflowRunRecord, "id" | "workflow" | "args" | "status" | "source">
-): { shouldProject: boolean; existingMessage: MuxMessage | null } {
+): { shouldProject: boolean; existingMessage: XumMessage | null } {
   assert(run.id.length > 0, "getWorkflowRunCardProjection: run id is required");
   const existingMessage = findProjectedWorkflowRunCardMessage(messages, run.id);
   if (existingMessage != null) {
@@ -194,7 +194,7 @@ export function addWorkflowRunCardMessage(
   workspaceId: string,
   input: WorkflowRunCardInput,
   result: WorkflowRunCardResult,
-  options?: { existingMessage?: MuxMessage | null }
+  options?: { existingMessage?: XumMessage | null }
 ): void {
   assert(workspaceId.length > 0, "addWorkflowRunCardMessage: workspaceId is required");
   const message = buildWorkflowRunCardMessage(input, result);
@@ -207,7 +207,7 @@ export function addWorkflowRunCardMessage(
 export function addWorkflowRunCardMessageForRun(
   workspaceId: string,
   run: WorkflowRunRecord,
-  options?: { existingMessage?: MuxMessage | null }
+  options?: { existingMessage?: XumMessage | null }
 ): void {
   addWorkflowRunCardMessage(
     workspaceId,

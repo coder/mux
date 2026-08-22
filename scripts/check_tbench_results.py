@@ -14,12 +14,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from benchmarks.terminal_bench.mux_run_contract import (  # noqa: E402
-    MUX_RUN_FAILURE_MARKER,
+from benchmarks.terminal_bench.xum_run_contract import (  # noqa: E402
+    XUM_RUN_FAILURE_MARKER,
     OOM_LIKE_RETURN_CODE,
     RUN_COMPLETE_MARKER,
     TIMEOUT_RETURN_CODE,
-    mux_run_failure_marker,
+    xum_run_failure_marker,
 )
 
 Category = Literal["infra", "soft", "hard"]
@@ -230,7 +230,7 @@ def classify_exception(
         if (
             return_code == TIMEOUT_RETURN_CODE
             and RUN_COMPLETE_MARKER not in stdout
-            and mux_run_failure_marker(TIMEOUT_RETURN_CODE) not in stderr
+            and xum_run_failure_marker(TIMEOUT_RETURN_CODE) not in stderr
         ):
             return ClassifiedException(
                 path=exception_path,
@@ -243,8 +243,8 @@ def classify_exception(
     reason = "non-infrastructure exception"
     if return_code is not None:
         reason = f"agent exit {return_code}"
-    if MUX_RUN_FAILURE_MARKER in stderr:
-        reason = f"mux-run failure ({reason})"
+    if XUM_RUN_FAILURE_MARKER in stderr:
+        reason = f"xum-run failure ({reason})"
 
     return ClassifiedException(
         path=exception_path,

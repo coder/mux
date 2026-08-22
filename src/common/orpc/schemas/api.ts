@@ -17,7 +17,7 @@ import {
   ProjectRemoveErrorSchema,
   SendMessageErrorSchema,
 } from "./errors";
-import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
+import { BranchListResultSchema, FilePartSchema, XumMessageSchema } from "./message";
 import {
   GoalClearInputSchema,
   GoalBoardAddUpcomingInputSchema,
@@ -208,7 +208,7 @@ export const tokenizer = {
   calculateStats: {
     input: z.object({
       workspaceId: z.string(),
-      messages: z.array(MuxMessageSchema),
+      messages: z.array(XumMessageSchema),
       model: z.string(),
     }),
     output: ChatStatsSchema,
@@ -1511,7 +1511,7 @@ export const workspace = {
   replaceChatHistory: {
     input: z.object({
       workspaceId: z.string(),
-      summaryMessage: MuxMessageSchema,
+      summaryMessage: XumMessageSchema,
       /**
        * Replace strategy.
        * - destructive (default): clear history, then append summary
@@ -1590,7 +1590,7 @@ export const workspace = {
       taskId: z.string(),
     }),
     output: z.object({
-      messages: z.array(MuxMessageSchema),
+      messages: z.array(XumMessageSchema),
       /** Task-level model string used when running the sub-agent (optional for legacy entries). */
       model: z.string().optional(),
       /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
@@ -2353,7 +2353,7 @@ export const config = {
     }),
     output: z.void(),
   },
-  updateMuxGatewayPrefs: {
+  updateXumGatewayPrefs: {
     input: z.object({
       muxGatewayEnabled: z.boolean(),
       muxGatewayModels: z.array(z.string()),
@@ -2442,7 +2442,7 @@ export const config = {
       .strict(),
     output: z.void(),
   },
-  unenrollMuxGovernor: {
+  unenrollXumGovernor: {
     input: z.void(),
     output: z.void(),
   },

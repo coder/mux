@@ -2,7 +2,7 @@
  * Strip UI-only tool output before sending to providers.
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
-import type { MuxMessage, MuxToolPart } from "@/common/types/message";
+import type { XumMessage, XumToolPart } from "@/common/types/message";
 import { sanitizeUnknownForProviderOutput } from "@/common/utils/providerOutputSanitization";
 import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { stripWorkflowRunRecordForModel } from "@/common/utils/workflowRunMessages";
@@ -39,7 +39,7 @@ function stripResolvedSourcePath(source: unknown): unknown {
   return stripped;
 }
 
-function stripWorkflowRunAttachment(part: MuxToolPart): MuxToolPart {
+function stripWorkflowRunAttachment(part: XumToolPart): XumToolPart {
   if (part.workflowRun == null) {
     return part;
   }
@@ -85,7 +85,7 @@ function stripLegacyImageToolOutputForModel(output: unknown): unknown {
   return stripped;
 }
 
-export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
+export function applyToolOutputRedaction(messages: XumMessage[]): XumMessage[] {
   return messages.map((msg) => {
     if (msg.role !== "assistant") return msg;
 
@@ -126,6 +126,6 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
     return {
       ...msg,
       parts: newParts,
-    } satisfies MuxMessage;
+    } satisfies XumMessage;
   });
 }

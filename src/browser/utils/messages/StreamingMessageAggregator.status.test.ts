@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getStatusStateKey } from "@/common/constants/storage";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 const CREATED_AT = "2024-01-01T00:00:00.000Z";
@@ -109,7 +109,7 @@ function statusMessage(
   input: StatusInput,
   options: { output?: StatusResult; historySequence?: number; timestamp?: number } = {}
 ) {
-  const message = createMuxMessage(id, "assistant", "", {
+  const message = createXumMessage(id, "assistant", "", {
     timestamp: options.timestamp ?? options.historySequence ?? 1,
     historySequence: options.historySequence ?? 1,
   });
@@ -147,7 +147,7 @@ afterAll(() => {
 describe("ask_user_question waiting state", () => {
   it("treats partial ask_user_question as executing (waiting) not interrupted", () => {
     const aggregator = createAggregator();
-    const assistantMessage = createMuxMessage("assistant-1", "assistant", "", {
+    const assistantMessage = createXumMessage("assistant-1", "assistant", "", {
       timestamp: 1000,
       historySequence: 1,
       partial: true,
@@ -252,7 +252,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleMessage({
       type: "message",
-      ...createMuxMessage("msg2", "user", "What's next?", {
+      ...createXumMessage("msg2", "user", "What's next?", {
         timestamp: Date.now(),
         historySequence: 2,
       }),
@@ -298,7 +298,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
   it("should reconstruct agentStatus when loading historical messages", () => {
     const aggregator = createAggregator();
     aggregator.loadHistoricalMessages([
-      createMuxMessage("msg1", "user", "Hello", { timestamp: Date.now(), historySequence: 1 }),
+      createXumMessage("msg1", "user", "Hello", { timestamp: Date.now(), historySequence: 1 }),
       (() => {
         const message = statusMessage(
           "msg2",
@@ -362,7 +362,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
         { emoji: "🧪", message: "Running tests" },
         { timestamp: 1000 }
       ),
-      createMuxMessage("assistant2", "assistant", "[compaction summary]", {
+      createXumMessage("assistant2", "assistant", "[compaction summary]", {
         timestamp: 2000,
         historySequence: 2,
       }),
@@ -383,7 +383,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     const aggregator = createAggregator(WORKSPACE_ID);
     aggregator.loadHistoricalMessages([
-      createMuxMessage("assistant2", "assistant", "[compacted history]", {
+      createXumMessage("assistant2", "assistant", "[compacted history]", {
         timestamp: 3000,
         historySequence: 1,
       }),
@@ -469,7 +469,7 @@ describe("StreamingMessageAggregator - Agent Status", () => {
 
     aggregator.handleMessage({
       type: "message",
-      ...createMuxMessage("user1", "user", "Continue", {
+      ...createXumMessage("user1", "user", "Continue", {
         timestamp: Date.now(),
         historySequence: 2,
       }),
@@ -494,14 +494,14 @@ describe("StreamingMessageAggregator - Agent Status", () => {
     const testUrl = "https://github.com/owner/repo/pull/123";
 
     aggregator.loadHistoricalMessages([
-      createMuxMessage("user1", "user", "Make a PR", { timestamp: 1000, historySequence: 1 }),
+      createXumMessage("user1", "user", "Make a PR", { timestamp: 1000, historySequence: 1 }),
       statusMessage(
         "assistant1",
         "tool1",
         { emoji: "🔗", message: "PR submitted", url: testUrl },
         { timestamp: 1001, historySequence: 2 }
       ),
-      createMuxMessage("user2", "user", "Continue", { timestamp: 2000, historySequence: 3 }),
+      createXumMessage("user2", "user", "Continue", { timestamp: 2000, historySequence: 3 }),
       statusMessage(
         "assistant2",
         "tool2",

@@ -61,7 +61,7 @@ import {
   type BackgroundWorkAttentionPolicy,
 } from "@/common/types/backgroundWorkAttention";
 
-import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import { createXumMessage, type XumMessage, type XumMessageMetadata } from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
   createTaskFailureMessageId,
@@ -526,7 +526,7 @@ export interface WorkspaceTurnWaitResult {
   finalMessageRef?: WorkspaceTurnFinalMessageRef;
 }
 
-type WorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+type WorkspaceTurnXumMetadata = Extract<XumMessageMetadata, { type: "workspace-turn-task" }>;
 
 interface BackgroundableForegroundWaiter {
   taskId: string;
@@ -1099,7 +1099,7 @@ function collectAgentReferencedWorkflowRunIdsFromParts(
   return Array.from(runIds);
 }
 
-function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+function isInternalResumeAutoCompactionMessage(message: XumMessage): boolean {
   const muxMetadata = message.metadata?.muxMetadata;
   if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
     return false;
@@ -1107,7 +1107,7 @@ function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
   return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
 }
 
-function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+function isSyntheticManualSupersessionMessage(message: XumMessage): boolean {
   const muxMetadata = message.metadata?.muxMetadata;
   return (
     message.metadata?.synthetic === true &&
@@ -1117,18 +1117,18 @@ function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
   );
 }
 
-function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+function isManualUserSupersessionMessage(message: XumMessage): boolean {
   return (
     message.role === "user" &&
     (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
   );
 }
 
-function isResetBoundaryMessage(message: MuxMessage): boolean {
+function isResetBoundaryMessage(message: XumMessage): boolean {
   return message.metadata?.contextBoundaryKind === CONTEXT_BOUNDARY_KINDS.RESET;
 }
 
-function isWorkflowSupersessionMessage(message: MuxMessage): boolean {
+function isWorkflowSupersessionMessage(message: XumMessage): boolean {
   return isManualUserSupersessionMessage(message) || isResetBoundaryMessage(message);
 }
 
@@ -1397,7 +1397,7 @@ export class TaskService {
 
     const latestSupersession = await this.findLatestWorkflowSupersession(workspaceId);
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
-    let historyMessages: MuxMessage[] = [];
+    let historyMessages: XumMessage[] = [];
     let historyScanStartIndex = 0;
     let trustCurrentParts = true;
     if (historyResult.success) {
@@ -3801,7 +3801,7 @@ export class TaskService {
         agentId: workspaceTurnAgentId,
         ...(thinkingLevel != null ? { thinkingLevel } : {}),
         ...(reasoningMode != null ? { reasoningMode } : {}),
-        muxMetadata: this.buildWorkspaceTurnMuxMetadata(record),
+        muxMetadata: this.buildWorkspaceTurnXumMetadata(record),
         experiments: args.experiments ?? targetTaskExperiments,
         ...(mode === "existing" ? { queueDispatchMode } : {}),
       },
@@ -5996,7 +5996,7 @@ export class TaskService {
     if (!historyResult.success) {
       return { deliverableNotificationIds, latestMessageTimestampByTaskId };
     }
-    const existingReportMessages = new Map<string, MuxMessage>();
+    const existingReportMessages = new Map<string, XumMessage>();
     const existingTaskIds = new Set<string>();
     for (const message of historyResult.data) {
       if (message.role !== "user" || message.metadata?.synthetic !== true) continue;
@@ -6018,32 +6018,32 @@ export class TaskService {
       }
     }
 
-    const workspaceTurnMuxMetadata =
-      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(ownerWorkspaceId);
+    const workspaceTurnXumMetadata =
+      await this.getActiveWorkspaceTurnXumMetadataForWorkspace(ownerWorkspaceId);
     const sessionDir = this.config.getSessionDir(ownerWorkspaceId);
     for (const notification of notifications) {
       if (existingTaskIds.has(notification.sourceId)) {
         const existingMessage = existingReportMessages.get(notification.sourceId);
-        if (existingMessage != null && workspaceTurnMuxMetadata != null) {
+        if (existingMessage != null && workspaceTurnXumMetadata != null) {
           const existingCorrelation = this.getWorkspaceTurnMetadataFromValue(
             existingMessage.metadata?.muxMetadata
           );
           if (existingCorrelation != null) {
             const matchesActiveTurn =
-              existingCorrelation.taskHandleId === workspaceTurnMuxMetadata.taskHandleId &&
-              existingCorrelation.ownerWorkspaceId === workspaceTurnMuxMetadata.ownerWorkspaceId &&
-              existingCorrelation.turnId === workspaceTurnMuxMetadata.turnId;
+              existingCorrelation.taskHandleId === workspaceTurnXumMetadata.taskHandleId &&
+              existingCorrelation.ownerWorkspaceId === workspaceTurnXumMetadata.ownerWorkspaceId &&
+              existingCorrelation.turnId === workspaceTurnXumMetadata.turnId;
             if (!matchesActiveTurn) {
               // Keep the old report visible, but do not let it wake or settle a later turn.
               await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
               continue;
             }
           } else {
-            const updatedMessage: MuxMessage = {
+            const updatedMessage: XumMessage = {
               ...existingMessage,
               metadata: {
                 ...existingMessage.metadata,
-                muxMetadata: workspaceTurnMuxMetadata,
+                muxMetadata: workspaceTurnXumMetadata,
               },
             };
             const updateResult = await this.historyService.updateHistory(
@@ -6109,7 +6109,7 @@ export class TaskService {
       }
 
       const timestamp = Date.now();
-      const message = createMuxMessage(
+      const message = createXumMessage(
         report != null ? createTaskReportMessageId() : createTaskFailureMessageId(),
         "user",
         content,
@@ -6117,7 +6117,7 @@ export class TaskService {
           timestamp,
           synthetic: true,
           uiVisible: true,
-          ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+          ...(workspaceTurnXumMetadata != null ? { muxMetadata: workspaceTurnXumMetadata } : {}),
         }
       );
       const appendResult = await this.historyService.appendToHistory(ownerWorkspaceId, message);
@@ -6335,15 +6335,15 @@ export class TaskService {
       entry,
       defaultModel
     );
-    const workspaceTurnMuxMetadata =
-      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(ownerWorkspaceId);
+    const workspaceTurnXumMetadata =
+      await this.getActiveWorkspaceTurnXumMetadataForWorkspace(ownerWorkspaceId);
 
     const sendOptions = {
       model: resumeOptions.model,
       agentId: resumeOptions.agentId,
       thinkingLevel: resumeOptions.thinkingLevel,
       reasoningMode: resumeOptions.reasoningMode,
-      ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+      ...(workspaceTurnXumMetadata != null ? { muxMetadata: workspaceTurnXumMetadata } : {}),
     };
     if (prompt.length === 0) {
       assert(agentNotifications.length > 0, "prompt-free terminal drain requires sub-agent work");
@@ -6760,7 +6760,7 @@ export class TaskService {
             errorMessage: record.error ?? "Workspace turn failed",
           });
     if (!alreadyDelivered) {
-      const message = createMuxMessage(
+      const message = createXumMessage(
         record.status === "completed" ? createTaskReportMessageId() : createTaskFailureMessageId(),
         "user",
         content,
@@ -7264,8 +7264,8 @@ export class TaskService {
         parentEntry,
         defaultModel
       );
-      const workspaceTurnMuxMetadata =
-        await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(parentWorkspaceId);
+      const workspaceTurnXumMetadata =
+        await this.getActiveWorkspaceTurnXumMetadataForWorkspace(parentWorkspaceId);
 
       // A progress report is itself the wake-up message. Unlike terminal attention, it must be
       // allowed through while this child is still active so review findings and other incremental
@@ -7278,22 +7278,22 @@ export class TaskService {
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
           reasoningMode: resumeOptions.reasoningMode,
-          ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+          ...(workspaceTurnXumMetadata != null ? { muxMetadata: workspaceTurnXumMetadata } : {}),
         },
         {
           skipAutoResumeReset: true,
           synthetic: true,
           agentInitiated: true,
           startStreamInBackground: true,
-          workspaceTurnContinuation: workspaceTurnMuxMetadata != null,
+          workspaceTurnContinuation: workspaceTurnXumMetadata != null,
           queueDedupeKey: `agent-report:${childWorkspaceId}:${toolCallId}`,
           removableQueueDedupeKey: true,
-          ...(workspaceTurnMuxMetadata != null
+          ...(workspaceTurnXumMetadata != null
             ? {
                 onCanceled: async (reason: string) => {
                   await this.settleWorkspaceTurnContinuationFailure(
                     parentWorkspaceId,
-                    workspaceTurnMuxMetadata,
+                    workspaceTurnXumMetadata,
                     "interrupted",
                     reason
                   );
@@ -7301,7 +7301,7 @@ export class TaskService {
                 onAcceptedPreStreamFailure: async (error: SendMessageError) => {
                   await this.settleWorkspaceTurnContinuationFailure(
                     parentWorkspaceId,
-                    workspaceTurnMuxMetadata,
+                    workspaceTurnXumMetadata,
                     "error",
                     formatSendMessageError(error).message
                   );
@@ -7312,10 +7312,10 @@ export class TaskService {
       );
       if (!sendResult.success) {
         const formattedError = formatSendMessageError(sendResult.error);
-        if (workspaceTurnMuxMetadata != null) {
+        if (workspaceTurnXumMetadata != null) {
           await this.settleWorkspaceTurnContinuationFailure(
             parentWorkspaceId,
-            workspaceTurnMuxMetadata,
+            workspaceTurnXumMetadata,
             "error",
             formattedError.message
           );
@@ -10185,9 +10185,9 @@ export class TaskService {
     return true;
   }
 
-  private buildWorkspaceTurnMuxMetadata(
+  private buildWorkspaceTurnXumMetadata(
     record: Pick<WorkspaceTurnTaskHandleRecord, "handleId" | "ownerWorkspaceId" | "turnId">
-  ): WorkspaceTurnMuxMetadata {
+  ): WorkspaceTurnXumMetadata {
     return {
       type: "workspace-turn-task",
       taskHandleId: record.handleId,
@@ -10278,7 +10278,7 @@ export class TaskService {
 
   private buildWorkspaceTurnStreamEndEventFromHistory(
     record: WorkspaceTurnTaskHandleRecord,
-    message: MuxMessage
+    message: XumMessage
   ): StreamEndEvent | null {
     if (message.role !== "assistant" || message.metadata?.partial === true) {
       return null;
@@ -10435,9 +10435,9 @@ export class TaskService {
     });
   }
 
-  private resolveWorkspaceTurnMuxMetadataForStreamEnd(
+  private resolveWorkspaceTurnXumMetadataForStreamEnd(
     event: StreamEndEvent
-  ): WorkspaceTurnMuxMetadata | undefined {
+  ): WorkspaceTurnXumMetadata | undefined {
     const metadata = this.getWorkspaceTurnMetadata(event);
     if (metadata == null) {
       return undefined;
@@ -10848,13 +10848,13 @@ export class TaskService {
         taskIds: blockingTaskIds,
         workflowRunIds: activeWorkflowRunIds,
       });
-      const workspaceTurnMuxMetadata = this.resolveWorkspaceTurnMuxMetadataForStreamEnd(event);
+      const workspaceTurnXumMetadata = this.resolveWorkspaceTurnXumMetadataForStreamEnd(event);
       const sendOptions = {
         model: resumeOptions.model,
         agentId: resumeOptions.agentId,
         thinkingLevel: resumeOptions.thinkingLevel,
         reasoningMode: resumeOptions.reasoningMode,
-        ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+        ...(workspaceTurnXumMetadata != null ? { muxMetadata: workspaceTurnXumMetadata } : {}),
       };
       let sendResult = await this.workspaceService.sendMessage(
         workspaceId,
@@ -11125,9 +11125,9 @@ export class TaskService {
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
   }
 
-  private async getActiveWorkspaceTurnMuxMetadataForWorkspace(
+  private async getActiveWorkspaceTurnXumMetadataForWorkspace(
     workspaceId: string
-  ): Promise<WorkspaceTurnMuxMetadata | undefined> {
+  ): Promise<WorkspaceTurnXumMetadata | undefined> {
     const candidate = await this.getActiveWorkspaceTurnRecordForWorkspace(workspaceId);
     if (candidate == null) {
       return undefined;
@@ -11152,7 +11152,7 @@ export class TaskService {
         return undefined;
       }
 
-      return this.buildWorkspaceTurnMuxMetadata(current);
+      return this.buildWorkspaceTurnXumMetadata(current);
     });
   }
 
@@ -11160,7 +11160,7 @@ export class TaskService {
   // exact turn here because no replacement stream-end can arrive.
   private async settleWorkspaceTurnContinuationFailure(
     workspaceId: string,
-    muxMetadata: WorkspaceTurnMuxMetadata,
+    muxMetadata: WorkspaceTurnXumMetadata,
     status: "interrupted" | "error",
     error: string
   ): Promise<void> {
@@ -11516,7 +11516,7 @@ export class TaskService {
     // Durable context delivery, mirroring deliverReportToParent's synthetic
     // append: the failure must be visible to the parent's next turn regardless
     // of whether this settlement resumes it or a later sibling report/failure does.
-    const failureMessage = createMuxMessage(
+    const failureMessage = createXumMessage(
       createTaskFailureMessageId(),
       "user",
       formatSubagentFailureUserMessage({
@@ -11779,7 +11779,7 @@ export class TaskService {
         ? `# Plan\n\n${planSummary.content}\n\nNote: This chat already contains the full plan; no need to re-open the plan file.\n\n---\n\n*Plan file preserved at:* \`${planSummary.path}\``
         : `A plan was proposed at ${args.proposePlanResult.planPath}. Read the plan file and implement it.`;
 
-      const summaryMessage = createMuxMessage(
+      const summaryMessage = createXumMessage(
         createCompactionSummaryMessageId(),
         "assistant",
         summaryContent,
@@ -13225,14 +13225,14 @@ export class TaskService {
         : {}),
     });
 
-    const workspaceTurnMuxMetadata =
-      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(parentWorkspaceId);
+    const workspaceTurnXumMetadata =
+      await this.getActiveWorkspaceTurnXumMetadataForWorkspace(parentWorkspaceId);
     const messageId = createTaskReportMessageId();
-    const reportMessage = createMuxMessage(messageId, "user", reportContent, {
+    const reportMessage = createXumMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
       synthetic: true,
       uiVisible: true,
-      ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+      ...(workspaceTurnXumMetadata != null ? { muxMetadata: workspaceTurnXumMetadata } : {}),
     });
 
     const appendResult = await this.historyService.appendToHistory(
@@ -13330,7 +13330,7 @@ export class TaskService {
       }
     }
 
-    const updated: MuxMessage = {
+    const updated: XumMessage = {
       ...partial,
       parts: partial.parts.map((part) => {
         if (!isDynamicToolPart(part)) return part;

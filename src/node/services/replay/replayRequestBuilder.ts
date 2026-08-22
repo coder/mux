@@ -34,7 +34,7 @@ import type {
 import { addInterruptedSentinel } from "@/browser/utils/messages/modelMessageTransform";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
-import { filterOrphanedMcpPromptSnapshots, type MuxMessage } from "@/common/types/message";
+import { filterOrphanedMcpPromptSnapshots, type XumMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   createCachedSystemMessage,
@@ -59,7 +59,7 @@ export interface ReplayRequestInputs {
    * epoch, already sliced to historySequence <= the turn's
    * requestHistorySequence by the caller).
    */
-  historyMessages: MuxMessage[];
+  historyMessages: XumMessage[];
   /** Blob-resolved system prompt (turn-envelope systemPromptHash). */
   systemPrompt: string;
   /** From the turn-envelope row. */
@@ -91,7 +91,7 @@ export interface ReplayRequestInputs {
    * message exists only in the envelope; production appends it to the
    * fallback request via replaceOrAppendMessageById.
    */
-  partialContinuation?: MuxMessage | null;
+  partialContinuation?: XumMessage | null;
   workspaceId: string;
 }
 

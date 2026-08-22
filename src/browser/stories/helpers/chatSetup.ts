@@ -1,11 +1,11 @@
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 import type {
   WorkspaceChatMessage,
-  ChatMuxMessage,
+  ChatXumMessage,
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
 } from "@/common/orpc/types";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
@@ -48,7 +48,7 @@ export interface SimpleChatSetupOptions {
   workspaceName?: string;
   projectName?: string;
   projectPath?: string;
-  messages: ChatMuxMessage[];
+  messages: ChatXumMessage[];
   /** Additional child workspaces that should appear alongside the selected chat workspace. */
   additionalWorkspaces?: FrontendWorkspaceMetadata[];
   gitStatus?: GitStatusFixture;
@@ -63,7 +63,7 @@ export interface SimpleChatSetupOptions {
   /** Mock transcripts for workspace.getSubagentTranscript (taskId -> persisted transcript response). */
   subagentTranscripts?: Map<
     string,
-    { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
+    { messages: XumMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
   >;
   /** Optional custom chat handler for emitting additional events (e.g., queued-message-changed) */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
@@ -195,7 +195,7 @@ export interface StreamingChatSetupOptions {
   workspaceId?: string;
   workspaceName?: string;
   projectName?: string;
-  messages: ChatMuxMessage[];
+  messages: ChatXumMessage[];
   streamingMessageId: string;
   model?: string;
   historySequence: number;

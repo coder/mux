@@ -9,7 +9,7 @@ import * as path from "path";
 import type { EventEmitter } from "events";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { MAX_EDITED_FILES } from "@/common/constants/attachments";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { TelemetryService } from "./telemetryService";
@@ -38,8 +38,8 @@ const createMockEmitter = (): { emitter: EventEmitter; events: EmittedEvent[] } 
   return { emitter: emitter as EventEmitter, events };
 };
 
-const createCompactionRequest = (id = "req-1"): MuxMessage =>
-  createMuxMessage(id, "user", "Please summarize the conversation", {
+const createCompactionRequest = (id = "req-1"): XumMessage =>
+  createXumMessage(id, "user", "Please summarize the conversation", {
     muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
   });
 
@@ -47,8 +47,8 @@ const createSuccessfulFileEditMessage = (
   id: string,
   filePath: string,
   diff: string,
-  metadata?: MuxMessage["metadata"]
-): MuxMessage => ({
+  metadata?: XumMessage["metadata"]
+): XumMessage => ({
   id,
   role: "assistant",
   parts: [
@@ -71,8 +71,8 @@ const createSuccessfulAgentSkillReadMessage = (
   id: string,
   skillName: string,
   body: string,
-  metadata?: MuxMessage["metadata"]
-): MuxMessage => ({
+  metadata?: XumMessage["metadata"]
+): XumMessage => ({
   id,
   role: "assistant",
   parts: [
@@ -144,7 +144,7 @@ describe("CompactionHandler", () => {
 
   // Helper: seed messages into real history and return spies for tracking handler calls.
   // Spies are created AFTER seeding so they only track handler-initiated calls.
-  const seedHistory = async (...messages: MuxMessage[]) => {
+  const seedHistory = async (...messages: XumMessage[]) => {
     for (const msg of messages) {
       const result = await historyService.appendToHistory(workspaceId, msg);
       if (!result.success) throw new Error(`Seed failed: ${result.error}`);
@@ -187,7 +187,7 @@ describe("CompactionHandler", () => {
 
   describe("handleCompletion() - Normal Compaction Flow", () => {
     it("should return false when no compaction request found", async () => {
-      const normalMsg = createMuxMessage("msg1", "user", "Hello", {
+      const normalMsg = createXumMessage("msg1", "user", "Hello", {
         historySequence: 0,
         muxMetadata: { type: "normal" },
       });
@@ -215,7 +215,7 @@ describe("CompactionHandler", () => {
         model: "openai:gpt-4o",
         agentId: "exec",
       };
-      const compactionRequest = createMuxMessage(
+      const compactionRequest = createXumMessage(
         "correlated-compaction-request",
         "user",
         "Please summarize the conversation",
@@ -229,7 +229,7 @@ describe("CompactionHandler", () => {
           },
         }
       );
-      const snapshot = createMuxMessage("file-change-snapshot", "user", "<file-change />", {
+      const snapshot = createXumMessage("file-change-snapshot", "user", "<file-change />", {
         synthetic: true,
       });
       await seedHistory(compactionRequest, snapshot);
@@ -263,11 +263,11 @@ describe("CompactionHandler", () => {
         onCompactionComplete,
       });
       await seedHistory(
-        createMuxMessage("stale-user", "user", "old preference"),
-        createMuxMessage("reset", "assistant", "Context reset", {
+        createXumMessage("stale-user", "user", "old preference"),
+        createXumMessage("reset", "assistant", "Context reset", {
           contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
         }),
-        createMuxMessage("fresh-user", "user", "new preference"),
+        createXumMessage("fresh-user", "user", "new preference"),
         createCompactionRequest("compact-request")
       );
 
@@ -280,8 +280,8 @@ describe("CompactionHandler", () => {
     });
 
     describe("onIdleCompactionOutcome", () => {
-      const createIdleCompactionRequest = (id = "idle-req"): MuxMessage =>
-        createMuxMessage(id, "user", "Please summarize the conversation", {
+      const createIdleCompactionRequest = (id = "idle-req"): XumMessage =>
+        createXumMessage(id, "user", "Please summarize the conversation", {
           muxMetadata: {
             type: "compaction-request",
             rawCommand: "/compact",
@@ -513,7 +513,7 @@ describe("CompactionHandler", () => {
     });
 
     it("preserves pre-existing pending diffs when a heartbeat reset boundary is appended", async () => {
-      const existingBoundary = createMuxMessage(
+      const existingBoundary = createXumMessage(
         "summary-existing",
         "assistant",
         "Existing summary",
@@ -562,7 +562,7 @@ describe("CompactionHandler", () => {
     });
 
     it("rolls back heartbeat reset boundaries and restores pending state", async () => {
-      const existingBoundary = createMuxMessage(
+      const existingBoundary = createXumMessage(
         "summary-existing",
         "assistant",
         "Existing summary",
@@ -631,7 +631,7 @@ describe("CompactionHandler", () => {
     });
 
     it("prioritizes newly extracted diffs over stale pending diffs when the cap is reached", async () => {
-      const existingBoundary = createMuxMessage(
+      const existingBoundary = createXumMessage(
         "summary-existing",
         "assistant",
         "Existing summary",
@@ -805,7 +805,7 @@ describe("CompactionHandler", () => {
         "@@ -1 +1 @@\n-old\n+stale\n",
         { historySequence: 0 }
       );
-      const latestBoundary = createMuxMessage("summary-boundary", "assistant", "Older summary", {
+      const latestBoundary = createXumMessage("summary-boundary", "assistant", "Older summary", {
         historySequence: 1,
         compacted: "user",
         compactionBoundary: true,
@@ -817,7 +817,7 @@ describe("CompactionHandler", () => {
         "@@ -1 +1 @@\n-before\n+after\n",
         { historySequence: 2 }
       );
-      const compactionReq = createMuxMessage("req-latest-epoch", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-latest-epoch", "user", "Please summarize", {
         historySequence: 3,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
@@ -843,7 +843,7 @@ describe("CompactionHandler", () => {
         "@@ -1 +1 @@\n-old\n+stale\n",
         { historySequence: 0 }
       );
-      const malformedBoundaryMissingEpoch = createMuxMessage(
+      const malformedBoundaryMissingEpoch = createXumMessage(
         "summary-malformed-boundary",
         "assistant",
         "Malformed summary",
@@ -860,7 +860,7 @@ describe("CompactionHandler", () => {
         "@@ -1 +1 @@\n-before\n+after\n",
         { historySequence: 2 }
       );
-      const compactionReq = createMuxMessage("req-malformed-boundary", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-malformed-boundary", "user", "Please summarize", {
         historySequence: 3,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
@@ -998,11 +998,11 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.parts !== undefined;
       });
       expect(summaryEvent).toBeDefined();
-      const sevt = summaryEvent?.data.message as MuxMessage;
+      const sevt = summaryEvent?.data.message as XumMessage;
       // providerMetadata is omitted to avoid inflating context with pre-compaction cacheCreationInputTokens
       expect(sevt.metadata).toMatchObject({
         model: "claude-3-5-sonnet-20241022",
@@ -1041,11 +1041,11 @@ describe("CompactionHandler", () => {
       expect(result).toBe(true);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.metadata?.compactionBoundary === true;
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMessage = summaryEvent?.data.message as MuxMessage;
+      const summaryMessage = summaryEvent?.data.message as XumMessage;
       expect(summaryMessage.metadata?.contextUsage).toEqual({
         // 20 system prompt tokens + (80 output - 30 reasoning) summary tokens
         inputTokens: 70,
@@ -1075,10 +1075,10 @@ describe("CompactionHandler", () => {
     });
 
     it("should set boundary metadata and keep historySequence monotonic", async () => {
-      const priorMessage = createMuxMessage("user-1", "user", "Earlier", {
+      const priorMessage = createXumMessage("user-1", "user", "Earlier", {
         historySequence: 4,
       });
-      const compactionReq = createMuxMessage("req-1", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-1", "user", "Please summarize", {
         historySequence: 5,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
@@ -1094,7 +1094,7 @@ describe("CompactionHandler", () => {
       expect(appendedMsg.metadata?.historySequence).toBe(6);
     });
     it("should ignore malformed persisted historySequence values when deriving monotonic bounds", async () => {
-      const malformedNegativeSequence = createMuxMessage(
+      const malformedNegativeSequence = createXumMessage(
         "assistant-malformed-negative-sequence",
         "assistant",
         "Corrupted persisted metadata",
@@ -1102,7 +1102,7 @@ describe("CompactionHandler", () => {
           historySequence: -7,
         }
       );
-      const malformedFractionalSequence = createMuxMessage(
+      const malformedFractionalSequence = createXumMessage(
         "assistant-malformed-fractional-sequence",
         "assistant",
         "Corrupted persisted metadata",
@@ -1110,10 +1110,10 @@ describe("CompactionHandler", () => {
           historySequence: 99.5,
         }
       );
-      const priorMessage = createMuxMessage("user-1", "user", "Earlier", {
+      const priorMessage = createXumMessage("user-1", "user", "Earlier", {
         historySequence: 4,
       });
-      const compactionReq = createMuxMessage("req-1", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-1", "user", "Please summarize", {
         historySequence: 5,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
@@ -1142,11 +1142,11 @@ describe("CompactionHandler", () => {
     });
 
     it("should derive next compaction epoch from legacy compacted summaries", async () => {
-      const legacySummary = createMuxMessage("summary-legacy", "assistant", "Older summary", {
+      const legacySummary = createXumMessage("summary-legacy", "assistant", "Older summary", {
         historySequence: 2,
         compacted: "user",
       });
-      const compactionReq = createMuxMessage("req-epoch", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-epoch", "user", "Please summarize", {
         historySequence: 3,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
@@ -1163,11 +1163,11 @@ describe("CompactionHandler", () => {
     });
 
     it("should update streamed summaries in-place without carrying stale provider metadata", async () => {
-      const compactionReq = createMuxMessage("req-streamed", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-streamed", "user", "Please summarize", {
         historySequence: 5,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
-      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+      const streamedSummary = createXumMessage("msg-id", "assistant", "Summary", {
         historySequence: 6,
         timestamp: Date.now(),
         model: "claude-3-5-sonnet-20241022",
@@ -1199,18 +1199,18 @@ describe("CompactionHandler", () => {
       expect(updatedSummary.metadata?.contextProviderMetadata).toBeUndefined();
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.id === "msg-id" && m?.metadata?.compactionBoundary === true;
       });
       expect(summaryEvent).toBeDefined();
     });
 
     it("should strip stale provider metadata from emitted stream-end when reusing streamed summary ID", async () => {
-      const compactionReq = createMuxMessage("req-streamed-sanitize", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-streamed-sanitize", "user", "Please summarize", {
         historySequence: 5,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
-      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+      const streamedSummary = createXumMessage("msg-id", "assistant", "Summary", {
         historySequence: 6,
         timestamp: Date.now(),
         model: "claude-3-5-sonnet-20241022",
@@ -1252,7 +1252,7 @@ describe("CompactionHandler", () => {
     });
 
     it("omits context usage estimate when stream-end metadata has no visible summary tokens", async () => {
-      const compactionReq = createMuxMessage(
+      const compactionReq = createXumMessage(
         "req-streamed-no-estimate",
         "user",
         "Please summarize",
@@ -1261,7 +1261,7 @@ describe("CompactionHandler", () => {
           muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
         }
       );
-      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+      const streamedSummary = createXumMessage("msg-id", "assistant", "Summary", {
         historySequence: 6,
         timestamp: Date.now(),
         model: "claude-3-5-sonnet-20241022",
@@ -1289,13 +1289,13 @@ describe("CompactionHandler", () => {
     });
 
     it("should skip malformed compaction boundary markers when deriving next epoch", async () => {
-      const validBoundary = createMuxMessage("summary-valid", "assistant", "Valid summary", {
+      const validBoundary = createXumMessage("summary-valid", "assistant", "Valid summary", {
         historySequence: 1,
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 3,
       });
-      const malformedBoundaryMissingEpoch = createMuxMessage(
+      const malformedBoundaryMissingEpoch = createXumMessage(
         "summary-malformed-1",
         "assistant",
         "Malformed boundary",
@@ -1305,7 +1305,7 @@ describe("CompactionHandler", () => {
           compactionBoundary: true,
         }
       );
-      const malformedBoundaryMissingCompacted = createMuxMessage(
+      const malformedBoundaryMissingCompacted = createXumMessage(
         "summary-malformed-2",
         "assistant",
         "Malformed boundary",
@@ -1315,7 +1315,7 @@ describe("CompactionHandler", () => {
           compactionEpoch: 99,
         }
       );
-      const malformedBoundaryInvalidCompacted = createMuxMessage(
+      const malformedBoundaryInvalidCompacted = createXumMessage(
         "summary-malformed-invalid-compacted",
         "assistant",
         "Malformed boundary",
@@ -1329,7 +1329,7 @@ describe("CompactionHandler", () => {
         (malformedBoundaryInvalidCompacted.metadata as Record<string, unknown>).compacted =
           "corrupted";
       }
-      const malformedBoundaryInvalidEpoch = createMuxMessage(
+      const malformedBoundaryInvalidEpoch = createXumMessage(
         "summary-malformed-3",
         "assistant",
         "Malformed boundary",
@@ -1340,7 +1340,7 @@ describe("CompactionHandler", () => {
           compactionEpoch: 0,
         }
       );
-      const compactionReq = createMuxMessage("req-malformed", "user", "Please summarize", {
+      const compactionReq = createXumMessage("req-malformed", "user", "Please summarize", {
         historySequence: 6,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
@@ -1491,7 +1491,7 @@ describe("CompactionHandler", () => {
       expect(deleteEvent).toBeUndefined();
     });
 
-    it("should emit summary message with proper MuxMessage structure", async () => {
+    it("should emit summary message with proper XumMessage structure", async () => {
       const compactionReq = createCompactionRequest();
       await seedHistory(compactionReq);
 
@@ -1499,11 +1499,11 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.parts !== undefined;
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      const summaryMsg = summaryEvent?.data.message as XumMessage;
       expect(summaryMsg).toMatchObject({
         id: expect.stringContaining("summary-") as string,
         role: "assistant",
@@ -1513,7 +1513,7 @@ describe("CompactionHandler", () => {
           compactionBoundary: true,
           compactionEpoch: 1,
           muxMetadata: { type: "compaction-summary" },
-        }) as MuxMessage["metadata"],
+        }) as XumMessage["metadata"],
       });
     });
 
@@ -1535,11 +1535,11 @@ describe("CompactionHandler", () => {
   describe("Idle Compaction", () => {
     it("should preserve original recency timestamp from last user message", async () => {
       const originalTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
-      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+      const userMessage = createXumMessage("user-1", "user", "Hello", {
         timestamp: originalTimestamp,
         historySequence: 0,
       });
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+      const idleCompactionReq = createXumMessage("req-1", "user", "Summarize", {
         historySequence: 1,
         muxMetadata: {
           type: "compaction-request",
@@ -1555,23 +1555,23 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.metadata?.compacted;
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      const summaryMsg = summaryEvent?.data.message as XumMessage;
       expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
       expect(summaryMsg.metadata?.compacted).toBe("idle");
     });
 
     it("should preserve recency from last compacted message if no user message", async () => {
       const compactedTimestamp = Date.now() - 7200 * 1000; // 2 hours ago
-      const compactedMessage = createMuxMessage("compacted-1", "assistant", "Previous summary", {
+      const compactedMessage = createXumMessage("compacted-1", "assistant", "Previous summary", {
         timestamp: compactedTimestamp,
         compacted: "user",
         historySequence: 0,
       });
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+      const idleCompactionReq = createXumMessage("req-1", "user", "Summarize", {
         historySequence: 1,
         muxMetadata: {
           type: "compaction-request",
@@ -1587,27 +1587,27 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.metadata?.compacted === "idle";
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      const summaryMsg = summaryEvent?.data.message as XumMessage;
       expect(summaryMsg.metadata?.timestamp).toBe(compactedTimestamp);
     });
 
     it("should use max of user and compacted timestamps", async () => {
       const olderCompactedTimestamp = Date.now() - 7200 * 1000; // 2 hours ago
       const newerUserTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
-      const compactedMessage = createMuxMessage("compacted-1", "assistant", "Previous summary", {
+      const compactedMessage = createXumMessage("compacted-1", "assistant", "Previous summary", {
         timestamp: olderCompactedTimestamp,
         compacted: "user",
         historySequence: 0,
       });
-      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+      const userMessage = createXumMessage("user-1", "user", "Hello", {
         timestamp: newerUserTimestamp,
         historySequence: 1,
       });
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+      const idleCompactionReq = createXumMessage("req-1", "user", "Summarize", {
         historySequence: 2,
         muxMetadata: {
           type: "compaction-request",
@@ -1623,11 +1623,11 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.metadata?.compacted === "idle";
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      const summaryMsg = summaryEvent?.data.message as XumMessage;
       // Should use the newer timestamp (user message)
       expect(summaryMsg.metadata?.timestamp).toBe(newerUserTimestamp);
     });
@@ -1635,12 +1635,12 @@ describe("CompactionHandler", () => {
     it("should skip compaction-request message when finding timestamp to preserve", async () => {
       const originalTimestamp = Date.now() - 3600 * 1000; // 1 hour ago - the real user message
       const freshTimestamp = Date.now(); // The compaction request has a fresh timestamp
-      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+      const userMessage = createXumMessage("user-1", "user", "Hello", {
         timestamp: originalTimestamp,
         historySequence: 0,
       });
       // Idle compaction request WITH a timestamp (as happens in production)
-      const idleCompactionReq = createMuxMessage("req-1", "user", "Summarize", {
+      const idleCompactionReq = createXumMessage("req-1", "user", "Summarize", {
         timestamp: freshTimestamp,
         historySequence: 1,
         muxMetadata: {
@@ -1657,11 +1657,11 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.metadata?.compacted;
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      const summaryMsg = summaryEvent?.data.message as XumMessage;
       // Should use the OLD user message timestamp, NOT the fresh compaction request timestamp
       expect(summaryMsg.metadata?.timestamp).toBe(originalTimestamp);
       expect(summaryMsg.metadata?.compacted).toBe("idle");
@@ -1669,7 +1669,7 @@ describe("CompactionHandler", () => {
 
     it("should use current time for non-idle compaction", async () => {
       const oldTimestamp = Date.now() - 3600 * 1000; // 1 hour ago
-      const userMessage = createMuxMessage("user-1", "user", "Hello", {
+      const userMessage = createXumMessage("user-1", "user", "Hello", {
         timestamp: oldTimestamp,
         historySequence: 0,
       });
@@ -1683,11 +1683,11 @@ describe("CompactionHandler", () => {
       const afterTime = Date.now();
 
       const summaryEvent = emittedEvents.find((_e) => {
-        const m = _e.data.message as MuxMessage | undefined;
+        const m = _e.data.message as XumMessage | undefined;
         return m?.role === "assistant" && m?.metadata?.compacted;
       });
       expect(summaryEvent).toBeDefined();
-      const summaryMsg = summaryEvent?.data.message as MuxMessage;
+      const summaryMsg = summaryEvent?.data.message as XumMessage;
       // Should use current time, not the old user message timestamp
       expect(summaryMsg.metadata?.timestamp).toBeGreaterThanOrEqual(beforeTime);
       expect(summaryMsg.metadata?.timestamp).toBeLessThanOrEqual(afterTime);
@@ -1697,7 +1697,7 @@ describe("CompactionHandler", () => {
 
   describe("Empty Summary Validation", () => {
     it("should reject compaction when summary is empty (stream crashed)", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -1716,7 +1716,7 @@ describe("CompactionHandler", () => {
     });
 
     it("should reject compaction when summary is only whitespace", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -1735,7 +1735,7 @@ describe("CompactionHandler", () => {
 
   describe("Raw JSON Object Validation", () => {
     it("should reject compaction when summary is a raw JSON object", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -1760,7 +1760,7 @@ describe("CompactionHandler", () => {
     });
 
     it("should reject any JSON object regardless of structure", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -1779,7 +1779,7 @@ describe("CompactionHandler", () => {
     });
 
     it("should accept valid compaction summary text", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -1798,7 +1798,7 @@ describe("CompactionHandler", () => {
     });
 
     it("should accept summary with embedded JSON as part of prose", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -1815,7 +1815,7 @@ describe("CompactionHandler", () => {
     });
 
     it("should not reject JSON arrays (only objects)", async () => {
-      const compactionRequestMsg = createMuxMessage("compact-req-1", "user", "/compact", {
+      const compactionRequestMsg = createXumMessage("compact-req-1", "user", "/compact", {
         historySequence: 0,
         timestamp: Date.now() - 1000,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },

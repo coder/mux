@@ -102,7 +102,7 @@ const DEFAULT_TURN_CORRELATION_TIMEOUT_MS = 30_000;
 
 const MAX_BUFFERED_CHAT_EVENTS = 5_000;
 
-interface MuxAgentOptions {
+interface XumAgentOptions {
   disconnectCleanupMaxWaitMs?: number;
   sessionIdleTtlMs?: number;
   maxTrackedSessions?: number;
@@ -148,7 +148,7 @@ interface TurnCompletion {
   messageId?: string;
 }
 
-interface ParsedMuxMeta {
+interface ParsedXumMeta {
   projectPath?: string;
   branchName?: string;
   trunkBranch?: string;
@@ -167,7 +167,7 @@ type WorkspaceActivityById = Awaited<
   ReturnType<ServerConnection["client"]["workspace"]["activity"]["list"]>
 >;
 
-export class MuxAgent implements Agent {
+export class XumAgent implements Agent {
   private readonly sessionManager = new SessionManager();
   private readonly streamTranslator: StreamTranslator;
   private readonly toolRouter: ToolRouter;
@@ -216,31 +216,31 @@ export class MuxAgent implements Agent {
   constructor(
     private readonly connection: AgentSideConnection,
     private readonly server: ServerConnection,
-    options?: MuxAgentOptions
+    options?: XumAgentOptions
   ) {
-    assert(connection != null, "MuxAgent: connection is required");
-    assert(server != null, "MuxAgent: server connection is required");
+    assert(connection != null, "XumAgent: connection is required");
+    assert(server != null, "XumAgent: server connection is required");
 
     const configuredDisconnectCleanupMaxWaitMs = options?.disconnectCleanupMaxWaitMs;
     assert(
       configuredDisconnectCleanupMaxWaitMs == null ||
         (Number.isFinite(configuredDisconnectCleanupMaxWaitMs) &&
           configuredDisconnectCleanupMaxWaitMs >= 0),
-      "MuxAgent: disconnectCleanupMaxWaitMs must be a finite non-negative number"
+      "XumAgent: disconnectCleanupMaxWaitMs must be a finite non-negative number"
     );
 
     const configuredSessionIdleTtlMs = options?.sessionIdleTtlMs;
     assert(
       configuredSessionIdleTtlMs == null ||
         (Number.isFinite(configuredSessionIdleTtlMs) && configuredSessionIdleTtlMs > 0),
-      "MuxAgent: sessionIdleTtlMs must be a finite positive number"
+      "XumAgent: sessionIdleTtlMs must be a finite positive number"
     );
 
     const configuredMaxTrackedSessions = options?.maxTrackedSessions;
     assert(
       configuredMaxTrackedSessions == null ||
         (Number.isInteger(configuredMaxTrackedSessions) && configuredMaxTrackedSessions > 0),
-      "MuxAgent: maxTrackedSessions must be a positive integer"
+      "XumAgent: maxTrackedSessions must be a positive integer"
     );
 
     const configuredTurnCorrelationTimeoutMs = options?.turnCorrelationTimeoutMs;
@@ -248,7 +248,7 @@ export class MuxAgent implements Agent {
       configuredTurnCorrelationTimeoutMs == null ||
         (Number.isFinite(configuredTurnCorrelationTimeoutMs) &&
           configuredTurnCorrelationTimeoutMs > 0),
-      "MuxAgent: turnCorrelationTimeoutMs must be a finite positive number"
+      "XumAgent: turnCorrelationTimeoutMs must be a finite positive number"
     );
 
     this.disconnectCleanupMaxWaitMs =
@@ -320,7 +320,7 @@ export class MuxAgent implements Agent {
 
     this.inFlightNewSessionCount += 1;
     try {
-      const meta = parseMuxMeta(params._meta);
+      const meta = parseXumMeta(params._meta);
       const requestedProjectPath = await resolveAcpNewSessionProjectPath(
         params.cwd,
         meta.projectPath
@@ -522,7 +522,7 @@ export class MuxAgent implements Agent {
   async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
     this.assertInitialized("unstable_forkSession");
 
-    const meta = parseMuxMeta(params._meta);
+    const meta = parseXumMeta(params._meta);
     const sourceWorkspaceId = this.sessionManager.getWorkspaceId(params.sessionId);
     const sourceWorkspace = await this.server.client.workspace.getInfo({
       workspaceId: sourceWorkspaceId,
@@ -676,7 +676,7 @@ export class MuxAgent implements Agent {
   authenticate(_params: AuthenticateRequest): Promise<AuthenticateResponse> {
     this.assertInitialized("authenticate");
 
-    // Local mux server connections do not currently require ACP-level auth.
+    // Local Xum server connections do not currently require ACP-level auth.
     return Promise.resolve({});
   }
 
@@ -767,9 +767,9 @@ export class MuxAgent implements Agent {
       "attachPromptCorrelationToSendOptions: promptCorrelationId must be non-empty"
     );
 
-    const existingMuxMetadata = isRecord(options.muxMetadata) ? options.muxMetadata : {};
+    const existingXumMetadata = isRecord(options.muxMetadata) ? options.muxMetadata : {};
     const muxMetadata: Record<string, unknown> = {
-      ...existingMuxMetadata,
+      ...existingXumMetadata,
       [ACP_PROMPT_CORRELATION_MUX_METADATA_KEY]: promptCorrelationId,
     };
 
@@ -2492,8 +2492,8 @@ function toSessionRecencyTimestamp(
   return Number.isFinite(createdAtMs) ? createdAtMs : 0;
 }
 
-function parseMuxMeta(rawMeta: MetaRecord | null | undefined): ParsedMuxMeta {
-  const source = getMuxMetaSource(rawMeta);
+function parseXumMeta(rawMeta: MetaRecord | null | undefined): ParsedXumMeta {
+  const source = getXumMetaSource(rawMeta);
 
   return {
     projectPath: readOptionalString(source, "projectPath"),
@@ -2509,14 +2509,15 @@ function parseMuxMeta(rawMeta: MetaRecord | null | undefined): ParsedMuxMeta {
   };
 }
 
-function getMuxMetaSource(rawMeta: MetaRecord | null | undefined): MetaRecord {
+function getXumMetaSource(rawMeta: MetaRecord | null | undefined): MetaRecord {
   if (!isRecord(rawMeta)) {
     return {};
   }
 
-  const nestedMuxMeta = rawMeta.mux;
-  if (isRecord(nestedMuxMeta)) {
-    return nestedMuxMeta;
+  // ACP clients already send this protocol marker, so the wire key remains `mux`.
+  const nestedXumMeta = rawMeta.mux;
+  if (isRecord(nestedXumMeta)) {
+    return nestedXumMeta;
   }
 
   return rawMeta;

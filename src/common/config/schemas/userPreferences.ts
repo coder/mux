@@ -16,7 +16,7 @@ import {
   type TerminalFontConfig,
   type TranscriptDensity,
 } from "@/common/constants/storage";
-import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
+import { XumProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import { ThinkingLevelSchema } from "@/common/types/thinking";
 import {
   isRecord,
@@ -87,8 +87,8 @@ export const UserPreferencesSchema = z.object({
         .optional(),
       providerOptions: z
         .object({
-          anthropic: MuxProviderOptionsSchema.shape.anthropic,
-          google: MuxProviderOptionsSchema.shape.google,
+          anthropic: XumProviderOptionsSchema.shape.anthropic,
+          google: XumProviderOptionsSchema.shape.google,
         })
         .optional(),
       autoCompactionThresholdByModel: z
@@ -169,12 +169,12 @@ function parseProviderOptions(
   }
 
   const out: NonNullable<NonNullable<UserPreferences["ai"]>["providerOptions"]> = {};
-  const anthropic = MuxProviderOptionsSchema.shape.anthropic.safeParse(value.anthropic);
+  const anthropic = XumProviderOptionsSchema.shape.anthropic.safeParse(value.anthropic);
   if (anthropic.success && anthropic.data && Object.keys(anthropic.data).length > 0) {
     out.anthropic = anthropic.data;
   }
 
-  const google = MuxProviderOptionsSchema.shape.google.safeParse(value.google);
+  const google = XumProviderOptionsSchema.shape.google.safeParse(value.google);
   if (google.success && google.data && Object.keys(google.data).length > 0) {
     out.google = google.data;
   }

@@ -1,12 +1,12 @@
 import type {
-  MuxMessage,
-  MuxMetadata,
+  XumMessage,
+  XumMetadata,
   DisplayedMessage,
   CompactionRequestData,
   InlineSkillSnapshotMap,
 } from "@/common/types/message";
 import {
-  createMuxMessage,
+  createXumMessage,
   getMcpPromptReferenceKey,
   isCompactionSummaryMetadata,
   sanitizeAgentSkillRefs,
@@ -55,7 +55,7 @@ import type {
   DeleteMessage,
   OnChatCursor,
 } from "@/common/orpc/types";
-import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
+import { isInitStart, isInitOutput, isInitEnd, isXumMessage } from "@/common/orpc/types";
 import {
   buildAggregateResponseCompleteMetadata,
   buildResponseCompleteMetadata,
@@ -86,7 +86,7 @@ import {
 } from "@/common/utils/messages/compactionBoundary";
 import { isWorkflowResultMessage } from "@/common/utils/workflowRunMessages";
 
-function isDisplayOnlyCompletedSubagentReport(message: MuxMessage): boolean {
+function isDisplayOnlyCompletedSubagentReport(message: XumMessage): boolean {
   if (
     message.role !== "user" ||
     message.metadata?.synthetic !== true ||
@@ -361,7 +361,7 @@ interface MCPPromptSnapshotContent {
 }
 
 function maybeCollectMcpPromptSnapshot(
-  message: MuxMessage,
+  message: XumMessage,
   snapshots: Map<string, MCPPromptSnapshotContent>
 ): void {
   const metadata = message.metadata?.mcpPromptSnapshot;
@@ -393,7 +393,7 @@ function getAgentSkillSnapshotKey(scope: AgentSkillScope, skillName: string): st
 }
 
 function maybeCollectAgentSkillSnapshot(
-  message: MuxMessage,
+  message: XumMessage,
   snapshots: Map<string, AgentSkillSnapshotContent>
 ): void {
   const snapshotMeta = message.metadata?.agentSkillSnapshot;
@@ -481,7 +481,7 @@ interface TranscriptInsertionPlan {
 }
 
 interface TranscriptInsertion extends MessagePartSplitCut {
-  insertionMessage: MuxMessage;
+  insertionMessage: XumMessage;
 }
 
 export interface TranscriptRevealTarget {
@@ -490,7 +490,7 @@ export interface TranscriptRevealTarget {
 }
 
 export class StreamingMessageAggregator {
-  private messages = new Map<string, MuxMessage>();
+  private messages = new Map<string, XumMessage>();
   private activeStreams = new Map<string, StreamingContext>();
 
   private backgroundHandoffCompletion: ReturnType<typeof buildAggregateResponseCompleteMetadata> =
@@ -509,7 +509,7 @@ export class StreamingMessageAggregator {
   >();
   private messageVersions = new Map<string, number>();
   private cache: {
-    allMessages?: MuxMessage[];
+    allMessages?: XumMessage[];
     displayedMessages?: DisplayedMessage[];
   } = {};
   private recencyTimestamp: number | null = null;
@@ -1097,7 +1097,7 @@ export class StreamingMessageAggregator {
    * Extract the final response text from a message (text after the last tool call).
    * Used for notification body content.
    */
-  private extractFinalResponseText(message: MuxMessage | undefined): string {
+  private extractFinalResponseText(message: XumMessage | undefined): string {
     if (!message) return "";
     const parts = message.parts;
     const lastToolIndex = parts.findLastIndex((part) => part.type === "dynamic-tool");
@@ -1105,11 +1105,11 @@ export class StreamingMessageAggregator {
     return getTextPartContent(textPartsAfterTools).trim();
   }
 
-  private compactMessageParts(message: MuxMessage): void {
+  private compactMessageParts(message: XumMessage): void {
     message.parts = mergeAdjacentParts(message.parts);
   }
 
-  addMessage(message: MuxMessage): void {
+  addMessage(message: XumMessage): void {
     const normalizedMessage = normalizeMessageRouteProvider(message);
     const existing = this.messages.get(normalizedMessage.id);
     if (existing) {
@@ -1150,7 +1150,7 @@ export class StreamingMessageAggregator {
    * @param opts.skipDerivedState - Skip replaying messages into derived state when appending older history
    */
   loadHistoricalMessages(
-    messages: MuxMessage[],
+    messages: XumMessage[],
     hasActiveStream = false,
     opts?: { mode?: "replace" | "append"; skipDerivedState?: boolean }
   ): void {
@@ -1182,7 +1182,7 @@ export class StreamingMessageAggregator {
     }
 
     const overwrittenMessageIds: string[] = [];
-    const appliedMessages: MuxMessage[] = [];
+    const appliedMessages: XumMessage[] = [];
 
     // Add/overwrite messages in the map
     for (const message of messages) {
@@ -1309,7 +1309,7 @@ export class StreamingMessageAggregator {
     return this.historyEpoch;
   }
 
-  getAllMessages(): MuxMessage[] {
+  getAllMessages(): XumMessage[] {
     this.cache.allMessages ??= Array.from(this.messages.values()).sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
@@ -2061,7 +2061,7 @@ export class StreamingMessageAggregator {
     this.activeStreams.set(data.messageId, context);
 
     // Create initial streaming message with empty parts (deltas will append)
-    const streamingMessage = createMuxMessage(data.messageId, "assistant", "", {
+    const streamingMessage = createXumMessage(data.messageId, "assistant", "", {
       historySequence: data.historySequence,
       timestamp: Date.now(),
       model: data.model,
@@ -2128,7 +2128,7 @@ export class StreamingMessageAggregator {
       const message = this.messages.get(data.messageId);
       if (message?.metadata) {
         // Transparent metadata merge - backend fields flow through automatically
-        const updatedMetadata: MuxMetadata = {
+        const updatedMetadata: XumMetadata = {
           ...message.metadata,
           ...data.metadata,
         };
@@ -2210,7 +2210,7 @@ export class StreamingMessageAggregator {
         data.metadata.routeProvider,
         data.metadata.routedThroughGateway
       );
-      const message: MuxMessage = {
+      const message: XumMessage = {
         id: data.messageId,
         role: "assistant",
         metadata: {
@@ -2320,7 +2320,7 @@ export class StreamingMessageAggregator {
         0,
         ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
       );
-      const errorMessage: MuxMessage = {
+      const errorMessage: XumMessage = {
         id: data.messageId,
         role: "assistant",
         parts: [],
@@ -2898,8 +2898,8 @@ export class StreamingMessageAggregator {
       return;
     }
 
-    if (isMuxMessage(data)) {
-      this.handleMuxMessage(data);
+    if (isXumMessage(data)) {
+      this.handleXumMessage(data);
     }
   }
 
@@ -2992,7 +2992,7 @@ export class StreamingMessageAggregator {
     return false;
   }
 
-  private handleMuxMessage(data: MuxMessage): void {
+  private handleXumMessage(data: XumMessage): void {
     const incomingMessage = normalizeMessageRouteProvider(data);
 
     // Smart replacement logic for edits: if history was truncated, remove the
@@ -3069,14 +3069,14 @@ export class StreamingMessageAggregator {
     this.setPendingStreamStartTime(Date.now());
   }
 
-  private isContextBoundaryMessage(message: MuxMessage): boolean {
+  private isContextBoundaryMessage(message: XumMessage): boolean {
     return (
       this.isCompactionBoundaryMessage(message) ||
       getContextBoundaryKind(message) === CONTEXT_BOUNDARY_KINDS.RESET
     );
   }
 
-  private isCompactionBoundaryMessage(message: MuxMessage): boolean {
+  private isCompactionBoundaryMessage(message: XumMessage): boolean {
     const muxMeta = message.metadata?.muxMetadata;
     return (
       message.role === "assistant" &&
@@ -3094,7 +3094,7 @@ export class StreamingMessageAggregator {
    * from getHistoryFromLatestBoundary(skip=0). Older epochs remain accessible via
    * Load More.
    */
-  private pruneBeforeLatestBoundary(incomingBoundary: MuxMessage): void {
+  private pruneBeforeLatestBoundary(incomingBoundary: XumMessage): void {
     const incomingBoundarySequence = incomingBoundary.metadata?.historySequence;
     // Self-healing guard: malformed boundary metadata should not crash live sessions.
     if (incomingBoundarySequence === undefined) return;
@@ -3127,7 +3127,7 @@ export class StreamingMessageAggregator {
   }
 
   private buildDisplayedMessagesForMessage(
-    message: MuxMessage,
+    message: XumMessage,
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
     inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
@@ -3151,7 +3151,7 @@ export class StreamingMessageAggregator {
     );
   }
 
-  private getAssistantTailCut(message: MuxMessage): MessagePartSplitCut {
+  private getAssistantTailCut(message: XumMessage): MessagePartSplitCut {
     const parts = mergeAdjacentParts(message.parts);
     let textLength = 0;
     let reasoningLength = 0;
@@ -3163,8 +3163,8 @@ export class StreamingMessageAggregator {
   }
 
   private isReportResponseAssistant(
-    message: MuxMessage,
-    shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
+    message: XumMessage,
+    shouldHideMessageFromTranscript: (message: XumMessage) => boolean
   ): boolean {
     return (
       message.role === "assistant" &&
@@ -3175,7 +3175,7 @@ export class StreamingMessageAggregator {
     );
   }
 
-  private isDisplayOnlyTailMessage(message: MuxMessage): boolean {
+  private isDisplayOnlyTailMessage(message: XumMessage): boolean {
     return (
       isDisplayOnlyCompletedSubagentReport(message) ||
       message.metadata?.muxMetadata?.type === "plan-display"
@@ -3183,11 +3183,11 @@ export class StreamingMessageAggregator {
   }
 
   private findReportResponseTarget(
-    allMessages: readonly MuxMessage[],
+    allMessages: readonly XumMessage[],
     reportIndex: number,
-    reportMessage: MuxMessage,
-    shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
-  ): MuxMessage | undefined {
+    reportMessage: XumMessage,
+    shouldHideMessageFromTranscript: (message: XumMessage) => boolean
+  ): XumMessage | undefined {
     const report = parseSubagentReportEnvelope(getTextPartContent(reportMessage.parts));
     if (!report) {
       return undefined;
@@ -3258,8 +3258,8 @@ export class StreamingMessageAggregator {
   }
 
   private buildTranscriptInsertionPlan(
-    allMessages: readonly MuxMessage[],
-    shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
+    allMessages: readonly XumMessage[],
+    shouldHideMessageFromTranscript: (message: XumMessage) => boolean
   ): TranscriptInsertionPlan {
     const messagesById = new Map(allMessages.map((message) => [message.id, message]));
     const messageIndexById = new Map(allMessages.map((message, index) => [message.id, index]));
@@ -3337,9 +3337,9 @@ export class StreamingMessageAggregator {
 
   /** Split message parts at stable text/reasoning offsets and canonical part indexes. */
   private splitMessagePartsAtTranscriptAnchors(
-    parts: MuxMessage["parts"],
+    parts: XumMessage["parts"],
     cutPoints: readonly MessagePartSplitCut[]
-  ): Array<MuxMessage["parts"]> {
+  ): Array<XumMessage["parts"]> {
     const sortedCuts = [...cutPoints].sort((a, b) => {
       const aContentLength = a.textLength + a.reasoningLength;
       const bContentLength = b.textLength + b.reasoningLength;
@@ -3347,7 +3347,7 @@ export class StreamingMessageAggregator {
         a.partIndex - b.partIndex || aContentLength - bContentLength || a.textLength - b.textLength
       );
     });
-    const segments: Array<MuxMessage["parts"]> = sortedCuts.map(() => []);
+    const segments: Array<XumMessage["parts"]> = sortedCuts.map(() => []);
     segments.push([]);
 
     let cumulativeText = 0;
@@ -3424,7 +3424,7 @@ export class StreamingMessageAggregator {
    * The final segment keeps the original id so active-stream state remains attached.
    */
   private buildMessageDisplayWithInsertions(
-    message: MuxMessage,
+    message: XumMessage,
     insertions: readonly TranscriptInsertion[],
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
     inlineSkillSnapshots?: InlineSkillSnapshotMap
@@ -3449,7 +3449,7 @@ export class StreamingMessageAggregator {
 
       if (segParts.length > 0 || isLastSegment) {
         const segMessageId = isLastSegment ? message.id : `${message.id}#seg${i}`;
-        const segMessage: MuxMessage = {
+        const segMessage: XumMessage = {
           ...message,
           id: segMessageId,
           parts: segParts,
@@ -3554,7 +3554,7 @@ export class StreamingMessageAggregator {
       const showSyntheticMessages =
         typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
-      const shouldHideMessageFromTranscript = (message: MuxMessage): boolean =>
+      const shouldHideMessageFromTranscript = (message: XumMessage): boolean =>
         !showSyntheticMessages &&
         ((message.metadata?.synthetic === true && message.metadata?.uiVisible !== true) ||
           isWorkflowResultMessage(message));
@@ -3565,7 +3565,7 @@ export class StreamingMessageAggregator {
       // row only sees the contiguous snapshot block directly before it; a
       // history-wide map would falsely attach an older turn's expansion.
       const blockMcpPromptSnapshotByKey = new Map<string, MCPPromptSnapshotContent>();
-      const isSyntheticSnapshotRow = (message: MuxMessage): boolean =>
+      const isSyntheticSnapshotRow = (message: XumMessage): boolean =>
         message.metadata?.synthetic === true &&
         (message.metadata.mcpPromptSnapshot !== undefined ||
           message.metadata.agentSkillSnapshot !== undefined ||

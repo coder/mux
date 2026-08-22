@@ -6,7 +6,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { CODEX_ENDPOINT, CODEX_OAUTH_ROUTED_HEADER } from "@/common/constants/codexOAuth";
 import { PROVIDER_REGISTRY } from "@/common/constants/providers";
@@ -2383,7 +2383,7 @@ describe("ProviderModelFactory Coder", () => {
       } as Parameters<Config["saveProvidersConfig"]>[0]);
       factory.coderOauthService = stubCoderOauthService();
 
-      const muxOptions: MuxProviderOptions = {};
+      const muxOptions: XumProviderOptions = {};
       const result = await factory.createModel("coder:prod-anthropic/claude-opus-4-5", muxOptions);
       expect(result.success).toBe(true);
       expect(muxOptions.anthropic?.disableBetaFeatures).toBe(true);
@@ -2406,7 +2406,7 @@ describe("ProviderModelFactory Coder", () => {
       } as Parameters<Config["saveProvidersConfig"]>[0]);
       factory.coderOauthService = stubCoderOauthService();
 
-      const muxOptions: MuxProviderOptions = {};
+      const muxOptions: XumProviderOptions = {};
       const result = await factory.createModel("coder:anthropic/gpt-5", muxOptions);
       expect(result.success).toBe(true);
       expect(muxOptions.anthropic).toBeUndefined();
@@ -2429,7 +2429,7 @@ describe("ProviderModelFactory Coder", () => {
       } as Parameters<Config["saveProvidersConfig"]>[0]);
       factory.coderOauthService = stubCoderOauthService();
 
-      const muxOptions: MuxProviderOptions = {};
+      const muxOptions: XumProviderOptions = {};
       const result = await factory.createModel("coder:prod-openai/gpt-5.2", muxOptions);
       expect(result.success).toBe(true);
       expect(muxOptions.openai?.store).toBe(false);
@@ -2452,7 +2452,7 @@ describe("ProviderModelFactory Coder", () => {
       } as Parameters<Config["saveProvidersConfig"]>[0]);
       factory.coderOauthService = stubCoderOauthService();
 
-      const muxOptions: MuxProviderOptions = {};
+      const muxOptions: XumProviderOptions = {};
       const result = await factory.createModel("coder:openai/gpt-5", muxOptions);
       expect(result.success).toBe(true);
       expect(muxOptions.openai).toBeUndefined();

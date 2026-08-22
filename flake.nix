@@ -166,7 +166,7 @@
 
           meta = with pkgs.lib; {
             description = "xum - coding agent multiplexer";
-            homepage = "https://github.com/coder/mux";
+            homepage = "https://github.com/coder/xum";
             license = licenses.agpl3Only;
             platforms = platforms.linux ++ platforms.darwin;
             mainProgram = "xum";

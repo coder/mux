@@ -47,7 +47,7 @@ export type GoalBudgetLimitedEvent = z.infer<typeof schemas.GoalBudgetLimitedEve
 export type WorkspaceInitEvent = z.infer<typeof schemas.WorkspaceInitEventSchema>;
 export type UpdateStatus = z.infer<typeof schemas.UpdateStatusSchema>;
 export type DesktopPrereqStatus = z.infer<typeof schemas.desktop.getPrereqStatus.output>;
-export type ChatMuxMessage = z.infer<typeof schemas.ChatMuxMessageSchema>;
+export type ChatXumMessage = z.infer<typeof schemas.ChatXumMessageSchema>;
 export type WorkspaceStatsSnapshot = z.infer<typeof schemas.WorkspaceStatsSnapshotSchema>;
 export type WorkspaceActivitySnapshot = z.infer<typeof schemas.WorkspaceActivitySnapshotSchema>;
 export type FrontendWorkspaceMetadataSchemaType = z.infer<
@@ -151,7 +151,7 @@ export function isUsageDelta(msg: WorkspaceChatMessage): msg is UsageDeltaEvent 
   return (msg as { type?: string }).type === "usage-delta";
 }
 
-export function isMuxMessage(msg: WorkspaceChatMessage): msg is ChatMuxMessage {
+export function isXumMessage(msg: WorkspaceChatMessage): msg is ChatXumMessage {
   return (msg as { type?: string }).type === "message";
 }
 

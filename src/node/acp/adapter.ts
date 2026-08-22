@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import { MuxAgent } from "./agent";
+import { XumAgent } from "./agent";
 import type { ServerConnection } from "./serverConnection";
 
 /**
@@ -35,7 +35,7 @@ export async function runAcpAdapter(server: ServerConnection): Promise<void> {
 
   let waitForDisconnectCleanup: () => Promise<void> = () => Promise.resolve();
   const connection = new AgentSideConnection((conn) => {
-    const createdAgent = new MuxAgent(conn, server);
+    const createdAgent = new XumAgent(conn, server);
     waitForDisconnectCleanup = () => createdAgent.waitForDisconnectCleanup();
     return createdAgent;
   }, stream);

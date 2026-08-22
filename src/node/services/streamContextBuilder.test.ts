@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectsConfig } from "@/common/types/project";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -121,7 +121,7 @@ describe("buildPlanInstructions", () => {
     };
 
     const runtime = new TestRuntime(projectPath, xumHome);
-    const requestPayloadMessages = [createMuxMessage("u1", "user", "plan the fix")];
+    const requestPayloadMessages = [createXumMessage("u1", "user", "plan the fix")];
     const callerInstructions = "Caller-specific plan note";
 
     const expectedPlanFilePath = getPlanFilePath(metadata.name, metadata.projectName, xumHome);
@@ -178,7 +178,7 @@ describe("buildPlanInstructions", () => {
     await fs.mkdir(path.dirname(planFilePath), { recursive: true });
     await fs.writeFile(planFilePath, "# Plan\n\n- Keep implementing", "utf-8");
 
-    const startHereSummary = createMuxMessage(
+    const startHereSummary = createXumMessage(
       "start-here",
       "assistant",
       "# Start Here\n\n- Existing plan context\n\n*Plan file preserved at:* /tmp/plan.md",
@@ -188,13 +188,13 @@ describe("buildPlanInstructions", () => {
       }
     );
 
-    const compactionBoundary = createMuxMessage("boundary", "assistant", "Compacted summary", {
+    const compactionBoundary = createXumMessage("boundary", "assistant", "Compacted summary", {
       compacted: "user",
       compactionBoundary: true,
       compactionEpoch: 1,
     });
 
-    const latestUserMessage = createMuxMessage("u1", "user", "continue implementation");
+    const latestUserMessage = createXumMessage("u1", "user", "continue implementation");
 
     const fullHistory = [startHereSummary, compactionBoundary, latestUserMessage];
     const requestPayloadMessages = sliceMessagesFromLatestCompactionBoundary(fullHistory);

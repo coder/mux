@@ -4,7 +4,7 @@ import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { ProjectConfig, ProjectsConfig } from "@/common/types/project";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import { createTestHistoryService } from "./testHistoryService";
 
@@ -62,11 +62,11 @@ describe("IdleCompactionService", () => {
     const idleTimestamp = now - 25 * oneHourMs;
     await historyService.appendToHistory(
       testWorkspaceId,
-      createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp })
+      createXumMessage("1", "user", "Hello", { timestamp: idleTimestamp })
     );
     await historyService.appendToHistory(
       testWorkspaceId,
-      createMuxMessage("2", "assistant", "Hi there!", { timestamp: idleTimestamp })
+      createXumMessage("2", "assistant", "Hi there!", { timestamp: idleTimestamp })
     );
 
     // Create mock extension metadata service
@@ -133,7 +133,7 @@ describe("IdleCompactionService", () => {
       const idleTimestamp = now - 25 * oneHourMs;
       spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
-          createMuxMessage("1", "assistant", "Summary", {
+          createXumMessage("1", "assistant", "Summary", {
             compacted: true,
             timestamp: idleTimestamp,
           }),
@@ -150,8 +150,8 @@ describe("IdleCompactionService", () => {
       const recentTimestamp = now - oneHourMs;
       spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
-          createMuxMessage("1", "user", "Hello", { timestamp: recentTimestamp }),
-          createMuxMessage("2", "assistant", "Hi!", { timestamp: recentTimestamp }),
+          createXumMessage("1", "user", "Hello", { timestamp: recentTimestamp }),
+          createXumMessage("2", "assistant", "Hi!", { timestamp: recentTimestamp }),
         ])
       );
 
@@ -164,9 +164,9 @@ describe("IdleCompactionService", () => {
       const idleTimestamp = now - 25 * oneHourMs;
       spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
         Ok([
-          createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
-          createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
-          createMuxMessage("3", "user", "Another question?", { timestamp: idleTimestamp }), // Last message is user
+          createXumMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
+          createXumMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
+          createXumMessage("3", "user", "Another question?", { timestamp: idleTimestamp }), // Last message is user
         ])
       );
 
@@ -178,7 +178,7 @@ describe("IdleCompactionService", () => {
     test("returns ineligible when messages have no timestamps", async () => {
       // Messages without timestamps - can't determine recency
       spyOn(historyService, "getLastMessages").mockResolvedValueOnce(
-        Ok([createMuxMessage("1", "user", "Hello"), createMuxMessage("2", "assistant", "Hi!")])
+        Ok([createXumMessage("1", "user", "Hello"), createXumMessage("2", "assistant", "Hi!")])
       );
 
       const result = await service.checkEligibility(testWorkspaceId, threshold24h, now);
@@ -245,8 +245,8 @@ describe("IdleCompactionService", () => {
         }
         return Promise.resolve(
           Ok([
-            createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
-            createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
+            createXumMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
+            createXumMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
           ])
         );
       });
@@ -281,8 +281,8 @@ describe("IdleCompactionService", () => {
 
       spyOn(historyService, "getLastMessages").mockResolvedValue(
         Ok([
-          createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
-          createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
+          createXumMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
+          createXumMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
         ])
       );
 
@@ -358,8 +358,8 @@ describe("IdleCompactionService", () => {
       // same data for both checks.
       spyOn(historyService, "getLastMessages").mockResolvedValue(
         Ok([
-          createMuxMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
-          createMuxMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
+          createXumMessage("1", "user", "Hello", { timestamp: idleTimestamp }),
+          createXumMessage("2", "assistant", "Hi!", { timestamp: idleTimestamp }),
         ])
       );
 

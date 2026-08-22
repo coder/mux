@@ -6,7 +6,7 @@ import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { createTestHistoryService } from "./testHistoryService";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 
@@ -55,19 +55,19 @@ describe("AgentSession post-compaction refresh trigger", () => {
 
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-before-compact", "user", "Remember that we prefer concise tests", {
+      createXumMessage("user-before-compact", "user", "Remember that we prefer concise tests", {
         timestamp: 1000,
       })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-before-compact", "assistant", "Noted.", {
+      createXumMessage("assistant-before-compact", "assistant", "Noted.", {
         timestamp: 1001,
       })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("compact-request", "user", "Please compact", {
+      createXumMessage("compact-request", "user", "Please compact", {
         timestamp: 1002,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       })
@@ -124,11 +124,11 @@ describe("AgentSession post-compaction refresh trigger", () => {
     historyCleanup = cleanup;
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("before-failed-follow-up", "user", "Preserve this context")
+      createXumMessage("before-failed-follow-up", "user", "Preserve this context")
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("failed-follow-up-request", "user", "Please compact", {
+      createXumMessage("failed-follow-up-request", "user", "Please compact", {
         muxMetadata: {
           type: "compaction-request",
           rawCommand: "/compact",

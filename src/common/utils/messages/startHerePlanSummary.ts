@@ -1,9 +1,9 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 const START_HERE_PLAN_PATH_NOTE_MARKER = "*Plan file preserved at:*";
 const START_HERE_PLAN_PLACEHOLDER_PREFIX = "*Plan saved to ";
 
-function getTextContent(message: MuxMessage): string {
+function getTextContent(message: XumMessage): string {
   return (
     message.parts
       ?.filter((part) => part.type === "text")
@@ -42,7 +42,7 @@ function getPlanBodyText(startHereText: string): string {
  * the exec agent to re-read the plan file), which would waste tokens and often
  * results in redundant file reads.
  */
-export function isStartHerePlanSummaryMessage(message: MuxMessage): boolean {
+export function isStartHerePlanSummaryMessage(message: XumMessage): boolean {
   if (message.role !== "assistant") return false;
 
   // The Start Here summary is stored as a user-compaction-style message so it
@@ -67,7 +67,7 @@ export function isStartHerePlanSummaryMessage(message: MuxMessage): boolean {
   return true;
 }
 
-export function hasStartHerePlanSummary(messages: MuxMessage[]): boolean {
+export function hasStartHerePlanSummary(messages: XumMessage[]): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (isStartHerePlanSummaryMessage(messages[i])) return true;
   }

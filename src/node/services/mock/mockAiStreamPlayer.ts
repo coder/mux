@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
-import type { MuxMessage, MuxMessageMetadata } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
+import type { XumMessage, XumMessageMetadata } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { HistoryService } from "@/node/services/historyService";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -129,8 +129,8 @@ interface ActiveStream {
   mode?: MockStreamStartEvent["mode"];
   agentId?: string;
   thinkingLevel?: MockStreamStartEvent["thinkingLevel"];
-  muxMetadata?: MuxMessageMetadata;
-  parts: MuxMessage["parts"];
+  muxMetadata?: XumMessageMetadata;
+  parts: XumMessage["parts"];
   partialWriteTimer: ReturnType<typeof setTimeout> | null;
   eventQueue: Array<() => Promise<void>>;
   isProcessing: boolean;
@@ -141,14 +141,14 @@ export class MockAiStreamPlayer {
   private readonly streamStartGates = new Map<string, StreamStartGate>();
   private readonly releasedStreamStartGates = new Set<string>();
   private readonly router = new MockAiRouter();
-  private readonly lastPromptByWorkspace = new Map<string, MuxMessage[]>();
+  private readonly lastPromptByWorkspace = new Map<string, XumMessage[]>();
   private readonly lastModelByWorkspace = new Map<string, string>();
   private readonly activeStreams = new Map<string, ActiveStream>();
   private nextMockMessageId = 0;
 
   constructor(private readonly deps: MockPlayerDeps) {}
 
-  debugGetLastPrompt(workspaceId: string): MuxMessage[] | null {
+  debugGetLastPrompt(workspaceId: string): XumMessage[] | null {
     return this.lastPromptByWorkspace.get(workspaceId) ?? null;
   }
 
@@ -156,12 +156,12 @@ export class MockAiStreamPlayer {
     return this.lastModelByWorkspace.get(workspaceId) ?? null;
   }
 
-  private recordLastPrompt(workspaceId: string, messages: MuxMessage[]): void {
+  private recordLastPrompt(workspaceId: string, messages: XumMessage[]): void {
     try {
       const cloned =
         typeof structuredClone === "function"
           ? structuredClone(messages)
-          : (JSON.parse(JSON.stringify(messages)) as MuxMessage[]);
+          : (JSON.parse(JSON.stringify(messages)) as XumMessage[]);
       this.lastPromptByWorkspace.set(workspaceId, cloned);
     } catch {
       this.lastPromptByWorkspace.set(workspaceId, messages);
@@ -272,13 +272,13 @@ export class MockAiStreamPlayer {
   }
 
   async play(
-    messages: MuxMessage[],
+    messages: XumMessage[],
     workspaceId: string,
     options?: {
       model?: string;
       agentId?: string;
       thinkingLevel?: StreamStartEvent["thinkingLevel"];
-      muxMetadata?: MuxMessageMetadata;
+      muxMetadata?: XumMessageMetadata;
       abortSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -363,7 +363,7 @@ export class MockAiStreamPlayer {
 
     let historySequence = this.computeNextHistorySequence(messages);
 
-    const assistantMessage = createMuxMessage(messageId, "assistant", "", {
+    const assistantMessage = createXumMessage(messageId, "assistant", "", {
       timestamp: Date.now(),
       model: streamStart.model,
       ...(streamStart.mode && { mode: streamStart.mode }),
@@ -421,7 +421,7 @@ export class MockAiStreamPlayer {
     events: MockAssistantEvent[],
     messageId: string,
     historySequence: number,
-    muxMetadata?: MuxMessageMetadata
+    muxMetadata?: XumMessageMetadata
   ): void {
     const timers: Array<ReturnType<typeof setTimeout>> = [];
     const streamStart = events.find(
@@ -518,7 +518,7 @@ export class MockAiStreamPlayer {
     const existingIndex = active.parts.findIndex(
       (part) => part.type === "dynamic-tool" && part.toolCallId === event.toolCallId
     );
-    const nextPart: MuxMessage["parts"][number] = {
+    const nextPart: XumMessage["parts"][number] = {
       type: "dynamic-tool",
       state: "input-available",
       toolCallId: event.toolCallId,
@@ -544,7 +544,7 @@ export class MockAiStreamPlayer {
       (part) => part.type === "dynamic-tool" && part.toolCallId === event.toolCallId
     );
     const previousPart = existingIndex >= 0 ? active.parts[existingIndex] : undefined;
-    const nextPart: MuxMessage["parts"][number] = {
+    const nextPart: XumMessage["parts"][number] = {
       type: "dynamic-tool",
       state: "output-available",
       toolCallId: event.toolCallId,
@@ -595,7 +595,7 @@ export class MockAiStreamPlayer {
       return;
     }
 
-    const partialMessage: MuxMessage = {
+    const partialMessage: XumMessage = {
       id: active.messageId,
       role: "assistant",
       metadata: {
@@ -836,7 +836,7 @@ export class MockAiStreamPlayer {
         if (historyResult.success) {
           const existingMessage = historyResult.data.find((msg) => msg.id === messageId);
           if (existingMessage?.metadata?.historySequence !== undefined) {
-            const completedMessage: MuxMessage = {
+            const completedMessage: XumMessage = {
               id: messageId,
               role: "assistant",
               parts: completedParts,
@@ -896,14 +896,14 @@ export class MockAiStreamPlayer {
     this.activeStreams.delete(workspaceId);
   }
 
-  private extractText(message: MuxMessage): string {
+  private extractText(message: XumMessage): string {
     return message.parts
       .filter((part) => "text" in part)
       .map((part) => (part as { text: string }).text)
       .join("");
   }
 
-  private computeNextHistorySequence(messages: MuxMessage[]): number {
+  private computeNextHistorySequence(messages: XumMessage[]): number {
     let maxSequence = 0;
     for (const message of messages) {
       const seq = message.metadata?.historySequence;

@@ -33,7 +33,7 @@ import type {
   ServerAuthSession,
 } from "@/common/orpc/types";
 import type { ProjectGitStatusResult as ApiProjectGitStatusResult } from "@/common/orpc/schemas/api";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { NameGenerationError } from "@/common/types/errors";
@@ -225,7 +225,7 @@ export interface MockORPCClientOptions {
   /** Mock transcripts for workspace.getSubagentTranscript (taskId -> persisted transcript response). */
   subagentTranscripts?: Map<
     string,
-    { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
+    { messages: XumMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
   >;
   /** Global MCP server configuration (Settings → MCP) */
   globalMcpServers?: Record<string, MCPServerInfo>;
@@ -371,7 +371,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     lastLlmRequestSnapshots = new Map<string, DebugLlmRequestSnapshot | null>(),
     subagentTranscripts = new Map<
       string,
-      { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
+      { messages: XumMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
     >(),
     additionalSystemContexts = new Map<string, { content: string; enabled: boolean }>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
@@ -808,7 +808,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
-      updateMuxGatewayPrefs: (input: {
+      updateXumGatewayPrefs: (input: {
         muxGatewayEnabled: boolean;
         muxGatewayModels: string[];
       }) => {
@@ -935,7 +935,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
-      unenrollMuxGovernor: () => Promise.resolve(undefined),
+      unenrollXumGovernor: () => Promise.resolve(undefined),
     },
     agents: {
       list: (_input: {

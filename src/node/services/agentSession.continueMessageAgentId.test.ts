@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createMuxMessage } from "@/common/types/message";
-import type { CompactionFollowUpRequest, MuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
+import type { CompactionFollowUpRequest, XumMessage } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { Config } from "@/node/config";
 import { AgentSession } from "./agentSession";
@@ -46,7 +46,7 @@ const idleFollowUp = (): CompactionFollowUpRequest => ({
 function compactionSummaryMessage(
   id: string,
   pendingFollowUp: CompactionFollowUpRequest
-): MuxMessage {
+): XumMessage {
   return {
     id,
     role: "assistant",
@@ -57,11 +57,11 @@ function compactionSummaryMessage(
         pendingFollowUp,
       },
     },
-  } satisfies MuxMessage;
+  } satisfies XumMessage;
 }
 
-function heartbeatBoundaryMessage(pendingFollowUp = idleFollowUp()): MuxMessage {
-  return createMuxMessage("heartbeat-boundary", "assistant", "Reset boundary", {
+function heartbeatBoundaryMessage(pendingFollowUp = idleFollowUp()): XumMessage {
+  return createXumMessage("heartbeat-boundary", "assistant", "Reset boundary", {
     compacted: "heartbeat",
     compactionBoundary: true,
     compactionEpoch: 1,
@@ -122,7 +122,7 @@ describe("AgentSession continue-message agentId fallback", () => {
     historyCleanup = undefined;
   });
 
-  const createSession = async (messages: MuxMessage[] = []) => {
+  const createSession = async (messages: XumMessage[] = []) => {
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
     for (const message of messages) {
@@ -232,7 +232,7 @@ describe("AgentSession continue-message agentId fallback", () => {
   });
 
   test("dispatchPendingFollowUp removes heartbeat reset boundaries when idle-only follow-ups are skipped", async () => {
-    const earlierMessage = createMuxMessage("before-reset", "assistant", "Earlier context");
+    const earlierMessage = createXumMessage("before-reset", "assistant", "Earlier context");
     const { session, historyService, internals } = await createSession([
       earlierMessage,
       heartbeatBoundaryMessage(),
@@ -366,7 +366,7 @@ describe("AgentSession continue-message agentId fallback", () => {
         getLastMessages: (
           workspaceId: string,
           count: number
-        ) => Promise<{ success: boolean; error?: string; data: MuxMessage[] }>;
+        ) => Promise<{ success: boolean; error?: string; data: XumMessage[] }>;
       };
     };
     historyInternals.historyService.getLastMessages = mock(() =>

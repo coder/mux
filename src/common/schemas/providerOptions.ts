@@ -6,7 +6,7 @@ import {
   XAIServiceTierSchema,
 } from "../config/schemas/providersConfig";
 
-export const MuxProviderOptionsSchema = z.object({
+export const XumProviderOptionsSchema = z.object({
   anthropic: z
     .object({
       // Deprecated: prefer use1MContextModels for per-model control.

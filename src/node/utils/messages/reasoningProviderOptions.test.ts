@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { MuxMessage, MuxReasoningPart } from "@/common/types/message";
+import type { XumMessage, XumReasoningPart } from "@/common/types/message";
 import {
   attachReasoningReplayMetadata,
   findFirstReasoningPartIndexInTrailingRun,
@@ -78,13 +78,13 @@ describe("mergeReasoningProviderOptions", () => {
 });
 
 describe("attachReasoningReplayMetadata", () => {
-  function assistantMessage(parts: MuxMessage["parts"]): MuxMessage {
+  function assistantMessage(parts: XumMessage["parts"]): XumMessage {
     return { id: "a1", role: "assistant", metadata: { timestamp: 1 }, parts };
   }
 
-  function reasoningParts(message: MuxMessage): Array<MuxReasoningPart & Record<string, unknown>> {
+  function reasoningParts(message: XumMessage): Array<XumReasoningPart & Record<string, unknown>> {
     return message.parts.filter(
-      (part): part is MuxReasoningPart & Record<string, unknown> => part.type === "reasoning"
+      (part): part is XumReasoningPart & Record<string, unknown> => part.type === "reasoning"
     );
   }
 
@@ -136,7 +136,7 @@ describe("attachReasoningReplayMetadata", () => {
       { type: "reasoning", text: "unsigned" },
       { type: "text", text: "answer" },
     ]);
-    const user: MuxMessage = {
+    const user: XumMessage = {
       id: "u1",
       role: "user",
       metadata: { timestamp: 0 },
@@ -172,7 +172,7 @@ describe("attachReasoningReplayMetadata", () => {
           // store=false drop rule then removes as unresolvable.
           xai: { itemId: "rs_ok", reasoningEncryptedContent: { nested: true } },
           google: { thoughtSignature: "" },
-        } as unknown as MuxReasoningPart["providerOptions"],
+        } as unknown as XumReasoningPart["providerOptions"],
       },
     ]);
 
@@ -227,7 +227,7 @@ describe("attachReasoningReplayMetadata", () => {
   });
 
   test("does not mutate the input parts", () => {
-    const part: MuxReasoningPart = {
+    const part: XumReasoningPart = {
       type: "reasoning",
       text: "thinking",
       providerOptions: { anthropic: { signature: "sig" } },

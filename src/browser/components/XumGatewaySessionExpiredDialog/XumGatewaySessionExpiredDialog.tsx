@@ -11,7 +11,7 @@ function getServerAuthToken(): string | null {
   return urlToken?.length ? urlToken : getStoredAuthToken();
 }
 
-export function MuxGatewaySessionExpiredDialog() {
+export function XumGatewaySessionExpiredDialog() {
   const [isOpen, setIsOpen] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isStartingLogin, setIsStartingLogin] = useState(false);
@@ -42,7 +42,7 @@ export function MuxGatewaySessionExpiredDialog() {
     setIsStartingLogin(false);
   };
 
-  const startMuxGatewayLogin = async () => {
+  const startXumGatewayLogin = async () => {
     if (isStartingLogin) {
       return;
     }
@@ -136,7 +136,7 @@ export function MuxGatewaySessionExpiredDialog() {
         label: isStartingLogin ? "Starting login..." : "Login to Xum Gateway",
         disabled: isStartingLogin,
         onClick: () => {
-          void startMuxGatewayLogin();
+          void startXumGatewayLogin();
         },
       }}
       dismissLabel="Cancel"

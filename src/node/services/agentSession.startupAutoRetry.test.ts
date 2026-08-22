@@ -9,7 +9,7 @@ import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import type { InitStateManager } from "./initStateManager";
 import type { WorkspaceChatMessage, SendMessageOptions } from "@/common/orpc/types";
-import { createMuxMessage, pickStartupRetrySendOptions } from "@/common/types/message";
+import { createXumMessage, pickStartupRetrySendOptions } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
@@ -80,7 +80,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Hello from interrupted turn", {
+      createXumMessage("user-1", "user", "Hello from interrupted turn", {
         timestamp: Date.now(),
         toolPolicy: [{ regex_match: ".*", action: "disable" }],
         disableWorkspaceAgents: true,
@@ -90,7 +90,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendSnapshotResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("snapshot-1", "user", "<snapshot>", {
+      createXumMessage("snapshot-1", "user", "<snapshot>", {
         timestamp: Date.now(),
         synthetic: true,
         fileAtMentionSnapshot: ["token"],
@@ -132,7 +132,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage(
+      createXumMessage(
         "completed-subagent-report",
         "user",
         formatSubagentReportEnvelope({
@@ -164,13 +164,13 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("original-user", "user", "Continue the original task", {
+      createXumMessage("original-user", "user", "Continue the original task", {
         timestamp: Date.now(),
       })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage(
+      createXumMessage(
         "completed-subagent-report",
         "user",
         formatSubagentReportEnvelope({
@@ -185,7 +185,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     );
     await historyService.writePartial(
       workspaceId,
-      createMuxMessage("assistant-partial", "assistant", "Interrupted response", {
+      createXumMessage("assistant-partial", "assistant", "Interrupted response", {
         timestamp: Date.now(),
         partial: true,
       })
@@ -208,13 +208,13 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("original-user", "user", "Continue the original task", {
+      createXumMessage("original-user", "user", "Continue the original task", {
         timestamp: Date.now(),
       })
     );
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage(
+      createXumMessage(
         "hidden-completed-subagent-report",
         "user",
         formatSubagentReportEnvelope({
@@ -250,7 +250,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     };
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Complete the workspace turn", {
+      createXumMessage("user-1", "user", "Complete the workspace turn", {
         timestamp: Date.now(),
         retrySendOptions: { model: "openai:gpt-4o", agentId: "exec" },
         muxMetadata,
@@ -290,7 +290,7 @@ describe("AgentSession startup auto-retry recovery", () => {
     };
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Use the workflow result", {
+      createXumMessage("user-1", "user", "Use the workflow result", {
         timestamp: Date.now(),
         retrySendOptions: pickStartupRetrySendOptions({
           model: "openai:gpt-4o",
@@ -327,7 +327,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted while startup was busy", {
+      createXumMessage("user-1", "user", "Interrupted while startup was busy", {
         timestamp: Date.now(),
       })
     );
@@ -371,7 +371,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted while history read failed", {
+      createXumMessage("user-1", "user", "Interrupted while history read failed", {
         timestamp: Date.now(),
       })
     );
@@ -425,7 +425,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted while history is unavailable", {
+      createXumMessage("user-1", "user", "Interrupted while history is unavailable", {
         timestamp: Date.now(),
       })
     );
@@ -469,7 +469,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted while history keeps failing", {
+      createXumMessage("user-1", "user", "Interrupted while history keeps failing", {
         timestamp: Date.now(),
       })
     );
@@ -565,7 +565,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted with custom send options", {
+      createXumMessage("user-1", "user", "Interrupted with custom send options", {
         timestamp: Date.now(),
         kind: GOAL_CONTINUATION_KIND,
         retrySendOptions: {
@@ -649,7 +649,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted child task turn", {
+      createXumMessage("user-1", "user", "Interrupted child task turn", {
         timestamp: Date.now(),
         retrySendOptions: {
           model: "openai:gpt-5.5",
@@ -691,7 +691,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted before reconnect", {
+      createXumMessage("user-1", "user", "Interrupted before reconnect", {
         timestamp: Date.now(),
       })
     );
@@ -734,7 +734,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted before restart", {
+      createXumMessage("user-1", "user", "Interrupted before restart", {
         timestamp: Date.now(),
       })
     );
@@ -772,7 +772,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted before migration", {
+      createXumMessage("user-1", "user", "Interrupted before migration", {
         timestamp: Date.now(),
       })
     );
@@ -818,7 +818,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted before restart", {
+      createXumMessage("user-1", "user", "Interrupted before restart", {
         timestamp: Date.now(),
       })
     );
@@ -865,7 +865,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-1", "user", "Interrupted prompt", {
+      createXumMessage("user-1", "user", "Interrupted prompt", {
         timestamp: Date.now(),
       })
     );
@@ -1233,7 +1233,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("summary-follow-up", "assistant", "Compaction summary", {
+      createXumMessage("summary-follow-up", "assistant", "Compaction summary", {
         muxMetadata: {
           type: "compaction-summary",
           pendingFollowUp: {
@@ -1649,7 +1649,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     const writePartialResult = await historyService.writePartial(
       workspaceId,
-      createMuxMessage(
+      createXumMessage(
         "assistant-1",
         "assistant",
         "",

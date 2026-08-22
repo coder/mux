@@ -142,5 +142,5 @@ Use this skill when the user asks how xum works (workspaces, runtimes, agents, m
 
 ## Links
 
-- **GitHub**: https://github.com/coder/mux
+- **GitHub**: https://github.com/coder/xum
 - **Documentation**: https://mux.coder.com

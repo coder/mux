@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 # GitHub repository for fetching artifacts
-GITHUB_REPO = "coder/mux"
+GITHUB_REPO = "coder/xum"
 
 # Smoke test model - excluded from submissions by default
 SMOKE_TEST_MODEL = "anthropic/claude-sonnet-4-5"

@@ -10,7 +10,7 @@ import {
   createStreamCollector,
 } from "../helpers";
 import {
-  isMuxMessage,
+  isXumMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
   type WorkspaceChatMessage,
@@ -411,7 +411,7 @@ describe("Queued messages during stream completion", () => {
       const sawFirstUserMessage = await waitFor(() => {
         const firstUserMessage = collector
           .getEvents()
-          .filter(isMuxMessage)
+          .filter(isXumMessage)
           .find(
             (event) =>
               event.role === "user" &&
@@ -601,7 +601,7 @@ describe("Queued messages during stream completion", () => {
       const sawFirstUserMessage = await waitFor(() => {
         const firstUserMessage = collector
           .getEvents()
-          .filter(isMuxMessage)
+          .filter(isXumMessage)
           .find(
             (event) =>
               event.role === "user" &&
@@ -668,7 +668,7 @@ describe("Queued messages during stream completion", () => {
       const sawEditedUserMessage = await waitFor(() => {
         return collector
           .getEvents()
-          .filter(isMuxMessage)
+          .filter(isXumMessage)
           .some(
             (event) =>
               event.role === "user" &&

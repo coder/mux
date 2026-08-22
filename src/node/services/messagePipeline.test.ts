@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { AssistantModelMessage, ModelMessage } from "ai";
 
 import { transformModelMessages } from "@/browser/utils/messages/modelMessageTransform";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { createTestHistoryService } from "./testHistoryService";
 import { prepareMessagesForProvider, sanitizeAssistantModelMessages } from "./messagePipeline";
@@ -72,21 +72,21 @@ describe("prepareMessagesForProvider log purity", () => {
     // derive the request from them alone (no live disk reads or tracker state),
     // so building twice from the same log yields byte-identical messages.
     const messages = [
-      createMuxMessage(
+      createXumMessage(
         "file-snapshot-1",
         "user",
         '<mux-file path="src/foo.ts" range="L1-L2">\n```ts\nline1\nline2\n```\n</mux-file>',
         { timestamp: 1000, synthetic: true, fileAtMentionSnapshot: ["src/foo.ts"] }
       ),
-      createMuxMessage("user-1", "user", "Please check @src/foo.ts", { timestamp: 1001 }),
-      createMuxMessage("assistant-1", "assistant", "Looks fine.", { timestamp: 1002 }),
-      createMuxMessage(
+      createXumMessage("user-1", "user", "Please check @src/foo.ts", { timestamp: 1001 }),
+      createXumMessage("assistant-1", "assistant", "Looks fine.", { timestamp: 1002 }),
+      createXumMessage(
         "file-change-1",
         "user",
         "<system-file-update>\nNote: src/foo.ts was modified.\n</system-file-update>",
         { timestamp: 1003, synthetic: true }
       ),
-      createMuxMessage("user-2", "user", "Continue", { timestamp: 1004 }),
+      createXumMessage("user-2", "user", "Continue", { timestamp: 1004 }),
     ];
 
     const first = await prepareMessagesForProvider({
@@ -111,9 +111,9 @@ describe("prepareMessagesForProvider log purity", () => {
     // snapshot rows. There is no request-time fallback that reads live disk, so
     // the mention stays plain text — and the request still builds without error.
     const messages = [
-      createMuxMessage("user-1", "user", "Please check @src/foo.ts", { timestamp: 1000 }),
-      createMuxMessage("assistant-1", "assistant", "Sure.", { timestamp: 1001 }),
-      createMuxMessage("user-2", "user", "Continue", { timestamp: 1002 }),
+      createXumMessage("user-1", "user", "Please check @src/foo.ts", { timestamp: 1000 }),
+      createXumMessage("assistant-1", "assistant", "Sure.", { timestamp: 1001 }),
+      createXumMessage("user-2", "user", "Continue", { timestamp: 1002 }),
     ];
 
     const result = await prepareMessagesForProvider({
@@ -128,23 +128,23 @@ describe("prepareMessagesForProvider log purity", () => {
 });
 
 describe("reasoning replay in built provider requests", () => {
-  function historyWith(assistantParts: MuxMessage["parts"]): MuxMessage[] {
+  function historyWith(assistantParts: XumMessage["parts"]): XumMessage[] {
     return [
-      createMuxMessage("user-1", "user", "solve it", { timestamp: 1000 }),
+      createXumMessage("user-1", "user", "solve it", { timestamp: 1000 }),
       {
         id: "assistant-1",
         role: "assistant",
         metadata: { timestamp: 1001 },
         parts: assistantParts,
       },
-      createMuxMessage("user-2", "user", "continue", { timestamp: 1002 }),
+      createXumMessage("user-2", "user", "continue", { timestamp: 1002 }),
     ];
   }
 
   function buildRequest(
     provider: string,
     thinkingLevel: ThinkingLevel,
-    messages: MuxMessage[]
+    messages: XumMessage[]
   ): Promise<ModelMessage[]> {
     return prepareMessagesForProvider({
       messagesWithSentinel: messages,
@@ -383,7 +383,7 @@ describe("reasoning replay in built provider requests", () => {
           text: "corrupt metadata",
           signature: 999,
           providerOptions: { openai: { itemId: 42 } },
-        } as unknown as MuxMessage["parts"][number],
+        } as unknown as XumMessage["parts"][number],
         { type: "text", text: "answer" },
       ])
     );
@@ -427,7 +427,7 @@ describe("reasoning replay in built provider requests", () => {
     try {
       const workspaceId = "reasoning-replay-ws";
       const turns = [
-        createMuxMessage("user-1", "user", "solve it", { timestamp: 1000 }),
+        createXumMessage("user-1", "user", "solve it", { timestamp: 1000 }),
         {
           id: "assistant-1",
           role: "assistant",
@@ -441,8 +441,8 @@ describe("reasoning replay in built provider requests", () => {
             },
             { type: "text", text: "the answer" },
           ],
-        } satisfies MuxMessage,
-        createMuxMessage("user-2", "user", "next question", { timestamp: 1002 }),
+        } satisfies XumMessage,
+        createXumMessage("user-2", "user", "next question", { timestamp: 1002 }),
       ];
       for (const message of turns) {
         const appendResult = await historyService.appendToHistory(workspaceId, message);

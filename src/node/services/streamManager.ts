@@ -32,7 +32,7 @@ import type {
 } from "@/common/types/stream";
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
-import type { MuxMetadata, MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
+import type { XumMetadata, XumMessage, PersistedToolModelUsage } from "@/common/types/message";
 import {
   findFirstReasoningPartIndexInTrailingRun,
   mergeReasoningProviderOptions,
@@ -257,7 +257,7 @@ export interface PreparedModelFallback {
   anthropicCacheTtl?: AnthropicCacheTtl;
   thinkingLevel?: string;
   /** Route attribution corrections (routedThroughGateway, routeProvider, costsIncluded). */
-  initialMetadataPatch?: Partial<MuxMetadata>;
+  initialMetadataPatch?: Partial<XumMetadata>;
   /**
    * Rebuild closure bound to the FALLBACK model so mid-turn thinking changes
    * keep working after a fallback hop (the source model's closure would build
@@ -293,7 +293,7 @@ export interface ModelFallbackPrepareOptions {
    * mid-turn refusal. This must be cloned from the stream state before prepare()
    * receives it so provider-message preparation cannot mutate live UI parts.
    */
-  continuation?: { assistantMessage: MuxMessage };
+  continuation?: { assistantMessage: XumMessage };
   /**
    * Mid-turn thinking level to fold into the fallback's baseline: pending (not
    * yet applied) or already-applied override from the refused stream. The
@@ -575,7 +575,7 @@ interface WorkspaceStreamInfo {
   metadataModel: string;
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
-  initialMetadata?: Partial<MuxMetadata>;
+  initialMetadata?: Partial<XumMetadata>;
   toolModelUsages: PersistedToolModelUsage[];
   request: StreamRequestConfig;
   // Track last prepared step messages for safe retries after tool steps
@@ -2027,7 +2027,7 @@ export class StreamManager extends EventEmitter {
     historySequence: number,
     messageId: string,
     tools?: Record<string, Tool>,
-    initialMetadata?: Partial<MuxMetadata>,
+    initialMetadata?: Partial<XumMetadata>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
@@ -2378,7 +2378,7 @@ export class StreamManager extends EventEmitter {
     // Console events are not streamed (appear in final result only)
   }
 
-  private getStreamMode(initialMetadata?: Partial<MuxMetadata>): "plan" | "exec" | undefined {
+  private getStreamMode(initialMetadata?: Partial<XumMetadata>): "plan" | "exec" | undefined {
     const rawMode = initialMetadata?.mode;
     // Stats schema only accepts "plan" | "exec".
     return rawMode === "plan" || rawMode === "exec" ? rawMode : undefined;
@@ -2604,8 +2604,8 @@ export class StreamManager extends EventEmitter {
 
   private buildPartialAssistantMessage(
     streamInfo: WorkspaceStreamInfo,
-    options: { metadata?: Partial<MuxMetadata>; parts?: MuxMessage["parts"] } = {}
-  ): MuxMessage {
+    options: { metadata?: Partial<XumMetadata>; parts?: XumMessage["parts"] } = {}
+  ): XumMessage {
     const canonicalModel = metadataModelIdentity(streamInfo.model);
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
@@ -2634,9 +2634,9 @@ export class StreamManager extends EventEmitter {
   private buildPartialRefusalContinuationMessage(
     streamInfo: WorkspaceStreamInfo,
     refusalFinishReason: string
-  ): Result<MuxMessage, string> {
+  ): Result<XumMessage, string> {
     try {
-      const parts = structuredClone(streamInfo.parts) as MuxMessage["parts"];
+      const parts = structuredClone(streamInfo.parts) as XumMessage["parts"];
       return Ok(
         this.buildPartialAssistantMessage(streamInfo, {
           metadata: { finishReason: refusalFinishReason },
@@ -3588,7 +3588,7 @@ export class StreamManager extends EventEmitter {
             // clears history while updateHistory is still running, causing old messages
             // to be written back after compaction completes.
             if (streamInfo.parts && streamInfo.parts.length > 0) {
-              const finalAssistantMessage: MuxMessage = {
+              const finalAssistantMessage: XumMessage = {
                 id: streamInfo.messageId,
                 role: "assistant",
                 metadata: {
@@ -4338,7 +4338,7 @@ export class StreamManager extends EventEmitter {
     messageId: string,
     abortSignal?: AbortSignal,
     tools?: Record<string, Tool>,
-    initialMetadata?: Partial<MuxMetadata>,
+    initialMetadata?: Partial<XumMetadata>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,

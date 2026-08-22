@@ -5,12 +5,12 @@ import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
 import {
-  isMuxMessage,
+  isXumMessage,
   type StreamErrorMessage,
   type WorkspaceChatMessage,
 } from "@/common/orpc/types";
@@ -37,7 +37,7 @@ async function createReplaySessionHarness(
   const harness = await createAgentSessionHarness({
     workspaceId,
     aiServiceOverrides: {
-      streamMessage: mock((_history: MuxMessage[]) =>
+      streamMessage: mock((_history: XumMessage[]) =>
         Promise.resolve(Err({ type: "unknown", raw: "unused" }))
       ) as unknown as AIService["streamMessage"],
       getStreamInfo: mock((_workspaceId: string) => streamInfo) as AIService["getStreamInfo"],
@@ -57,7 +57,7 @@ describe("AgentSession pre-stream errors", () => {
   it("emits stream-error when stream startup fails", async () => {
     const workspaceId = "ws-test";
 
-    const streamMessage = mock((_history: MuxMessage[]) => {
+    const streamMessage = mock((_history: XumMessage[]) => {
       return Promise.resolve(
         Err({
           type: "api_key_not_found",
@@ -169,7 +169,7 @@ describe("AgentSession pre-stream errors", () => {
   it("acknowledges edited sends immediately and surfaces later startup failure via stream-error", async () => {
     const workspaceId = "ws-edit-startup-failed";
 
-    const streamMessage = mock((_history: MuxMessage[]) => {
+    const streamMessage = mock((_history: XumMessage[]) => {
       return Promise.resolve(
         Err({
           type: "api_key_not_found",
@@ -189,7 +189,7 @@ describe("AgentSession pre-stream errors", () => {
     const originalMessageId = "editable-user-message";
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage(originalMessageId, "user", "original", { historySequence: 0 })
+      createXumMessage(originalMessageId, "user", "original", { historySequence: 0 })
     );
 
     const result = await session.sendMessage("edited", {
@@ -223,7 +223,7 @@ describe("AgentSession pre-stream errors", () => {
     const { session, cleanup } = await createAgentSessionHarness({
       workspaceId,
       aiServiceOverrides: {
-        streamMessage: mock((_history: MuxMessage[]) =>
+        streamMessage: mock((_history: XumMessage[]) =>
           Promise.resolve(Err({ type: "api_key_not_found", provider: "anthropic" }))
         ) as unknown as AIService["streamMessage"],
         getStreamInfo: mock((_workspaceId: string) => undefined) as AIService["getStreamInfo"],
@@ -337,7 +337,7 @@ describe("AgentSession pre-stream errors", () => {
   it("schedules auto-retry when runtime startup fails before stream events", async () => {
     const workspaceId = "ws-runtime-start-failed";
 
-    const streamMessage = mock((_history: MuxMessage[]) => {
+    const streamMessage = mock((_history: XumMessage[]) => {
       return Promise.resolve(
         Err({
           type: "runtime_start_failed",
@@ -376,7 +376,7 @@ describe("AgentSession pre-stream errors", () => {
     historyCleanup = cleanup;
 
     const aiEmitter = new EventEmitter();
-    const streamMessage = mock((_history: MuxMessage[]) => {
+    const streamMessage = mock((_history: XumMessage[]) => {
       return Promise.resolve(
         Err({
           type: "runtime_start_failed",
@@ -450,7 +450,7 @@ describe("AgentSession pre-stream errors", () => {
     historyCleanup = cleanup;
 
     const aiEmitter = new EventEmitter();
-    const streamMessage = mock((_history: MuxMessage[]) => {
+    const streamMessage = mock((_history: XumMessage[]) => {
       aiEmitter.emit("error", {
         workspaceId,
         messageId: "assistant-stream-startup-failed",
@@ -549,8 +549,8 @@ describe("AgentSession pre-stream errors", () => {
       await createReplaySessionHarness(workspaceId);
     historyCleanup = cleanup;
 
-    const firstMessage = createMuxMessage("msg-history-1", "user", "first");
-    const secondMessage = createMuxMessage("msg-history-2", "assistant", "second");
+    const firstMessage = createXumMessage("msg-history-1", "user", "first");
+    const secondMessage = createXumMessage("msg-history-2", "assistant", "second");
 
     const appendFirst = await historyService.appendToHistory(workspaceId, firstMessage);
     expect(appendFirst.success).toBe(true);
@@ -641,7 +641,7 @@ describe("AgentSession pre-stream errors", () => {
     );
     historyCleanup = cleanup;
 
-    const seedMessage = createMuxMessage("msg-history-seed", "assistant", "seed");
+    const seedMessage = createXumMessage("msg-history-seed", "assistant", "seed");
     expect((await historyService.appendToHistory(workspaceId, seedMessage)).success).toBe(true);
 
     const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
@@ -694,9 +694,9 @@ describe("AgentSession pre-stream errors", () => {
     const { session, cleanup, historyService } = await createReplaySessionHarness(workspaceId);
     historyCleanup = cleanup;
 
-    const firstMessage = createMuxMessage("msg-history-a", "user", "first");
-    const secondMessage = createMuxMessage("msg-history-b", "assistant", "second");
-    const thirdMessage = createMuxMessage("msg-history-c", "assistant", "third");
+    const firstMessage = createXumMessage("msg-history-a", "user", "first");
+    const secondMessage = createXumMessage("msg-history-b", "assistant", "second");
+    const thirdMessage = createXumMessage("msg-history-c", "assistant", "third");
 
     expect((await historyService.appendToHistory(workspaceId, firstMessage)).success).toBe(true);
     expect((await historyService.appendToHistory(workspaceId, secondMessage)).success).toBe(true);
@@ -771,7 +771,7 @@ describe("AgentSession pre-stream errors", () => {
     expect(caughtUp).toBeDefined();
     expect(caughtUp?.replay).toBe("full");
 
-    const replayedMessageIds = events.filter(isMuxMessage).map((message) => message.id);
+    const replayedMessageIds = events.filter(isXumMessage).map((message) => message.id);
     expect(replayedMessageIds).toContain(persistedFirst.id);
     expect(replayedMessageIds).toContain(persistedThird.id);
     expect(replayedMessageIds).not.toContain(persistedSecond.id);
@@ -792,7 +792,7 @@ describe("AgentSession pre-stream errors", () => {
     );
     historyCleanup = cleanup;
 
-    const seededMessage = createMuxMessage("msg-history-d", "assistant", "seed");
+    const seededMessage = createXumMessage("msg-history-d", "assistant", "seed");
     expect((await historyService.appendToHistory(workspaceId, seededMessage)).success).toBe(true);
 
     const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
@@ -851,7 +851,7 @@ describe("AgentSession pre-stream errors", () => {
       });
     historyCleanup = cleanup;
 
-    const placeholder = createMuxMessage("msg-history-stream-events", "assistant", "placeholder");
+    const placeholder = createXumMessage("msg-history-stream-events", "assistant", "placeholder");
     expect((await historyService.appendToHistory(workspaceId, placeholder)).success).toBe(true);
 
     const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
@@ -871,7 +871,7 @@ describe("AgentSession pre-stream errors", () => {
       throw new Error("Expected placeholder row to include historySequence");
     }
 
-    const partial = createMuxMessage("msg-partial-stream-events", "assistant", "partial", {
+    const partial = createXumMessage("msg-partial-stream-events", "assistant", "partial", {
       historySequence: placeholderHistorySequence,
     });
     expect((await historyService.writePartial(workspaceId, partial)).success).toBe(true);
@@ -930,7 +930,7 @@ describe("AgentSession pre-stream errors", () => {
     );
     historyCleanup = cleanup;
 
-    const placeholder = createMuxMessage("msg-history-placeholder", "assistant", "placeholder");
+    const placeholder = createXumMessage("msg-history-placeholder", "assistant", "placeholder");
     expect((await historyService.appendToHistory(workspaceId, placeholder)).success).toBe(true);
 
     const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
@@ -950,7 +950,7 @@ describe("AgentSession pre-stream errors", () => {
       throw new Error("Expected placeholder row to include historySequence");
     }
 
-    const partial = createMuxMessage("msg-partial-prepayload", "assistant", "partial", {
+    const partial = createXumMessage("msg-partial-prepayload", "assistant", "partial", {
       historySequence: placeholderHistorySequence,
     });
     expect((await historyService.writePartial(workspaceId, partial)).success).toBe(true);
@@ -989,7 +989,7 @@ describe("AgentSession pre-stream errors", () => {
       await createReplaySessionHarness(workspaceId);
     historyCleanup = cleanup;
 
-    const inFlightPlaceholder = createMuxMessage("msg-stream-1", "assistant", "partial");
+    const inFlightPlaceholder = createXumMessage("msg-stream-1", "assistant", "partial");
     const appendPlaceholder = await historyService.appendToHistory(
       workspaceId,
       inFlightPlaceholder
@@ -1013,7 +1013,7 @@ describe("AgentSession pre-stream errors", () => {
       throw new Error("Expected persisted placeholder to have historySequence");
     }
 
-    const finalizedMessage = createMuxMessage("msg-stream-1", "assistant", "finalized", {
+    const finalizedMessage = createXumMessage("msg-stream-1", "assistant", "finalized", {
       historySequence: placeholderHistorySequence,
     });
     const updateResult = await historyService.updateHistory(workspaceId, finalizedMessage);
@@ -1050,7 +1050,7 @@ describe("AgentSession pre-stream errors", () => {
     expect(caughtUp?.replay).toBe("since");
 
     const replayedMessages = events
-      .filter(isMuxMessage)
+      .filter(isXumMessage)
       .filter((event) => event.role === "assistant");
     expect(replayedMessages).toHaveLength(1);
     expect(replayedMessages[0].id).toBe("msg-stream-1");

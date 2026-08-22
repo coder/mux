@@ -17,7 +17,7 @@ import type {
 } from "@ai-sdk/xai";
 import type { ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import {
   getAnthropicEffort,
@@ -36,7 +36,7 @@ import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/pol
 import { openaiExplicitPromptCachingAvailable } from "@/common/utils/ai/cacheStrategy";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import {
   normalizeToCanonical,
   resolveProviderOptionsNamespaceKey,
@@ -172,7 +172,7 @@ function resolveAnthropic1MCapabilityModel(
 function hasAnthropic1MIntentForModel(
   modelString: string,
   capabilityModel: string,
-  muxProviderOptions?: MuxProviderOptions
+  muxProviderOptions?: XumProviderOptions
 ): boolean {
   const anthropicOptions = muxProviderOptions?.anthropic;
   if (!anthropicOptions) {
@@ -201,7 +201,7 @@ function hasAnthropic1MIntentForModel(
  */
 export function isAnthropic1MEffectivelyEnabled(
   modelString: string,
-  muxProviderOptions?: MuxProviderOptions,
+  muxProviderOptions?: XumProviderOptions,
   providersConfig?: ProvidersConfigMap | null
 ): boolean {
   const anthropicOptions = muxProviderOptions?.anthropic;
@@ -232,9 +232,9 @@ export function isAnthropic1MEffectivelyEnabled(
 export function preserveAnthropic1MContextForFollowUp(
   sourceModelString: string,
   targetModelString: string,
-  muxProviderOptions?: MuxProviderOptions,
+  muxProviderOptions?: XumProviderOptions,
   providersConfig?: ProvidersConfigMap | null
-): MuxProviderOptions | undefined {
+): XumProviderOptions | undefined {
   if (!muxProviderOptions) {
     return undefined;
   }
@@ -287,9 +287,9 @@ export function preserveAnthropic1MContextForFollowUp(
 export function buildProviderOptions(
   modelString: string,
   thinkingLevel: ThinkingLevel,
-  messages?: MuxMessage[],
+  messages?: XumMessage[],
   _lostResponseIds?: (id: string) => boolean,
-  muxProviderOptions?: MuxProviderOptions,
+  muxProviderOptions?: XumProviderOptions,
   workspaceId?: string, // Optional for non-OpenAI providers
   openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
   providersConfig?: ProvidersConfigMap | null,
@@ -710,7 +710,7 @@ export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
  * The JS symbol can stay Xum-branded; the wire value remains X-Mux-Workspace-Id
  * so mux-gateway and existing correlation pipelines keep matching.
  */
-export const MUX_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";
+export const XUM_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";
 
 const HTTP_HEADER_VALUE_SAFE_PATTERN = /^[\t\x20-\x7E\x80-\xFF]+$/;
 
@@ -740,7 +740,7 @@ function toWorkspaceHeaderValue(workspaceId: string): string {
  */
 export function buildRequestHeaders(
   modelString: string,
-  muxProviderOptions?: MuxProviderOptions,
+  muxProviderOptions?: XumProviderOptions,
   workspaceId?: string,
   providersConfig?: ProvidersConfigMap | null,
   routeProvider?: ProviderName
@@ -748,7 +748,7 @@ export function buildRequestHeaders(
   const headers: Record<string, string> = {};
 
   if (workspaceId != null) {
-    headers[MUX_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
+    headers[XUM_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
   }
 
   const normalized = resolveOptionsCanonicalModel(modelString, providersConfig);

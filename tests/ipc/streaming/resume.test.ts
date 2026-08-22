@@ -7,7 +7,7 @@ import {
   configureTestRetries,
 } from "../helpers";
 import { HistoryService } from "../../../src/node/services/historyService";
-import { createMuxMessage } from "../../../src/common/types/message";
+import { createXumMessage } from "../../../src/common/types/message";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -158,7 +158,7 @@ describeIntegration("resumeStream", () => {
         // Simulate post-compaction state: single assistant message with summary
         // The message promises to say a specific word next, allowing deterministic verification
         const verificationWord = "ELEPHANT";
-        const summaryMessage = createMuxMessage(
+        const summaryMessage = createXumMessage(
           "compaction-summary-msg",
           "assistant",
           `I previously helped with a task. The conversation has been compacted for token efficiency. My next message will contain the word ${verificationWord} to confirm continuation works correctly.`,

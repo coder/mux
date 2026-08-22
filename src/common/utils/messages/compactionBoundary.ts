@@ -6,7 +6,7 @@ import {
 import { isPositiveInteger } from "@/common/utils/numbers";
 import { hasProviderReplayableContent } from "@/common/utils/messages/providerEligibility";
 
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 export { CONTEXT_BOUNDARY_KINDS, type ContextBoundaryKind };
 
@@ -16,7 +16,7 @@ export function isDurableCompactedMarker(
   return value === true || value === "user" || value === "idle" || value === "heartbeat";
 }
 
-export function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boolean {
+export function isDurableCompactionBoundaryMarker(message: XumMessage | undefined): boolean {
   if (message?.metadata?.compactionBoundary !== true) {
     return false;
   }
@@ -39,7 +39,7 @@ export function isDurableCompactionBoundaryMarker(message: MuxMessage | undefine
   return true;
 }
 
-export function isDurableContextResetBoundaryMarker(message: MuxMessage | undefined): boolean {
+export function isDurableContextResetBoundaryMarker(message: XumMessage | undefined): boolean {
   if (message?.metadata?.contextBoundaryKind !== CONTEXT_BOUNDARY_KINDS.RESET) {
     return false;
   }
@@ -54,7 +54,7 @@ export function isDurableContextResetBoundaryMarker(message: MuxMessage | undefi
 }
 
 export function getContextBoundaryKind(
-  message: MuxMessage | undefined
+  message: XumMessage | undefined
 ): ContextBoundaryKind | null {
   if (isDurableContextResetBoundaryMarker(message)) {
     return CONTEXT_BOUNDARY_KINDS.RESET;
@@ -67,7 +67,7 @@ export function getContextBoundaryKind(
   return null;
 }
 
-export function isDurableContextBoundaryMarker(message: MuxMessage | undefined): boolean {
+export function isDurableContextBoundaryMarker(message: XumMessage | undefined): boolean {
   return getContextBoundaryKind(message) !== null;
 }
 
@@ -77,7 +77,7 @@ export function isDurableContextBoundaryMarker(message: MuxMessage | undefined):
  * Returns the index of the newest message tagged with valid boundary metadata,
  * or `-1` when no durable boundary exists in the provided history.
  */
-export function findLatestContextBoundaryIndex(messages: MuxMessage[]): number {
+export function findLatestContextBoundaryIndex(messages: XumMessage[]): number {
   assert(Array.isArray(messages), "findLatestContextBoundaryIndex requires a message array");
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -90,7 +90,7 @@ export function findLatestContextBoundaryIndex(messages: MuxMessage[]): number {
 }
 
 /** Backwards-compatible compaction-only lookup for existing call sites and tests. */
-export function findLatestCompactionBoundaryIndex(messages: MuxMessage[]): number {
+export function findLatestCompactionBoundaryIndex(messages: XumMessage[]): number {
   assert(Array.isArray(messages), "findLatestCompactionBoundaryIndex requires a message array");
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -107,7 +107,7 @@ export function findLatestCompactionBoundaryIndex(messages: MuxMessage[]): numbe
  *
  * This is request-only and must not be used to mutate persisted replay history.
  */
-export function sliceMessagesFromLatestCompactionBoundary(messages: MuxMessage[]): MuxMessage[] {
+export function sliceMessagesFromLatestCompactionBoundary(messages: XumMessage[]): XumMessage[] {
   const boundaryIndex = findLatestCompactionBoundaryIndex(messages);
   if (boundaryIndex === -1) {
     return messages;
@@ -128,7 +128,7 @@ export function sliceMessagesFromLatestCompactionBoundary(messages: MuxMessage[]
   return sliced;
 }
 
-export function isProviderEligibleMessage(message: MuxMessage): boolean {
+export function isProviderEligibleMessage(message: XumMessage): boolean {
   if (isDurableContextResetBoundaryMarker(message)) {
     return false;
   }
@@ -136,7 +136,7 @@ export function isProviderEligibleMessage(message: MuxMessage): boolean {
   return hasProviderReplayableContent(message);
 }
 
-export function hasProviderEligibleMessages(messages: MuxMessage[]): boolean {
+export function hasProviderEligibleMessages(messages: XumMessage[]): boolean {
   assert(Array.isArray(messages), "hasProviderEligibleMessages requires a message array");
   return messages.some(isProviderEligibleMessage);
 }
@@ -149,8 +149,8 @@ export function hasProviderEligibleMessages(messages: MuxMessage[]): boolean {
  * after the reset marker.
  */
 export function sliceMessagesForProviderFromLatestContextBoundary(
-  messages: MuxMessage[]
-): MuxMessage[] {
+  messages: XumMessage[]
+): XumMessage[] {
   const boundaryIndex = findLatestContextBoundaryIndex(messages);
   if (boundaryIndex === -1) {
     return messages;

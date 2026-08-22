@@ -44,9 +44,16 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
-def env_flag(name: str) -> bool:
+def env_value(canonical_name: str, legacy_name: str) -> str | None:
+    """Prefer a canonical env key by presence, with a pre-rename fallback."""
+    if canonical_name in os.environ:
+        return os.environ[canonical_name]
+    return os.environ.get(legacy_name)
+
+
+def env_flag(canonical_name: str, legacy_name: str) -> bool:
     """Return True for the env boolean spellings emitted by workflows."""
-    return (os.environ.get(name) or "").strip().lower() in {"1", "true"}
+    return (env_value(canonical_name, legacy_name) or "").strip().lower() in {"1", "true"}
 
 
 def extract_trial_score(trial_result: dict) -> float | None:
@@ -189,8 +196,8 @@ def build_rows(job_folder: Path) -> list[dict]:
     if dataset is None:
         dataset = job_config.get("dataset")
 
-    experiments = os.environ.get("MUX_EXPERIMENTS")
-    mux_run_as_goal = env_flag("MUX_RUN_AS_GOAL")
+    experiments = env_value("XUM_EXPERIMENTS", "MUX_EXPERIMENTS")
+    mux_run_as_goal = env_flag("XUM_RUN_AS_GOAL", "MUX_RUN_AS_GOAL")
 
     # Raw JSON for future-proofing
     run_result_json = json.dumps(job_result) if job_result else None

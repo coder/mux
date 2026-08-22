@@ -36,7 +36,7 @@ test("terminal tab handles workspace switching", async ({ ui, page: _page }) => 
 });
 
 /**
- * Regression test for: https://github.com/coder/mux/pull/1586
+ * Regression test for: https://github.com/coder/xum/pull/1586
  *
  * The bug: attachCustomKeyEventHandler in TerminalView.tsx had inverted return values.
  * ghostty-web's API expects:

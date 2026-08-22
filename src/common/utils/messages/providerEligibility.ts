@@ -1,7 +1,7 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 export function hasProviderReplayableContent(
-  message: MuxMessage,
+  message: XumMessage,
   options: { preserveReasoningOnly?: boolean } = {}
 ): boolean {
   if (message.role === "system") {

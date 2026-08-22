@@ -33,9 +33,9 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useRouting } from "@/browser/hooks/useRouting";
 import {
-  formatMuxGatewayBalance,
-  useMuxGatewayAccountStatus,
-} from "@/browser/hooks/useMuxGatewayAccountStatus";
+  formatXumGatewayBalance,
+  useXumGatewayAccountStatus,
+} from "@/browser/hooks/useXumGatewayAccountStatus";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { getAgentsInitNudgeKey } from "@/common/constants/storage";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
@@ -54,7 +54,7 @@ interface OAuthMessage {
   error?: unknown;
 }
 
-type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
+type XumGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 function getServerAuthToken(): string | null {
   const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
@@ -219,8 +219,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
     isLoading: muxGatewayAccountLoading,
-    refresh: refreshMuxGatewayAccountStatus,
-  } = useMuxGatewayAccountStatus();
+    refresh: refreshXumGatewayAccountStatus,
+  } = useXumGatewayAccountStatus();
 
   const backendBaseUrl = getBrowserBackendBaseUrl();
   const backendOrigin = useMemo(() => {
@@ -233,16 +233,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
   const isDesktop = !!window.api;
 
-  const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
-  const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
+  const [muxGatewayLoginStatus, setXumGatewayLoginStatus] = useState<XumGatewayLoginStatus>("idle");
+  const [muxGatewayLoginError, setXumGatewayLoginError] = useState<string | null>(null);
 
   const muxGatewayLoginAttemptRef = useRef(0);
-  const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
-  const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
+  const [muxGatewayDesktopFlowId, setXumGatewayDesktopFlowId] = useState<string | null>(null);
+  const [muxGatewayServerState, setXumGatewayServerState] = useState<string | null>(null);
 
   const routing = useRouting();
 
-  const disableMuxGatewayRoute = useCallback(() => {
+  const disableXumGatewayRoute = useCallback(() => {
     const nextPriority = routing.routePriority.filter((route) => route !== "mux-gateway");
     if (!nextPriority.includes("direct")) {
       nextPriority.push("direct");
@@ -264,35 +264,35 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     routing.setRoutePreferences(nextPriority, nextOverrides);
   }, [routing]);
 
-  const cancelMuxGatewayLogin = useCallback(() => {
+  const cancelXumGatewayLogin = useCallback(() => {
     muxGatewayLoginAttemptRef.current++;
 
     if (isDesktop && api && muxGatewayDesktopFlowId) {
       void api.muxGatewayOauth.cancelDesktopFlow({ flowId: muxGatewayDesktopFlowId });
     }
 
-    setMuxGatewayDesktopFlowId(null);
-    setMuxGatewayServerState(null);
-    setMuxGatewayLoginStatus("idle");
-    setMuxGatewayLoginError(null);
+    setXumGatewayDesktopFlowId(null);
+    setXumGatewayServerState(null);
+    setXumGatewayLoginStatus("idle");
+    setXumGatewayLoginError(null);
   }, [api, isDesktop, muxGatewayDesktopFlowId]);
 
-  const startMuxGatewayLogin = useCallback(async () => {
+  const startXumGatewayLogin = useCallback(async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
     try {
-      setMuxGatewayLoginError(null);
-      setMuxGatewayDesktopFlowId(null);
-      setMuxGatewayServerState(null);
+      setXumGatewayLoginError(null);
+      setXumGatewayDesktopFlowId(null);
+      setXumGatewayServerState(null);
 
       if (isDesktop) {
         if (!api) {
-          setMuxGatewayLoginStatus("error");
-          setMuxGatewayLoginError("Xum API not connected.");
+          setXumGatewayLoginStatus("error");
+          setXumGatewayLoginError("Xum API not connected.");
           return;
         }
 
-        setMuxGatewayLoginStatus("starting");
+        setXumGatewayLoginStatus("starting");
         const startResult = await api.muxGatewayOauth.startDesktopFlow();
 
         if (attempt !== muxGatewayLoginAttemptRef.current) {
@@ -303,14 +303,14 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         }
 
         if (!startResult.success) {
-          setMuxGatewayLoginStatus("error");
-          setMuxGatewayLoginError(startResult.error);
+          setXumGatewayLoginStatus("error");
+          setXumGatewayLoginError(startResult.error);
           return;
         }
 
         const { flowId, authorizeUrl } = startResult.data;
-        setMuxGatewayDesktopFlowId(flowId);
-        setMuxGatewayLoginStatus("waiting");
+        setXumGatewayDesktopFlowId(flowId);
+        setXumGatewayLoginStatus("waiting");
 
         // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
         window.open(authorizeUrl, "_blank", "noopener");
@@ -326,9 +326,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         }
 
         if (waitResult.success) {
-          setMuxGatewayLoginStatus("success");
+          setXumGatewayLoginStatus("success");
 
-          const refreshPromise = refreshMuxGatewayAccountStatus();
+          const refreshPromise = refreshXumGatewayAccountStatus();
           // Time-box the balance check so a stalled gateway endpoint doesn't
           // block first-time onboarding defaults.
           const accountStatus = await Promise.race([
@@ -343,7 +343,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
 
           if (!hasCredits) {
-            disableMuxGatewayRoute();
+            disableXumGatewayRoute();
           }
 
           // If the timeout won the race, the balance check is still in flight.
@@ -352,15 +352,15 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             void refreshPromise.then((laterStatus) => {
               if (muxGatewayLoginAttemptRef.current !== attempt) return;
               if (laterStatus?.remaining_microdollars === 0) {
-                disableMuxGatewayRoute();
+                disableXumGatewayRoute();
               }
             });
           }
           return;
         }
 
-        setMuxGatewayLoginStatus("error");
-        setMuxGatewayLoginError(waitResult.error);
+        setXumGatewayLoginStatus("error");
+        setXumGatewayLoginError(waitResult.error);
         return;
       }
 
@@ -371,7 +371,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         throw new Error("Popup blocked - please allow popups and try again.");
       }
 
-      setMuxGatewayLoginStatus("starting");
+      setXumGatewayLoginStatus("starting");
 
       const startUrl = new URL(`${backendBaseUrl}/auth/mux-gateway/start`);
       const authToken = getServerAuthToken();
@@ -414,19 +414,19 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         throw new Error(`Invalid response from ${startUrl.pathname}`);
       }
 
-      setMuxGatewayServerState(json.state);
+      setXumGatewayServerState(json.state);
       popup.location.href = json.authorizeUrl;
-      setMuxGatewayLoginStatus("waiting");
+      setXumGatewayLoginStatus("waiting");
     } catch (err) {
       if (attempt !== muxGatewayLoginAttemptRef.current) {
         return;
       }
 
       const message = getErrorMessage(err);
-      setMuxGatewayLoginStatus("error");
-      setMuxGatewayLoginError(message);
+      setXumGatewayLoginStatus("error");
+      setXumGatewayLoginError(message);
     }
-  }, [api, backendBaseUrl, disableMuxGatewayRoute, isDesktop, refreshMuxGatewayAccountStatus]);
+  }, [api, backendBaseUrl, disableXumGatewayRoute, isDesktop, refreshXumGatewayAccountStatus]);
 
   useEffect(() => {
     const attempt = muxGatewayLoginAttemptRef.current;
@@ -445,9 +445,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       if (data.state !== muxGatewayServerState) return;
 
       if (data.ok === true) {
-        setMuxGatewayLoginStatus("success");
+        setXumGatewayLoginStatus("success");
 
-        const refreshPromise = refreshMuxGatewayAccountStatus();
+        const refreshPromise = refreshXumGatewayAccountStatus();
         // Time-box the balance check so a stalled gateway endpoint doesn't
         // block first-time onboarding defaults.
         void Promise.race([
@@ -459,7 +459,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
 
           if (!hasCredits) {
-            disableMuxGatewayRoute();
+            disableXumGatewayRoute();
           }
 
           // If the timeout won the race, the balance check is still in flight.
@@ -468,7 +468,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             void refreshPromise.then((laterStatus) => {
               if (muxGatewayLoginAttemptRef.current !== attempt) return;
               if (laterStatus?.remaining_microdollars === 0) {
-                disableMuxGatewayRoute();
+                disableXumGatewayRoute();
               }
             });
           }
@@ -477,19 +477,19 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       }
 
       const msg = typeof data.error === "string" ? data.error : "Login failed";
-      setMuxGatewayLoginStatus("error");
-      setMuxGatewayLoginError(msg);
+      setXumGatewayLoginStatus("error");
+      setXumGatewayLoginError(msg);
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [
     backendOrigin,
-    disableMuxGatewayRoute,
+    disableXumGatewayRoute,
     isDesktop,
     muxGatewayLoginStatus,
     muxGatewayServerState,
-    refreshMuxGatewayAccountStatus,
+    refreshXumGatewayAccountStatus,
   ]);
 
   const muxGatewayCouponCodeSet = providersConfig?.["mux-gateway"]?.couponCodeSet ?? false;
@@ -623,7 +623,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                       variant="secondary"
                       size="sm"
                       onClick={() => {
-                        void refreshMuxGatewayAccountStatus();
+                        void refreshXumGatewayAccountStatus();
                       }}
                       disabled={muxGatewayAccountLoading}
                     >
@@ -635,7 +635,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                     <div className="flex items-center justify-between gap-4">
                       <span className="text-muted">Balance</span>
                       <span className="text-foreground font-mono">
-                        {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                        {formatXumGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
                       </span>
                     </div>
 
@@ -677,7 +677,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
                     onClick={() => {
-                      void startMuxGatewayLogin();
+                      void startXumGatewayLogin();
                     }}
                     disabled={muxGatewayLoginInProgress}
                   >
@@ -685,7 +685,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                   </Button>
 
                   {muxGatewayLoginInProgress && (
-                    <Button variant="secondary" onClick={cancelMuxGatewayLogin}>
+                    <Button variant="secondary" onClick={cancelXumGatewayLogin}>
                       Cancel
                     </Button>
                   )}
@@ -1000,7 +1000,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [
     addProject,
     agentPickerShortcut,
-    cancelMuxGatewayLogin,
+    cancelXumGatewayLogin,
     commandPaletteActionsShortcut,
     commandPaletteShortcut,
     configuredProviders.length,
@@ -1019,8 +1019,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     projectFormHasError,
     userProjects.size,
     providersConfig,
-    refreshMuxGatewayAccountStatus,
-    startMuxGatewayLogin,
+    refreshXumGatewayAccountStatus,
+    startXumGatewayLogin,
     onboardingProviders,
   ]);
 
@@ -1038,9 +1038,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
   useEffect(() => {
     if (currentStep?.key !== "mux-gateway" && muxGatewayLoginInProgress) {
-      cancelMuxGatewayLogin();
+      cancelXumGatewayLogin();
     }
-  }, [cancelMuxGatewayLogin, currentStep?.key, muxGatewayLoginInProgress]);
+  }, [cancelXumGatewayLogin, currentStep?.key, muxGatewayLoginInProgress]);
 
   if (!currentStep) {
     return null;
@@ -1079,7 +1079,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     <SplashScreen
       title={currentStep.title}
       onDismiss={() => {
-        cancelMuxGatewayLogin();
+        cancelXumGatewayLogin();
         props.onDismiss();
       }}
       dismissLabel={null}

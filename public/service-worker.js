@@ -1,5 +1,7 @@
-// mux Service Worker for PWA support
-const CACHE_NAME = "mux-v2";
+// Xum Service Worker for PWA support
+const CACHE_NAME = "xum-v3";
+// Explicit compatibility cleanup prevents the pre-rename cache from becoming orphaned.
+const LEGACY_MUX_CACHE_NAME = "mux-v2";
 const urlsToCache = ["./", "./index.html"];
 
 // Install event - cache core assets
@@ -20,6 +22,9 @@ self.addEventListener("activate", (event) => {
       .then((cacheNames) => {
         return Promise.all(
           cacheNames.map((cacheName) => {
+            if (cacheName === LEGACY_MUX_CACHE_NAME) {
+              return caches.delete(cacheName);
+            }
             if (cacheName !== CACHE_NAME) {
               return caches.delete(cacheName);
             }

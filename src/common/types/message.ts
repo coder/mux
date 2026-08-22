@@ -2,7 +2,7 @@ import type { ModelMessage, UIMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
-import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { FilePart, XumToolPartSchema } from "@/common/orpc/schemas";
 import type {
   ContextBoundaryKind,
   PersistedContextBoundaryKind,
@@ -42,7 +42,7 @@ export interface UserMessageContent {
  */
 export interface CompactionFollowUpInput extends UserMessageContent {
   /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxMessageMetadata;
+  muxMetadata?: XumMessageMetadata;
 }
 
 /**
@@ -94,7 +94,7 @@ export type StartupRetrySendOptions = Pick<
   | "allowAgentSetGoal"
 > & {
   /** Correlation for a delegated workspace turn that must survive restart recovery. */
-  muxMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+  muxMetadata?: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>;
   /** Internal-only Copilot billing override for startup auto-retry. */
   agentInitiated?: boolean;
   /** Internal goal continuation classification for startup auto-retry accounting. */
@@ -110,9 +110,9 @@ export function pickStartupRetrySendOptions(
   agentInitiated?: boolean,
   goalKind?: GoalSyntheticMessageKind
 ): StartupRetrySendOptions {
-  const typedMuxMetadata = options.muxMetadata as MuxMessageMetadata | undefined;
-  const workspaceTurnMuxMetadata =
-    typedMuxMetadata?.type === "workspace-turn-task" ? typedMuxMetadata : undefined;
+  const typedXumMetadata = options.muxMetadata as XumMessageMetadata | undefined;
+  const workspaceTurnXumMetadata =
+    typedXumMetadata?.type === "workspace-turn-task" ? typedXumMetadata : undefined;
   return {
     model: options.model,
     agentId: options.agentId,
@@ -125,7 +125,7 @@ export function pickStartupRetrySendOptions(
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
     allowAgentSetGoal: options.allowAgentSetGoal,
-    ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+    ...(workspaceTurnXumMetadata != null ? { muxMetadata: workspaceTurnXumMetadata } : {}),
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
     ...(goalKind != null ? { goalKind } : {}),
   };
@@ -170,7 +170,7 @@ export interface CompactionFollowUpRequest extends CompactionFollowUpInput, Pres
    * correlation from this stamp on the persisted summary instead (see
    * AgentSession.inheritOpenWorkspaceTurnMetadata).
    */
-  workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+  workspaceTurnMetadata?: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>;
 }
 
 /**
@@ -203,10 +203,10 @@ export interface CompactionRequestData {
  */
 export function prepareUserMessageForSend(
   content: UserMessageContent,
-  existingMetadata?: MuxMessageMetadata
+  existingMetadata?: XumMessageMetadata
 ): {
   finalText: string;
-  metadata: MuxMessageMetadata | undefined;
+  metadata: XumMessageMetadata | undefined;
 } {
   const { text, reviews } = content;
 
@@ -215,7 +215,7 @@ export function prepareUserMessageForSend(
   const finalText = reviewsText ? reviewsText + (text ? "\n\n" + text : "") : text;
 
   // Build metadata with reviews for display
-  let metadata: MuxMessageMetadata | undefined = existingMetadata;
+  let metadata: XumMessageMetadata | undefined = existingMetadata;
   if (reviews?.length) {
     metadata = metadata ? { ...metadata, reviews } : { type: "normal", reviews };
   }
@@ -270,16 +270,16 @@ export function mergeAgentSkillRefs(
 }
 
 function getExistingAgentSkillRefs(
-  metadata: MuxMessageMetadata | undefined
+  metadata: XumMessageMetadata | undefined
 ): AgentSkillReference[] | undefined {
   const refs = metadata?.agentSkillRefs;
   return Array.isArray(refs) ? refs : undefined;
 }
 
 export function withAgentSkillRefs(
-  metadata: MuxMessageMetadata | undefined,
+  metadata: XumMessageMetadata | undefined,
   refs: AgentSkillReference[]
-): MuxMessageMetadata | undefined {
+): XumMessageMetadata | undefined {
   const existingRefs = getExistingAgentSkillRefs(metadata);
   if (refs.length === 0 && (!existingRefs || existingRefs.length === 0)) {
     return metadata;
@@ -369,7 +369,7 @@ function isMcpPromptSnapshotBaseShape(
   value: unknown
 ): value is { serverName: string; promptName: string; invokingMessageId?: string } {
   if (value === null || typeof value !== "object") return false;
-  const snapshot = value as Partial<NonNullable<MuxMetadata["mcpPromptSnapshot"]>>;
+  const snapshot = value as Partial<NonNullable<XumMetadata["mcpPromptSnapshot"]>>;
   return typeof snapshot.serverName === "string" && typeof snapshot.promptName === "string";
 }
 
@@ -378,12 +378,12 @@ function isMcpPromptSnapshotBaseShape(
  * and the user-row append: a snapshot survives only when its invoking user row
  * exists and still references the same prompt.
  */
-export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
+export function filterOrphanedMcpPromptSnapshots(messages: XumMessage[]): XumMessage[] {
   // Drop only genuine expansion rows: the reserved ID prefix marks one even
   // when corruption removed its metadata, and synthetic rows with a valid
   // snapshot shape cover legacy IDs. Other rows may be corrupted with this
   // field and must survive after it is stripped.
-  const isMcpSnapshotRow = (message: MuxMessage): boolean =>
+  const isMcpSnapshotRow = (message: XumMessage): boolean =>
     message.role === "user" &&
     (message.id.startsWith(MCP_PROMPT_SNAPSHOT_MESSAGE_ID_PREFIX) ||
       (message.metadata?.synthetic === true &&
@@ -399,7 +399,7 @@ export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMes
       new Set(refs.map((ref) => getMcpPromptReferenceKey(ref.serverName, ref.promptName)))
     );
   }
-  return messages.flatMap((message): MuxMessage[] => {
+  return messages.flatMap((message): XumMessage[] => {
     const snapshot: unknown = message.metadata?.mcpPromptSnapshot;
     if (!isMcpSnapshotRow(message)) {
       if (snapshot === undefined || message.metadata === undefined) return [message];
@@ -433,9 +433,9 @@ export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptRefere
 }
 
 export function withMcpPromptRefs(
-  metadata: MuxMessageMetadata | undefined,
+  metadata: XumMessageMetadata | undefined,
   refs: MCPPromptReference[]
-): MuxMessageMetadata | undefined {
+): XumMessageMetadata | undefined {
   const existingRefs = sanitizeMcpPromptRefs(metadata?.mcpPromptRefs);
   if (existingRefs.length === 0 && refs.length === 0) {
     return metadata;
@@ -456,7 +456,7 @@ export interface BuildAgentSkillMetadataOptions {
 
 export function buildAgentSkillMetadata(
   options: BuildAgentSkillMetadataOptions
-): MuxMessageMetadata {
+): XumMessageMetadata {
   return {
     type: "agent-skill",
     rawCommand: options.rawCommand,
@@ -481,7 +481,7 @@ export interface TranscriptAnchor {
 }
 
 /** Base fields common to all metadata types */
-interface MuxMessageMetadataBase {
+interface XumMessageMetadataBase {
   /** Structured review data for rich UI display (orthogonal to message type) */
   reviews?: ReviewNoteDataForDisplay[];
   /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
@@ -529,7 +529,7 @@ export interface BashMonitorWakeDisplayRecord {
   filterExclude: boolean;
 }
 
-export type MuxMessageMetadata = MuxMessageMetadataBase &
+export type XumMessageMetadata = XumMessageMetadataBase &
   (
     | {
         type: "compaction-request";
@@ -638,7 +638,7 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
   );
 
 export function getCompactionFollowUpContent(
-  metadata?: MuxMessageMetadata
+  metadata?: XumMessageMetadata
 ): CompactionRequestData["followUpContent"] | undefined {
   // Keep follow-up extraction centralized so callers don't duplicate legacy handling.
   if (!metadata || metadata.type !== "compaction-request") {
@@ -659,11 +659,11 @@ export function getCompactionFollowUpContent(
 }
 
 /** Type for compaction-summary metadata variant */
-export type CompactionSummaryMetadata = Extract<MuxMessageMetadata, { type: "compaction-summary" }>;
+export type CompactionSummaryMetadata = Extract<XumMessageMetadata, { type: "compaction-summary" }>;
 
 /** Type guard for compaction-summary metadata */
 export function isCompactionSummaryMetadata(
-  metadata: MuxMessageMetadata | undefined
+  metadata: XumMessageMetadata | undefined
 ): metadata is CompactionSummaryMetadata {
   return metadata?.type === "compaction-summary";
 }
@@ -691,7 +691,7 @@ export interface ModelFallbackRecord {
 }
 
 // Our custom metadata type
-export interface MuxMetadata {
+export interface XumMetadata {
   /** Highest persisted history sequence included in the provider request that produced this assistant. */
   requestHistorySequence?: number;
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
@@ -768,8 +768,8 @@ export interface MuxMetadata {
   /** Snapshot of send options used for this user turn (for startup retry recovery). */
   retrySendOptions?: StartupRetrySendOptions;
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
-  cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
-  muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows
+  cmuxMetadata?: XumMessageMetadata; // Command metadata persisted for legacy message formats
+  muxMetadata?: XumMessageMetadata; // Command metadata used by both frontend and backend message flows
   /** Persisted discriminator for synthetic user turns created by the active-goal loop. */
   kind?: "goal_continuation" | "goal_budget_limit";
 
@@ -813,17 +813,17 @@ export interface MuxMetadata {
 // Extended tool part type that supports interrupted tool calls (input-available state)
 // Standard AI SDK ToolUIPart only supports output-available (completed tools)
 // Uses discriminated union: output is required when state is "output-available", absent when "input-available"
-export type MuxToolPart = z.infer<typeof MuxToolPartSchema>;
+export type XumToolPart = z.infer<typeof XumToolPartSchema>;
 
 // Text part type
-export interface MuxTextPart {
+export interface XumTextPart {
   type: "text";
   text: string;
   timestamp?: number;
 }
 
 // Reasoning part type for extended thinking content
-export interface MuxReasoningPart {
+export interface XumReasoningPart {
   type: "reasoning";
   text: string;
   timestamp?: number;
@@ -862,7 +862,7 @@ export interface MuxReasoningPart {
 }
 
 // File part type for multimodal messages (matches AI SDK FileUIPart)
-export interface MuxFilePart {
+export interface XumFilePart {
   type: "file";
   mediaType: string; // IANA media type, e.g., "image/png", "application/pdf"
   url: string; // Data URL (e.g., "data:application/pdf;base64,...") or hosted URL
@@ -871,8 +871,8 @@ export interface MuxFilePart {
 
 // XumMessage extends UIMessage with our metadata and custom parts
 // Supports text, reasoning, file, and tool parts (including interrupted tool calls)
-export type MuxMessage = Omit<UIMessage<MuxMetadata, never, never>, "parts"> & {
-  parts: Array<MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart>;
+export type XumMessage = Omit<UIMessage<XumMetadata, never, never>, "parts"> & {
+  parts: Array<XumTextPart | XumReasoningPart | XumFilePart | XumToolPart>;
 };
 
 // DisplayedMessage represents a single UI message block
@@ -983,7 +983,7 @@ export type DisplayedMessage =
        */
       executionStartedAt?: number;
       /** Durable workflow run attachment recovered from partial history. */
-      workflowRun?: MuxToolPart["workflowRun"];
+      workflowRun?: XumToolPart["workflowRun"];
       // Nested tool calls for code_execution (from PTC streaming or reconstructed from result)
       nestedCalls?: Array<{
         toolCallId: string;
@@ -1086,7 +1086,7 @@ export interface QueuedMessage {
 }
 
 /** Keep every snapshot kind here so history scans and edits retain it with its user message. */
-export function isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
+export function isSyntheticSnapshotUserMessage(message: XumMessage): boolean {
   return (
     message.role === "user" &&
     message.metadata?.synthetic === true &&
@@ -1097,13 +1097,13 @@ export function isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
 }
 
 // Helper to create a simple text message
-export function createMuxMessage(
+export function createXumMessage(
   id: string,
   role: "user" | "assistant",
   content: string,
-  metadata?: MuxMetadata,
-  additionalParts?: MuxMessage["parts"]
-): MuxMessage {
+  metadata?: XumMetadata,
+  additionalParts?: XumMessage["parts"]
+): XumMessage {
   const textPart = content
     ? [{ type: "text" as const, text: content, state: "done" as const }]
     : [];

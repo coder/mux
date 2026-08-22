@@ -26,9 +26,9 @@ import { useRouting } from "@/browser/hooks/useRouting";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
-  formatMuxGatewayBalance,
-  useMuxGatewayAccountStatus,
-} from "@/browser/hooks/useMuxGatewayAccountStatus";
+  formatXumGatewayBalance,
+  useXumGatewayAccountStatus,
+} from "@/browser/hooks/useXumGatewayAccountStatus";
 import {
   isDesktopMode,
   getTitlebarLeftInset,
@@ -114,12 +114,12 @@ export function TitleBar(props: TitleBarProps) {
     : routing.resolveRoute(canonicalActiveModel);
   const activeRouteProvider = activeRoute.route;
   const isNonDirectRoute = activeRouteProvider !== "direct";
-  const isMuxGatewayRoute = activeRouteProvider === "mux-gateway";
+  const isXumGatewayRoute = activeRouteProvider === "mux-gateway";
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
-    refresh: refreshMuxGatewayAccountStatus,
-  } = useMuxGatewayAccountStatus();
+    refresh: refreshXumGatewayAccountStatus,
+  } = useXumGatewayAccountStatus();
 
   const gitDescribe = getGitDescribe(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
@@ -263,31 +263,31 @@ export function TitleBar(props: TitleBarProps) {
                 type="button"
                 onClick={handleOpenRouteSettings}
                 onMouseEnter={() => {
-                  if (isMuxGatewayRoute) {
-                    void refreshMuxGatewayAccountStatus();
+                  if (isXumGatewayRoute) {
+                    void refreshXumGatewayAccountStatus();
                   }
                 }}
                 className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition-opacity hover:opacity-70"
                 aria-label={`${activeRoute.displayName} routing`}
               >
-                {isMuxGatewayRoute ? (
+                {isXumGatewayRoute ? (
                   <GatewayIcon className="h-3.5 w-3.5" aria-hidden />
                 ) : (
                   <ProviderIcon provider={activeRouteProvider} className="h-3.5 w-3.5" />
                 )}
               </button>
             </TooltipTrigger>
-            <TooltipContent align="end" className={cn(isMuxGatewayRoute ? "w-56" : "w-64")}>
+            <TooltipContent align="end" className={cn(isXumGatewayRoute ? "w-56" : "w-64")}>
               <div className="text-foreground text-[11px] font-medium">
                 {activeRoute.displayName}
               </div>
-              {isMuxGatewayRoute ? (
+              {isXumGatewayRoute ? (
                 <>
                   <div className="mt-1.5 space-y-0.5 text-[11px]">
                     <div className="flex items-center justify-between gap-4">
                       <span className="text-muted">Balance</span>
                       <span className="text-foreground font-mono">
-                        {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                        {formatXumGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-4">
@@ -314,7 +314,7 @@ export function TitleBar(props: TitleBarProps) {
                   className={TOOLTIP_CTA_CLASSNAME}
                   onClick={handleOpenRouteSettings}
                 >
-                  {isMuxGatewayRoute
+                  {isXumGatewayRoute
                     ? "Click to open gateway settings"
                     : "Click to open provider settings"}
                 </button>

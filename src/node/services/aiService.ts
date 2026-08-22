@@ -20,8 +20,8 @@ import {
 import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 
 import type { GoalRecordV1 } from "@/common/types/goal";
-import type { ModelMessage, MuxMessage, MuxMessageMetadata } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
+import type { ModelMessage, XumMessage, XumMessageMetadata } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { StreamManager, type ModelFallbackOptions, type StreamTextOnChunk } from "./streamManager";
 import { emitTurnEnvelope } from "./turnEnvelope";
@@ -59,7 +59,7 @@ import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord } from "@/common/types/secrets";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import type { XumToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -213,12 +213,12 @@ import { isWorkspaceProjectTrusted } from "@/node/utils/projectTrust";
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
 
 export function prepareProviderRequestMessages(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   canonicalProviderName: string,
   effectiveThinkingLevel: ThinkingLevel
 ): {
-  activeContextMessages: MuxMessage[];
-  providerRequestMessages: MuxMessage[];
+  activeContextMessages: XumMessage[];
+  providerRequestMessages: XumMessage[];
   contextBoundarySlicedCount: number;
 } {
   // Workflow display rows are durable UI history, not main-agent context.
@@ -243,9 +243,9 @@ export function prepareProviderRequestMessages(
 // Exported for the replay builder: fallback requests append the refusal's
 // partial continuation the same way production does.
 export function replaceOrAppendMessageById(
-  messages: MuxMessage[],
-  replacement: MuxMessage
-): MuxMessage[] {
+  messages: XumMessage[],
+  replacement: XumMessage
+): XumMessage[] {
   const index = messages.findIndex((message) => message.id === replacement.id);
   if (index === -1) {
     return [...messages, replacement];
@@ -262,7 +262,7 @@ export function replaceOrAppendMessageById(
 
 /** Options bag for {@link AIService.streamMessage}. */
 export interface StreamMessageOptions {
-  messages: MuxMessage[];
+  messages: XumMessage[];
   workspaceId: string;
   modelString: string;
   thinkingLevel?: ThinkingLevel;
@@ -274,7 +274,7 @@ export interface StreamMessageOptions {
   additionalSystemContext?: string;
   additionalSystemInstructions?: string;
   maxOutputTokens?: number;
-  muxProviderOptions?: MuxProviderOptions;
+  muxProviderOptions?: XumProviderOptions;
   /** Internal-only flag for Copilot billing attribution; never sourced from IPC schemas. */
   agentInitiated?: boolean;
   agentId?: string;
@@ -303,7 +303,7 @@ export interface StreamMessageOptions {
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
   hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean;
-  muxMetadata?: MuxMessageMetadata;
+  muxMetadata?: XumMessageMetadata;
   openaiTruncationModeOverride?: "auto" | "disabled";
   /**
    * Model floor already resolved by AgentSession (config.json
@@ -401,7 +401,7 @@ function isToolExecutionContext(value: unknown): value is ToolExecutionContext {
  * path — unusable by host fs. Fall back to metadata.projectPath which is always
  * host-local.
  */
-export function resolveMuxProjectRootForHostFs(
+export function resolveXumProjectRootForHostFs(
   metadata: WorkspaceMetadata,
   workspacePath: string
 ): string {
@@ -434,7 +434,7 @@ function resolveXumToolScope(
   return {
     type: "project",
     xumHome: config.rootDir,
-    projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
+    projectRoot: resolveXumProjectRootForHostFs(metadata, workspacePath),
     projectStorageAuthority:
       runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
     ...(checkoutRoot != null ? { checkoutRoot } : {}),
@@ -1009,7 +1009,7 @@ export class AIService extends EventEmitter {
    */
   async createModel(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions,
+    muxProviderOptions?: XumProviderOptions,
     opts?: {
       agentInitiated?: boolean;
       workspaceId?: string;
@@ -1468,7 +1468,7 @@ export class AIService extends EventEmitter {
       };
 
       // Mode (plan|exec|compact) is derived from the selected agent definition.
-      const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
+      const effectiveXumProviderOptions: XumProviderOptions = muxProviderOptions ?? {};
       // Preliminary clamp for the factory call only: the factory reads the
       // thinking level solely for the xAI Grok variant swap, which never
       // depends on Coder instance metadata, so a pre-snapshot resolution is
@@ -1487,7 +1487,7 @@ export class AIService extends EventEmitter {
       const modelResult = await this.providerModelFactory.resolveAndCreateModel(
         modelString,
         preliminaryThinkingLevel,
-        effectiveMuxProviderOptions,
+        effectiveXumProviderOptions,
         { agentInitiated, workspaceId }
       );
       recordStartupPhaseTiming("resolveAndCreateModelMs", resolveAndCreateModelStartedAt);
@@ -1629,14 +1629,14 @@ export class AIService extends EventEmitter {
       // The user's own wireFormat, captured BEFORE wire injection: the
       // refusal-fallback prepare() must reset to it when swapping to a model
       // whose route is not an OpenAI-wire Coder instance.
-      const userOpenAIWireFormat = effectiveMuxProviderOptions.openai?.wireFormat;
+      const userOpenAIWireFormat = effectiveXumProviderOptions.openai?.wireFormat;
       if (toolsIdentity.openaiWireFormat != null) {
         // Deliberate in-place update: every downstream consumer
         // (buildProviderOptions, toolsForModelConfig.openaiWireFormat, header
         // building, mid-turn thinking rebuilds) reads this object, and the
         // actual request bytes go over Chat Completions.
-        effectiveMuxProviderOptions.openai = {
-          ...(effectiveMuxProviderOptions.openai ?? {}),
+        effectiveXumProviderOptions.openai = {
+          ...(effectiveXumProviderOptions.openai ?? {}),
           wireFormat: toolsIdentity.openaiWireFormat,
         };
       }
@@ -2450,7 +2450,7 @@ export class AIService extends EventEmitter {
                       toolPolicy: effectiveToolPolicy,
                       additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
                       maxOutputTokens,
-                      providerOptions: effectiveMuxProviderOptions,
+                      providerOptions: effectiveXumProviderOptions,
                       experiments: {
                         ...experiments,
                         dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
@@ -2623,9 +2623,9 @@ export class AIService extends EventEmitter {
           : {}),
         ...(toolSearchRuntime ? { toolSearchRuntime } : {}),
         capabilityModelString,
-        openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
+        openaiWireFormat: effectiveXumProviderOptions?.openai?.wireFormat,
         xaiNativeToolsEnabled: routeProvider === "xai",
-        xaiSearchParameters: effectiveMuxProviderOptions.xai?.searchParameters,
+        xaiSearchParameters: effectiveXumProviderOptions.xai?.searchParameters,
         backgroundProcessManager: this.backgroundProcessManager,
         // Plan agent configuration for plan file access.
         // - read: plan file is readable in all agents (useful context)
@@ -2978,7 +2978,7 @@ export class AIService extends EventEmitter {
         effectiveThinkingLevel,
         modelString,
         providersConfig: requestProvidersConfig,
-        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+        anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl,
         workspaceId,
       });
       recordStartupPhaseTiming("prepareMessagesForProviderMs", prepareMessagesForProviderStartedAt);
@@ -3004,7 +3004,7 @@ export class AIService extends EventEmitter {
         (latest, message) => Math.max(latest, message.metadata?.historySequence ?? -1),
         -1
       );
-      const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
+      const assistantMessage = createXumMessage(assistantMessageId, "assistant", "", {
         ...(requestHistorySequence >= 0 ? { requestHistorySequence } : {}),
         timestamp: Date.now(),
         model: canonicalModelString,
@@ -3026,10 +3026,10 @@ export class AIService extends EventEmitter {
       // These emit synthetic stream events without calling an AI provider.
       const forceContextLimitError =
         modelString.startsWith("openai:") &&
-        effectiveMuxProviderOptions.openai?.forceContextLimitError === true;
+        effectiveXumProviderOptions.openai?.forceContextLimitError === true;
       const simulateToolPolicyNoopFlag =
         modelString.startsWith("openai:") &&
-        effectiveMuxProviderOptions.openai?.simulateToolPolicyNoop === true;
+        effectiveXumProviderOptions.openai?.simulateToolPolicyNoop === true;
 
       if (forceContextLimitError || simulateToolPolicyNoopFlag) {
         const simulationCtx: SimulationContext = {
@@ -3067,7 +3067,7 @@ export class AIService extends EventEmitter {
         effectiveThinkingLevel,
         providerRequestMessages,
         (id) => this.streamManager.isResponseIdLost(id),
-        effectiveMuxProviderOptions,
+        effectiveXumProviderOptions,
         workspaceId,
         truncationMode,
         requestProvidersConfig,
@@ -3084,7 +3084,7 @@ export class AIService extends EventEmitter {
       const buildRequestConfigStartedAt = Date.now();
       let requestHeaders = buildRequestHeaders(
         optionsModelString,
-        effectiveMuxProviderOptions,
+        effectiveXumProviderOptions,
         workspaceId,
         requestProvidersConfig,
         routeProvider
@@ -3266,7 +3266,7 @@ export class AIService extends EventEmitter {
           effective,
           providerRequestMessages,
           (id) => this.streamManager.isResponseIdLost(id),
-          effectiveMuxProviderOptions,
+          effectiveXumProviderOptions,
           workspaceId,
           truncationMode,
           requestProvidersConfig,
@@ -3435,9 +3435,9 @@ export class AIService extends EventEmitter {
                 // resolving the fallback: the fallback's wire is decided by
                 // ITS effective route, and the factory's direct-OpenAI branch
                 // reads this knob for model selection.
-                if (effectiveMuxProviderOptions.openai?.wireFormat !== userOpenAIWireFormat) {
-                  effectiveMuxProviderOptions.openai = {
-                    ...(effectiveMuxProviderOptions.openai ?? {}),
+                if (effectiveXumProviderOptions.openai?.wireFormat !== userOpenAIWireFormat) {
+                  effectiveXumProviderOptions.openai = {
+                    ...(effectiveXumProviderOptions.openai ?? {}),
                     wireFormat: userOpenAIWireFormat,
                   };
                 }
@@ -3445,7 +3445,7 @@ export class AIService extends EventEmitter {
                 const nextModelResult = await this.providerModelFactory.resolveAndCreateModel(
                   nextModelString,
                   preliminaryNextThinkingLevel,
-                  effectiveMuxProviderOptions,
+                  effectiveXumProviderOptions,
                   { agentInitiated, workspaceId }
                 );
                 if (!nextModelResult.success) {
@@ -3499,8 +3499,8 @@ export class AIService extends EventEmitter {
                   // stream is dead once a refusal fallback runs, so every
                   // consumer (option/header rebuilds, mid-turn thinking
                   // rebuild closures) must see the fallback's wire.
-                  effectiveMuxProviderOptions.openai = {
-                    ...(effectiveMuxProviderOptions.openai ?? {}),
+                  effectiveXumProviderOptions.openai = {
+                    ...(effectiveXumProviderOptions.openai ?? {}),
                     wireFormat: nextToolsIdentity.openaiWireFormat,
                   };
                 }
@@ -3529,7 +3529,7 @@ export class AIService extends EventEmitter {
                       capabilityModelString: nextCapabilityModelString,
                       // Snapshot from the main path is stale here: the
                       // fallback's wire decides Responses-only tool assembly.
-                      openaiWireFormat: effectiveMuxProviderOptions.openai?.wireFormat,
+                      openaiWireFormat: effectiveXumProviderOptions.openai?.wireFormat,
                       xaiNativeToolsEnabled: next.routeProvider === "xai",
                     },
                     workspaceId,
@@ -3693,7 +3693,7 @@ export class AIService extends EventEmitter {
                     // from cache/option/header builders.
                     modelString: nextModelString,
                     providersConfig: nextProvidersConfig,
-                    anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+                    anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl,
                     workspaceId,
                   });
 
@@ -3702,7 +3702,7 @@ export class AIService extends EventEmitter {
                     nextThinkingLevel,
                     nextProviderRequestMessages,
                     (id) => this.streamManager.isResponseIdLost(id),
-                    effectiveMuxProviderOptions,
+                    effectiveXumProviderOptions,
                     workspaceId,
                     truncationMode,
                     nextProvidersConfig,
@@ -3715,7 +3715,7 @@ export class AIService extends EventEmitter {
                   // so the native option never leaks onto unsupported fallbacks.
                   let nextHeaders = buildRequestHeaders(
                     nextOptionsModelString,
-                    effectiveMuxProviderOptions,
+                    effectiveXumProviderOptions,
                     workspaceId,
                     nextProvidersConfig,
                     next.routeProvider
@@ -3815,7 +3815,7 @@ export class AIService extends EventEmitter {
                         effective,
                         nextProviderRequestMessages,
                         (id) => this.streamManager.isResponseIdLost(id),
-                        effectiveMuxProviderOptions,
+                        effectiveXumProviderOptions,
                         workspaceId,
                         truncationMode,
                         nextProvidersConfig,
@@ -3837,7 +3837,7 @@ export class AIService extends EventEmitter {
                     next.routeProvider === "xai"
                       ? getForcedXaiSearchToolNames(
                           nextCapabilityModelString,
-                          effectiveMuxProviderOptions.xai?.searchParameters
+                          effectiveXumProviderOptions.xai?.searchParameters
                         )?.filter((toolName) => toolName in nextTools)
                       : undefined;
 
@@ -3876,7 +3876,7 @@ export class AIService extends EventEmitter {
                       sentinelToolNames: nextToolNamesForSentinel,
                       wireProviderName: next.wireProviderName,
                       anthropicCacheTtl:
-                        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+                        effectiveXumProviderOptions.anthropic?.cacheTtl ?? undefined,
                       planContentForTransition,
                       planFilePath,
                       postCompactionAttachments,
@@ -3910,7 +3910,7 @@ export class AIService extends EventEmitter {
                         effectiveThinkingLevel: effectiveLevel,
                         modelString: nextModelString,
                         providersConfig: nextProvidersConfig,
-                        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+                        anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl,
                         workspaceId,
                       });
                       await emitFallbackEnvelopeWith(effectiveLevel, providerOptionsForEnvelope);
@@ -3933,7 +3933,7 @@ export class AIService extends EventEmitter {
                     providerOptions: nextMergedProviderOptions,
                     headers: nextHeaders,
                     callSettingsOverrides: nextOverrides.standard,
-                    anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+                    anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl ?? undefined,
                     thinkingLevel: nextThinkingLevel,
                     forcedFirstStepToolNames: nextForcedFirstStepToolNames,
                     rebuildProviderOptionsForThinkingLevel:
@@ -3965,7 +3965,7 @@ export class AIService extends EventEmitter {
         routeProvider === "xai"
           ? getForcedXaiSearchToolNames(
               capabilityModelString,
-              effectiveMuxProviderOptions.xai?.searchParameters
+              effectiveXumProviderOptions.xai?.searchParameters
             )?.filter((toolName) => toolName in toolsForStream)
           : undefined;
 
@@ -4024,7 +4024,7 @@ export class AIService extends EventEmitter {
           effectiveThinkingLevel: folded.effectiveLevel,
           modelString,
           providersConfig: requestProvidersConfig,
-          anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+          anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl,
           workspaceId,
         });
         streamProviderOptions = folded.providerOptions;
@@ -4061,7 +4061,7 @@ export class AIService extends EventEmitter {
           // set, so replay cannot derive one from the other.
           sentinelToolNames: toolNamesForSentinel,
           wireProviderName,
-          anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+          anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl ?? undefined,
           planContentForTransition,
           planFilePath,
           postCompactionAttachments,
@@ -4094,7 +4094,7 @@ export class AIService extends EventEmitter {
           effectiveThinkingLevel: effectiveLevel,
           modelString,
           providersConfig: requestProvidersConfig,
-          anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+          anthropicCacheTtl: effectiveXumProviderOptions.anthropic?.cacheTtl,
           workspaceId,
         });
         await emitPrimaryEnvelopeWith(effectiveLevel, providerOptions);
@@ -4136,7 +4136,7 @@ export class AIService extends EventEmitter {
         metadata.name,
         streamThinkingLevel,
         requestHeaders,
-        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+        effectiveXumProviderOptions.anthropic?.cacheTtl ?? undefined,
         resolvedOverrides.standard,
         advisorToolEligible ? onAdvisorChunk : undefined,
         advisorToolEligible
@@ -4315,7 +4315,7 @@ export class AIService extends EventEmitter {
     await this.streamManager.replayStream(workspaceId, opts);
   }
 
-  debugGetLastMockPrompt(workspaceId: string): Result<MuxMessage[] | null> {
+  debugGetLastMockPrompt(workspaceId: string): Result<XumMessage[] | null> {
     if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
       return Err("debugGetLastMockPrompt: workspaceId is required");
     }

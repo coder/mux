@@ -11,7 +11,7 @@ import type {
   ToolCallExecutionStartEvent,
   WorkflowRunAttachedEvent,
 } from "@/common/types/stream";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ToolSearchStreamState } from "@/common/utils/tools/toolCatalog";
@@ -759,7 +759,7 @@ describe("StreamManager - refusal usage attribution", () => {
     const buildPartial = Reflect.get(streamManager, "buildPartialAssistantMessage") as (
       streamInfo: Record<string, unknown>,
       options?: Record<string, unknown>
-    ) => MuxMessage;
+    ) => XumMessage;
     expect(typeof buildPartial).toBe("function");
 
     const message = buildPartial.call(streamManager, {

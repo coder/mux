@@ -13,7 +13,7 @@ import * as fs from "node:fs/promises";
 import { describe, expect, test } from "bun:test";
 import { tool, type Tool } from "ai";
 import { z } from "zod";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { emitTurnEnvelope } from "@/node/services/turnEnvelope";
 import {
@@ -183,7 +183,7 @@ describe("replayVerifySession pairing", () => {
     // Hand-build a turn whose envelope carries an EMPTY system prompt blob:
     // buildReplayRequest asserts on it, and the assertion must become a FAIL
     // for this turn instead of crashing the whole verification (and the CLI).
-    const userMessage = createMuxMessage("user-corrupt", "user", "Corrupted turn.", {
+    const userMessage = createXumMessage("user-corrupt", "user", "Corrupted turn.", {
       timestamp: 1_700_000_500_000,
     });
     const appendUser = await ctx.historyService.appendToHistory(ctx.workspaceId, userMessage);
@@ -234,7 +234,7 @@ describe("replayVerifySession pairing", () => {
         },
       })
     );
-    const assistantMessage = createMuxMessage("assistant-corrupt", "assistant", "Oops.", {
+    const assistantMessage = createXumMessage("assistant-corrupt", "assistant", "Oops.", {
       timestamp: 1_700_000_502_000,
       model: REPLAY_FIXTURE_MODEL,
       agentId: "exec",
@@ -307,7 +307,7 @@ describe("replayVerifySession pairing", () => {
     // chat.jsonl at this turn's requestHistorySequence (the surviving
     // assistant row lands later), so the envelope blob must be enough to
     // rebuild the request bytes.
-    const continuation = createMuxMessage(
+    const continuation = createXumMessage(
       "assistant-partial-refusal",
       "assistant",
       "Partial output before the refusal.",

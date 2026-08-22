@@ -1,4 +1,4 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 const FNV_OFFSET_BASIS = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
@@ -19,14 +19,14 @@ function updateFnv1a(hash: number, value: string): number {
  * rewrites below the cursor and safely fall back to full replay.
  */
 export function computePriorHistoryFingerprint(
-  messages: readonly MuxMessage[],
+  messages: readonly XumMessage[],
   anchorHistorySequence: number
 ): string | undefined {
   const priorEntries: Array<{
     id: string;
     historySequence: number;
     timestamp: number;
-    role: MuxMessage["role"];
+    role: XumMessage["role"];
     partsFingerprint: string;
   }> = [];
 

@@ -14,7 +14,7 @@ import {
   GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
   GOAL_CONTINUATION_KIND,
 } from "@/constants/goals";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 // Shared dispatch helpers live in `./testDispatchHelpers` instead of local
 // copies so future callers cannot drift.
 import { drainPendingDispatches, waitForCondition } from "./testDispatchHelpers";
@@ -43,11 +43,11 @@ async function appendUserHistoryMessage(
   historyService: HistoryService,
   workspaceId: string,
   text: string,
-  metadata: Parameters<typeof createMuxMessage>[3] = { timestamp: Date.now() }
+  metadata: Parameters<typeof createXumMessage>[3] = { timestamp: Date.now() }
 ): Promise<void> {
   const result = await historyService.appendToHistory(
     workspaceId,
-    createMuxMessage(`goal-test-user-${crypto.randomUUID()}`, "user", text, metadata)
+    createXumMessage(`goal-test-user-${crypto.randomUUID()}`, "user", text, metadata)
   );
   expect(result.success).toBe(true);
 }
@@ -709,7 +709,7 @@ describe("WorkspaceGoalService", () => {
   test("model-created goals stay active and arm kickoff after a normal user turn", async () => {
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-set-goal-request", "user", "Set yourself a goal and continue", {
+      createXumMessage("user-set-goal-request", "user", "Set yourself a goal and continue", {
         timestamp: Date.now(),
       })
     );
@@ -722,7 +722,7 @@ describe("WorkspaceGoalService", () => {
         executed.push(input);
         const continuationAppend = await historyService.appendToHistory(
           workspaceId,
-          createMuxMessage("model-created-goal-continuation", "user", input.message, {
+          createXumMessage("model-created-goal-continuation", "user", input.message, {
             timestamp: Date.now(),
             kind: GOAL_CONTINUATION_KIND,
           })
@@ -752,7 +752,7 @@ describe("WorkspaceGoalService", () => {
   test("preserves model-created kickoff candidate when stream-end continuation is requested", async () => {
     const appendResult = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-set-goal-stream", "user", "Set yourself a goal and continue", {
+      createXumMessage("user-set-goal-stream", "user", "Set yourself a goal and continue", {
         timestamp: Date.now(),
       })
     );
@@ -766,7 +766,7 @@ describe("WorkspaceGoalService", () => {
         executed.push(input);
         const continuationAppend = await historyService.appendToHistory(
           workspaceId,
-          createMuxMessage("preserved-kickoff-continuation", "user", input.message, {
+          createXumMessage("preserved-kickoff-continuation", "user", input.message, {
             timestamp: Date.now(),
             kind: GOAL_CONTINUATION_KIND,
           })

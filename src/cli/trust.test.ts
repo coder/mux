@@ -17,19 +17,19 @@ describe("xum trust CLI", () => {
     await fs.mkdir(nested, { recursive: true });
     await Bun.$`git init`.cwd(repo).quiet();
 
-    expect(await resolveProjectDir({ cwd: nested })).toBe(repo);
+    expect(await resolveProjectDir({ cwd: nested })).toBe(await fs.realpath(repo));
     expect(await resolveProjectDir({ cwd: tmp.path, explicitDir: nested })).toBe(nested);
   });
 
   test("grants and revokes project trust headlessly", async () => {
     using tmp = new DisposableTempDir("trust-cli-cycle");
     const repo = path.join(tmp.path, "repo");
-    const muxRoot = path.join(tmp.path, "mux-root");
+    const xumRoot = path.join(tmp.path, "xum-root");
     await fs.mkdir(repo, { recursive: true });
-    await fs.mkdir(muxRoot, { recursive: true });
-    const env = { ...process.env, MUX_ROOT: muxRoot };
+    await fs.mkdir(xumRoot, { recursive: true });
+    const env = { ...process.env, XUM_ROOT: xumRoot };
 
-    // Grant trust for a project that was never added to mux (no desktop/server
+    // Grant trust for a project that was never added to Xum (no desktop/server
     // involved). Route through index.ts to cover top-level subcommand dispatch;
     // no experiment flag is required for trust.
     const trustResult = await Bun.$`${BUN_EXECUTABLE} ${INDEX_ENTRY} trust --dir ${repo} --json`
@@ -55,10 +55,10 @@ describe("xum trust CLI", () => {
     using tmp = new DisposableTempDir("trust-cli-worktree-revoke");
     const base = await fs.realpath(tmp.path);
     const repo = path.join(base, "repo");
-    const muxRoot = path.join(base, "mux-root");
+    const xumRoot = path.join(base, "xum-root");
     const worktree = path.join(base, "worktree");
     await fs.mkdir(repo, { recursive: true });
-    await fs.mkdir(muxRoot, { recursive: true });
+    await fs.mkdir(xumRoot, { recursive: true });
     await Bun.$`git init`.cwd(repo).quiet();
     await Bun.$`git config user.email dogfood@example.com`.cwd(repo).quiet();
     await Bun.$`git config user.name Dogfood`.cwd(repo).quiet();
@@ -72,7 +72,7 @@ describe("xum trust CLI", () => {
     // Revoke must clear both; the direct entry alone would keep the checkout
     // trusted via resolveProjectTrusted's exact-path lookup.
     await fs.writeFile(
-      path.join(muxRoot, "config.json"),
+      path.join(xumRoot, "config.json"),
       JSON.stringify({
         projects: [
           [repo, { workspaces: [], trusted: true }],
@@ -81,7 +81,7 @@ describe("xum trust CLI", () => {
       }),
       "utf-8"
     );
-    const env = { ...process.env, MUX_ROOT: muxRoot };
+    const env = { ...process.env, XUM_ROOT: xumRoot };
 
     const revokeResult =
       await Bun.$`${BUN_EXECUTABLE} ${TRUST_ENTRY} --revoke --dir ${worktree} --json`
@@ -89,7 +89,7 @@ describe("xum trust CLI", () => {
         .quiet();
     expect(revokeResult.exitCode).toBe(0);
 
-    const config = JSON.parse(await fs.readFile(path.join(muxRoot, "config.json"), "utf-8")) as {
+    const config = JSON.parse(await fs.readFile(path.join(xumRoot, "config.json"), "utf-8")) as {
       projects: Array<[string, { trusted?: boolean }]>;
     };
     const trustByPath = new Map(config.projects.map(([p, c]) => [p, c.trusted]));
@@ -101,14 +101,14 @@ describe("xum trust CLI", () => {
     using tmp = new DisposableTempDir("trust-cli-unwritable");
     const repo = path.join(tmp.path, "repo");
     await fs.mkdir(repo, { recursive: true });
-    // MUX_ROOT pointing at a regular file makes config.json unwritable;
+    // XUM_ROOT pointing at a regular file makes config.json unwritable;
     // Config.saveConfig swallows the write error, so only the post-write
     // verification can surface the failure.
-    const muxRootFile = path.join(tmp.path, "mux-root-file");
-    await fs.writeFile(muxRootFile, "not a directory\n", "utf-8");
+    const xumRootFile = path.join(tmp.path, "xum-root-file");
+    await fs.writeFile(xumRootFile, "not a directory\n", "utf-8");
 
     const result = await Bun.$`${BUN_EXECUTABLE} ${TRUST_ENTRY} --dir ${repo} --json`
-      .env({ ...process.env, MUX_ROOT: muxRootFile })
+      .env({ ...process.env, XUM_ROOT: xumRootFile })
       .nothrow()
       .quiet();
 
@@ -123,10 +123,10 @@ describe("xum trust CLI", () => {
     // entry written to config must match what trust resolution compares against.
     const base = await fs.realpath(tmp.path);
     const repo = path.join(base, "repo");
-    const muxRoot = path.join(base, "mux-root");
+    const xumRoot = path.join(base, "xum-root");
     const worktree = path.join(base, "worktree");
     await fs.mkdir(repo, { recursive: true });
-    await fs.mkdir(muxRoot, { recursive: true });
+    await fs.mkdir(xumRoot, { recursive: true });
     await Bun.$`git init`.cwd(repo).quiet();
     await Bun.$`git config user.email dogfood@example.com`.cwd(repo).quiet();
     await Bun.$`git config user.name Dogfood`.cwd(repo).quiet();
@@ -136,7 +136,7 @@ describe("xum trust CLI", () => {
     await Bun.$`git worktree add ${worktree} -b feature`.cwd(repo).quiet();
 
     const trustResult = await Bun.$`${BUN_EXECUTABLE} ${TRUST_ENTRY} --dir ${worktree} --json`
-      .env({ ...process.env, MUX_ROOT: muxRoot })
+      .env({ ...process.env, XUM_ROOT: xumRoot })
       .quiet();
     expect(trustResult.exitCode).toBe(0);
     // Trust must land on the main repository path, not the ephemeral worktree path.

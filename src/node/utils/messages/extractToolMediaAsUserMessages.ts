@@ -1,4 +1,4 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { sanitizeAnthropicDocumentFilename } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import {
   createDataUrlForExtractedAttachment,
@@ -24,10 +24,10 @@ import {
  * convertToModelMessages(...). Persisted history and UI still keep the original tool output.
  */
 export async function extractToolMediaAsUserMessages(
-  messages: MuxMessage[]
-): Promise<MuxMessage[]> {
+  messages: XumMessage[]
+): Promise<XumMessage[]> {
   let didChangeAnyMessage = false;
-  const result: MuxMessage[] = [];
+  const result: XumMessage[] = [];
 
   for (const message of messages) {
     if (message.role !== "assistant") {
@@ -35,11 +35,11 @@ export async function extractToolMediaAsUserMessages(
       continue;
     }
 
-    let extractedUserParts: MuxMessage["parts"] = [];
+    let extractedUserParts: XumMessage["parts"] = [];
     let extractedAttachmentCount = 0;
     let changedMessage = false;
 
-    const newParts: MuxMessage["parts"] = [];
+    const newParts: XumMessage["parts"] = [];
     for (const part of message.parts) {
       if (part.type !== "dynamic-tool" || part.state !== "output-available") {
         newParts.push(part);
@@ -55,7 +55,7 @@ export async function extractToolMediaAsUserMessages(
       changedMessage = true;
       extractedAttachmentCount += extracted.attachments.length;
 
-      const nextExtractedUserParts: MuxMessage["parts"] = [];
+      const nextExtractedUserParts: XumMessage["parts"] = [];
       for (const attachment of extracted.attachments) {
         const providerReadyAttachment = await prepareExtractedToolAttachmentForProvider(attachment);
         if (providerReadyAttachment.type === "text") {
@@ -90,7 +90,7 @@ export async function extractToolMediaAsUserMessages(
     }
 
     const rewrittenMessage = changedMessage
-      ? ({ ...message, parts: newParts } satisfies MuxMessage)
+      ? ({ ...message, parts: newParts } satisfies XumMessage)
       : message;
     if (changedMessage) {
       didChangeAnyMessage = true;

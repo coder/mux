@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, mock, afterEach } from "bun:test";
-import type { MuxMessage } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
 import { Ok } from "@/common/types/result";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
@@ -80,7 +80,7 @@ describe("HeartbeatService", () => {
   let getAllSnapshotsMock: ReturnType<
     typeof mock<() => Promise<Map<string, WorkspaceActivitySnapshot>>>
   >;
-  let getChatHistoryMock: ReturnType<typeof mock<(workspaceId: string) => Promise<MuxMessage[]>>>;
+  let getChatHistoryMock: ReturnType<typeof mock<(workspaceId: string) => Promise<XumMessage[]>>>;
   let executeHeartbeatMock: ReturnType<typeof mock<(workspaceId: string) => Promise<void>>>;
   let isBusyForMessageMock: ReturnType<typeof mock<(workspaceId: string) => boolean>>;
   let hasActiveDescendantTasksMock: ReturnType<typeof mock<(workspaceId: string) => boolean>>;
@@ -151,15 +151,15 @@ describe("HeartbeatService", () => {
     return new Map(entries);
   }
 
-  function makeCompletedTurnHistory(timestamp = staleTimestamp): MuxMessage[] {
+  function makeCompletedTurnHistory(timestamp = staleTimestamp): XumMessage[] {
     return [
-      createMuxMessage("1", "user", "Hello", { timestamp }),
-      createMuxMessage("2", "assistant", "Hi!", { timestamp }),
+      createXumMessage("1", "user", "Hello", { timestamp }),
+      createXumMessage("2", "assistant", "Hi!", { timestamp }),
     ];
   }
 
-  function makeInteractiveAssistantMessage(timestamp = staleTimestamp): MuxMessage {
-    const assistantMessage = createMuxMessage("2", "assistant", "asking", { timestamp });
+  function makeInteractiveAssistantMessage(timestamp = staleTimestamp): XumMessage {
+    const assistantMessage = createXumMessage("2", "assistant", "asking", { timestamp });
     (assistantMessage as unknown as { parts: unknown[] }).parts = [
       { type: "text", text: "Let me ask...", state: "done" },
       {
@@ -349,8 +349,8 @@ describe("HeartbeatService", () => {
         name: "no assistant message in history",
         setup: () =>
           getChatHistoryMock.mockResolvedValueOnce([
-            createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-            createMuxMessage("2", "user", "Still there?", { timestamp: staleTimestamp }),
+            createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+            createXumMessage("2", "user", "Still there?", { timestamp: staleTimestamp }),
           ]),
         eligible: false,
         reason: "no_completed_turn",
@@ -359,9 +359,9 @@ describe("HeartbeatService", () => {
         name: "last message is from user (awaiting response)",
         setup: () =>
           getChatHistoryMock.mockResolvedValueOnce([
-            createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-            createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
-            createMuxMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
+            createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+            createXumMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+            createXumMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
           ]),
         eligible: false,
         reason: "awaiting_response",
@@ -370,7 +370,7 @@ describe("HeartbeatService", () => {
         name: "last assistant message has interactive tool input",
         setup: () =>
           getChatHistoryMock.mockResolvedValueOnce([
-            createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+            createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
             makeInteractiveAssistantMessage(),
           ]),
         eligible: false,
@@ -407,9 +407,9 @@ describe("HeartbeatService", () => {
       // Streaming carve-out: committed history ends with the user message being answered
       // (partials are excluded from committed history), which must not gate queue modes.
       getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
-        createMuxMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
+        createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createXumMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createXumMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
       ]);
 
       const result = await service.checkEligibility(testWorkspaceId, Date.now());
@@ -460,9 +460,9 @@ describe("HeartbeatService", () => {
       setHeartbeatConfig({ ...queueModeHeartbeat });
       isBusyForMessageMock.mockReturnValueOnce(true);
       getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
-        createMuxMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
+        createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createXumMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createXumMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
       ]);
 
       const result = await service.checkEligibility(testWorkspaceId, Date.now());
@@ -474,9 +474,9 @@ describe("HeartbeatService", () => {
       setHeartbeatConfig({ enabled: true, intervalMs: defaultHeartbeatIntervalMs });
       isBusyForMessageMock.mockReturnValueOnce(true);
       getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
-        createMuxMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
+        createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createXumMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createXumMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
       ]);
 
       const result = await service.checkEligibility(testWorkspaceId, Date.now());
@@ -487,9 +487,9 @@ describe("HeartbeatService", () => {
     test("an idle unanswered user message still gates queue modes", async () => {
       setHeartbeatConfig({ ...queueModeHeartbeat });
       getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
-        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
-        createMuxMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
+        createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createXumMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createXumMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
       ]);
 
       const result = await service.checkEligibility(testWorkspaceId, Date.now());
@@ -515,7 +515,7 @@ describe("HeartbeatService", () => {
 
       setHeartbeatConfig({ ...queueModeHeartbeat });
       getChatHistoryMock.mockResolvedValueOnce([
-        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createXumMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
         makeInteractiveAssistantMessage(),
       ]);
       const interactive = await service.checkEligibility(testWorkspaceId, Date.now());
@@ -1587,11 +1587,11 @@ describe("HeartbeatService", () => {
       );
       getChatHistoryMock.mockResolvedValueOnce([
         ...makeCompletedTurnHistory(),
-        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+        createXumMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
           timestamp: lastFiredAt,
           muxMetadata: { type: "heartbeat-request" },
         }),
-        createMuxMessage("hb-1-reply", "assistant", "All good", { timestamp: lastFiredAt + 1 }),
+        createXumMessage("hb-1-reply", "assistant", "All good", { timestamp: lastFiredAt + 1 }),
       ]);
 
       await internals.resyncFromConfig(now);
@@ -1612,7 +1612,7 @@ describe("HeartbeatService", () => {
       ]);
       getChatHistoryMock.mockResolvedValueOnce([
         ...makeCompletedTurnHistory(),
-        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+        createXumMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
           timestamp: lastFiredAt,
           muxMetadata: { type: "heartbeat-request" },
         }),
@@ -1635,7 +1635,7 @@ describe("HeartbeatService", () => {
       ]);
       getChatHistoryMock.mockResolvedValueOnce([
         ...makeCompletedTurnHistory(),
-        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+        createXumMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
           timestamp: deliveredAt,
           muxMetadata: { type: "heartbeat-request", firedAt },
         }),
@@ -1663,7 +1663,7 @@ describe("HeartbeatService", () => {
       ]);
       getChatHistoryMock.mockResolvedValueOnce([
         ...makeCompletedTurnHistory(),
-        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+        createXumMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
           timestamp: lastFiredAt,
           muxMetadata: { type: "heartbeat-request" },
         }),
@@ -1691,7 +1691,7 @@ describe("HeartbeatService", () => {
       ]);
       getChatHistoryMock.mockResolvedValueOnce([
         ...makeCompletedTurnHistory(),
-        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+        createXumMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
           timestamp: lastFiredAt,
           muxMetadata: { type: "heartbeat-request" },
         }),

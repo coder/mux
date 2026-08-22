@@ -1,4 +1,4 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 
@@ -205,25 +205,25 @@ export interface WorkflowRunCardResult {
   run?: WorkflowRunRecord;
 }
 
-type WorkflowRunToolPart = Extract<MuxMessage["parts"][number], { type: "dynamic-tool" }>;
+type WorkflowRunToolPart = Extract<XumMessage["parts"][number], { type: "dynamic-tool" }>;
 
-export function isWorkflowTriggerDisplayMessage(message: MuxMessage): boolean {
+export function isWorkflowTriggerDisplayMessage(message: XumMessage): boolean {
   return message.metadata?.muxMetadata?.type === WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE;
 }
 
-export function isWorkflowRunCardDisplayMessage(message: MuxMessage): boolean {
+export function isWorkflowRunCardDisplayMessage(message: XumMessage): boolean {
   return message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE;
 }
 
-export function isWorkflowResultMessage(message: Pick<MuxMessage, "metadata">): boolean {
+export function isWorkflowResultMessage(message: Pick<XumMessage, "metadata">): boolean {
   return message.metadata?.muxMetadata?.type === WORKFLOW_RESULT_METADATA_TYPE;
 }
 
-export function isWorkflowDisplayOnlyMessage(message: MuxMessage): boolean {
+export function isWorkflowDisplayOnlyMessage(message: XumMessage): boolean {
   return isWorkflowTriggerDisplayMessage(message) || isWorkflowRunCardDisplayMessage(message);
 }
 
-export function filterWorkflowDisplayOnlyMessages(messages: MuxMessage[]): MuxMessage[] {
+export function filterWorkflowDisplayOnlyMessages(messages: XumMessage[]): XumMessage[] {
   if (!messages.some(isWorkflowDisplayOnlyMessage)) {
     return messages;
   }
@@ -268,7 +268,7 @@ export function buildWorkflowRunCardMessage(
   input: WorkflowRunCardInput,
   result: WorkflowRunCardResult,
   now = Date.now()
-): MuxMessage {
+): XumMessage {
   const toolPart = buildWorkflowRunToolPart(input, result, now);
   return {
     id: toolPart.toolCallId,

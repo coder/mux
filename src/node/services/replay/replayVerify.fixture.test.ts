@@ -12,7 +12,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { HistoryService } from "@/node/services/historyService";
 import { auditCacheBusts } from "./cacheAudit";
@@ -30,7 +30,7 @@ import {
 } from "./replayVerify";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 
-async function readFixtureHistory(): Promise<MuxMessage[]> {
+async function readFixtureHistory(): Promise<XumMessage[]> {
   const historyService = new HistoryService({ getSessionDir: () => REPLAY_FIXTURE_DIR });
   const result = await collectFullHistory(historyService, REPLAY_FIXTURE_WORKSPACE_ID);
   if (!result.success) {

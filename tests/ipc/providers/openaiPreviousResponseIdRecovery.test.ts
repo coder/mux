@@ -15,7 +15,7 @@ import {
 } from "../helpers";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 import type { ToolPolicy } from "../../../src/common/utils/tools/toolPolicy";
-import { createMuxMessage } from "../../../src/common/types/message";
+import { createXumMessage } from "../../../src/common/types/message";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -42,7 +42,7 @@ describeIntegration("OpenAI response-id metadata", () => {
 
       try {
         const invalidResponseId = createInvalidResponseId();
-        const summaryMessage = createMuxMessage(
+        const summaryMessage = createXumMessage(
           `summary-${Date.now()}`,
           "assistant",
           "Summary placeholder for stale responseId metadata.",

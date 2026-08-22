@@ -21,7 +21,7 @@ import {
   type TimelinePreview,
 } from "@/common/orpc/schemas/timeline";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import type { MuxMessage, MuxToolPart } from "@/common/types/message";
+import type { XumMessage, XumToolPart } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { HistoryService } from "@/node/services/historyService";
@@ -453,7 +453,7 @@ export class TimelineService implements TimelineRecorder {
     }
   }
 
-  private matchesMessageAnchor(message: MuxMessage, anchor: TimelineAnchor): boolean {
+  private matchesMessageAnchor(message: XumMessage, anchor: TimelineAnchor): boolean {
     if (anchor.messageId != null && message.id !== anchor.messageId) {
       return false;
     }
@@ -471,10 +471,10 @@ export class TimelineService implements TimelineRecorder {
     return anchor.messageId != null || anchor.historySequence != null;
   }
 
-  private createPreview(message: MuxMessage, anchor: TimelineAnchor): TimelinePreview | null {
+  private createPreview(message: XumMessage, anchor: TimelineAnchor): TimelinePreview | null {
     if (anchor.toolCallId != null) {
       const toolPart = message.parts.find(
-        (part): part is MuxToolPart =>
+        (part): part is XumToolPart =>
           part.type === "dynamic-tool" && part.toolCallId === anchor.toolCallId
       );
       if (toolPart == null) {
@@ -498,7 +498,7 @@ export class TimelineService implements TimelineRecorder {
 
   // Serialized tool payloads are unreadable in a preview card, so surface the human-readable
   // field the call was built around (a task title, a prompt) and show nothing otherwise.
-  private toolPartText(part: MuxToolPart): string {
+  private toolPartText(part: XumToolPart): string {
     const fromInput = readPreviewText(part.input);
     if (fromInput !== "") {
       return fromInput;

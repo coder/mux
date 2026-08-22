@@ -16,7 +16,7 @@ import {
   AGENT_STATUS_TICK_INTERVAL_MS,
 } from "@/constants/agentStatus";
 import type { Config } from "@/node/config";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import type { AIService } from "./aiService";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -505,7 +505,7 @@ export class AgentStatusService {
     );
     if (!result.success) return "";
 
-    const committedMessages: MuxMessage[] = [...result.data];
+    const committedMessages: XumMessage[] = [...result.data];
     const partial = await this.historyService.readPartial(workspaceId);
 
     // Partial messages get an "(in progress)" role suffix so the model sees
@@ -538,7 +538,7 @@ export class AgentStatusService {
   }
 }
 
-function extractMessageText(message: MuxMessage): string {
+function extractMessageText(message: XumMessage): string {
   return (message.parts ?? [])
     .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text.trim())
@@ -577,7 +577,7 @@ function summarizeToolPart(part: unknown): string | null {
 }
 
 function formatMessageForTranscript(
-  message: MuxMessage,
+  message: XumMessage,
   opts: { partial: boolean } = { partial: false }
 ): string {
   const baseRole =

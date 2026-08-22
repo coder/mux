@@ -3,11 +3,13 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 
 import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
-import type { ProjectsConfig } from "@/common/types/project";
-import type { Config } from "@/node/config";
-import type { PolicyService } from "@/node/services/policyService";
+import {
+  MUX_GATEWAY_AUTHORIZE_URL,
+  MUX_GATEWAY_EXCHANGE_URL,
+} from "@/common/constants/muxGatewayOAuth";
+import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
-import { MuxGovernorOauthService } from "./muxGovernorOauthService";
+import { XumGatewayOauthService } from "./xumGatewayOauthService";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,29 +52,28 @@ function mockFetch(
 }
 
 interface MockDeps {
-  configState: ProjectsConfig;
-  editConfigCalls: number;
+  setConfigCalls: Array<{ provider: string; keyPath: string[]; value: string }>;
+  setConfigResult: Result<void, string>;
   focusCalls: number;
-  refreshCalls: number;
-  refreshResult: Result<void, string>;
 }
 
 function createMockDeps(): MockDeps {
   return {
-    configState: { projects: new Map() },
-    editConfigCalls: 0,
+    setConfigCalls: [],
+    setConfigResult: Ok(undefined),
     focusCalls: 0,
-    refreshCalls: 0,
-    refreshResult: Ok(undefined),
   };
 }
 
-function createMockConfig(deps: MockDeps): Pick<Config, "editConfig"> {
+function createMockProviderService(deps: MockDeps): Pick<ProviderService, "setConfig"> {
   return {
-    editConfig: (fn: (config: ProjectsConfig) => ProjectsConfig) => {
-      deps.configState = fn(deps.configState);
-      deps.editConfigCalls++;
-      return Promise.resolve();
+    setConfig: (
+      provider: string,
+      keyPath: string[],
+      value: string
+    ): Promise<Result<void, string>> => {
+      deps.setConfigCalls.push({ provider, keyPath, value });
+      return Promise.resolve(deps.setConfigResult);
     },
   };
 }
@@ -85,20 +86,10 @@ function createMockWindowService(deps: MockDeps): Pick<WindowService, "focusMain
   };
 }
 
-function createMockPolicyService(deps: MockDeps): Pick<PolicyService, "refreshNow"> {
-  return {
-    refreshNow: () => {
-      deps.refreshCalls++;
-      return Promise.resolve(deps.refreshResult);
-    },
-  };
-}
-
-function createService(deps: MockDeps): MuxGovernorOauthService {
-  return new MuxGovernorOauthService(
-    createMockConfig(deps) as Config,
-    createMockWindowService(deps) as WindowService,
-    createMockPolicyService(deps) as PolicyService
+function createService(deps: MockDeps): XumGatewayOauthService {
+  return new XumGatewayOauthService(
+    createMockProviderService(deps) as ProviderService,
+    createMockWindowService(deps) as WindowService
   );
 }
 
@@ -106,9 +97,9 @@ function createService(deps: MockDeps): MuxGovernorOauthService {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("MuxGovernorOauthService", () => {
+describe("XumGatewayOauthService", () => {
   let deps: MockDeps;
-  let service: MuxGovernorOauthService;
+  let service: XumGatewayOauthService;
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
@@ -123,9 +114,7 @@ describe("MuxGovernorOauthService", () => {
 
   describe("startDesktopFlow", () => {
     it("returns flowId, authorizeUrl, and redirectUri", async () => {
-      const result = await service.startDesktopFlow({
-        governorOrigin: "https://governor.example.com/admin?from=test",
-      });
+      const result = await service.startDesktopFlow();
       expect(result.success).toBe(true);
       if (!result.success) return;
 
@@ -133,9 +122,7 @@ describe("MuxGovernorOauthService", () => {
       expect(result.data.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
 
       const authorizeUrl = new URL(result.data.authorizeUrl);
-      expect(`${authorizeUrl.origin}${authorizeUrl.pathname}`).toBe(
-        "https://governor.example.com/oauth2/authorize"
-      );
+      expect(`${authorizeUrl.origin}${authorizeUrl.pathname}`).toBe(MUX_GATEWAY_AUTHORIZE_URL);
       expect(authorizeUrl.searchParams.get("response_type")).toBe("code");
       expect(authorizeUrl.searchParams.get("state")).toBe(result.data.flowId);
       expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(result.data.redirectUri);
@@ -158,12 +145,10 @@ describe("MuxGovernorOauthService", () => {
             : init?.body instanceof URLSearchParams
               ? init.body.toString()
               : "";
-        return jsonResponse({ access_token: "governor-token" });
+        return jsonResponse({ access_token: "gateway-token" });
       });
 
-      const startResult = await service.startDesktopFlow({
-        governorOrigin: "https://governor.example.com",
-      });
+      const startResult = await service.startDesktopFlow();
       expect(startResult.success).toBe(true);
       if (!startResult.success) return;
 
@@ -180,16 +165,19 @@ describe("MuxGovernorOauthService", () => {
 
       expect(waitResult).toEqual(Ok(undefined));
       expect(callbackResponse.status).toBe(200);
-      expect(callbackResponse.body).toContain("Enrollment complete");
+      expect(callbackResponse.body).toContain("Login complete");
 
-      expect(capturedUrl).toBe("https://governor.example.com/api/v1/oauth2/exchange");
+      expect(capturedUrl).toBe(MUX_GATEWAY_EXCHANGE_URL);
       expect(capturedBody).toContain("code=ok-code");
 
-      expect(deps.editConfigCalls).toBe(1);
-      expect(deps.configState.muxGovernorUrl).toBe("https://governor.example.com");
-      expect(deps.configState.muxGovernorToken).toBe("governor-token");
+      expect(deps.setConfigCalls).toEqual([
+        {
+          provider: "mux-gateway",
+          keyPath: ["couponCode"],
+          value: "gateway-token",
+        },
+      ]);
       expect(deps.focusCalls).toBe(1);
-      expect(deps.refreshCalls).toBe(1);
     });
 
     it("callback with code + failed exchange resolves waitFor error and renders failure HTML", async () => {
@@ -202,13 +190,11 @@ describe("MuxGovernorOauthService", () => {
         mockFetch(async () => {
           resolveStarted();
           await exchangeBlocked;
-          return new Response("governor unavailable", { status: 502 });
+          return new Response("upstream exploded", { status: 500 });
         });
       });
 
-      const startResult = await service.startDesktopFlow({
-        governorOrigin: "https://governor.example.com",
-      });
+      const startResult = await service.startDesktopFlow();
       expect(startResult.success).toBe(true);
       if (!startResult.success) return;
 
@@ -235,20 +221,17 @@ describe("MuxGovernorOauthService", () => {
 
       expect(waitResult.success).toBe(false);
       if (!waitResult.success) {
-        expect(waitResult.error).toContain("Xum Governor exchange failed (502)");
+        expect(waitResult.error).toContain("Xum Gateway exchange failed (500)");
       }
 
       expect(callbackResponse.status).toBe(400);
-      expect(callbackResponse.body).toContain("Enrollment failed");
+      expect(callbackResponse.body).toContain("Login failed");
       expect(callbackResponse.body).toContain(
-        "Xum Governor exchange failed (502): governor unavailable"
+        "Xum Gateway exchange failed (500): upstream exploded"
       );
 
-      expect(deps.editConfigCalls).toBe(0);
+      expect(deps.setConfigCalls).toHaveLength(0);
       expect(deps.focusCalls).toBe(0);
-      expect(deps.refreshCalls).toBe(0);
-      expect(deps.configState.muxGovernorUrl).toBeUndefined();
-      expect(deps.configState.muxGovernorToken).toBeUndefined();
     });
   });
 });

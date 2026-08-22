@@ -3,7 +3,7 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import { createTestHistoryService } from "./testHistoryService";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import assert from "node:assert";
 import { createHash } from "node:crypto";
 import * as fs from "fs/promises";
@@ -11,7 +11,7 @@ import * as path from "path";
 
 /** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
 async function collectFullHistory(service: HistoryService, workspaceId: string) {
-  const messages: MuxMessage[] = [];
+  const messages: XumMessage[] = [];
   const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
     messages.push(...chunk);
   });
@@ -29,7 +29,7 @@ async function writeHistoryLines(
   await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
 }
 
-function messageLine(workspaceId: string, message: MuxMessage): string {
+function messageLine(workspaceId: string, message: XumMessage): string {
   return JSON.stringify({ ...message, workspaceId });
 }
 
@@ -41,7 +41,7 @@ async function appendNumberedMessages(
   for (let i = 0; i < count; i++) {
     await service.appendToHistory(
       workspaceId,
-      createMuxMessage(`msg-${i}`, "user", `Message ${i}`)
+      createXumMessage(`msg-${i}`, "user", `Message ${i}`)
     );
   }
 }
@@ -71,10 +71,10 @@ describe("HistoryService", () => {
     it("should read messages from chat.jsonl", async () => {
       const workspaceId = "workspace1";
       await writeHistoryLines(config, workspaceId, [
-        messageLine(workspaceId, createMuxMessage("msg1", "user", "Hello", { historySequence: 0 })),
+        messageLine(workspaceId, createXumMessage("msg1", "user", "Hello", { historySequence: 0 })),
         messageLine(
           workspaceId,
-          createMuxMessage("msg2", "assistant", "Hi there", { historySequence: 1 })
+          createXumMessage("msg2", "assistant", "Hi there", { historySequence: 1 })
         ),
       ]);
 
@@ -87,9 +87,9 @@ describe("HistoryService", () => {
     it("should skip malformed JSON lines", async () => {
       const workspaceId = "workspace1";
       await writeHistoryLines(config, workspaceId, [
-        messageLine(workspaceId, createMuxMessage("msg1", "user", "Hello", { historySequence: 0 })),
+        messageLine(workspaceId, createXumMessage("msg1", "user", "Hello", { historySequence: 0 })),
         "invalid json line",
-        messageLine(workspaceId, createMuxMessage("msg2", "user", "World", { historySequence: 1 })),
+        messageLine(workspaceId, createXumMessage("msg2", "user", "World", { historySequence: 1 })),
       ]);
 
       const messages = await collectFullHistory(service, workspaceId);
@@ -100,7 +100,7 @@ describe("HistoryService", () => {
 
     it("hydrates legacy cmuxMetadata entries", async () => {
       const workspaceId = "workspace-legacy";
-      const legacyMessage = createMuxMessage("msg-legacy", "user", "legacy", {
+      const legacyMessage = createXumMessage("msg-legacy", "user", "legacy", {
         historySequence: 0,
       });
       (legacyMessage.metadata as Record<string, unknown>).cmuxMetadata = { type: "normal" };
@@ -112,7 +112,7 @@ describe("HistoryService", () => {
     it("should handle empty lines in history file", async () => {
       const workspaceId = "workspace1";
       await writeHistoryLines(config, workspaceId, [
-        messageLine(workspaceId, createMuxMessage("msg1", "user", "Hello", { historySequence: 0 })),
+        messageLine(workspaceId, createXumMessage("msg1", "user", "Hello", { historySequence: 0 })),
         "",
         "",
       ]);
@@ -126,7 +126,7 @@ describe("HistoryService", () => {
   describe("appendToHistory", () => {
     it("should create workspace directory if it doesn't exist", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       const result = await service.appendToHistory(workspaceId, msg);
 
@@ -141,7 +141,7 @@ describe("HistoryService", () => {
 
     it("should assign historySequence to message without metadata", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       const result = await service.appendToHistory(workspaceId, msg);
 
@@ -153,9 +153,9 @@ describe("HistoryService", () => {
 
     it("should assign sequential historySequence numbers", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "Hello");
-      const msg2 = createMuxMessage("msg2", "assistant", "Hi");
-      const msg3 = createMuxMessage("msg3", "user", "How are you?");
+      const msg1 = createXumMessage("msg1", "user", "Hello");
+      const msg2 = createXumMessage("msg2", "assistant", "Hi");
+      const msg3 = createXumMessage("msg3", "user", "How are you?");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
@@ -170,7 +170,7 @@ describe("HistoryService", () => {
 
     it("should preserve existing historySequence if provided", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello", { historySequence: 5 });
+      const msg = createXumMessage("msg1", "user", "Hello", { historySequence: 5 });
 
       const result = await service.appendToHistory(workspaceId, msg);
 
@@ -182,7 +182,7 @@ describe("HistoryService", () => {
 
     it("should reject malformed provided historySequence values", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello", { historySequence: 5.5 });
+      const msg = createXumMessage("msg1", "user", "Hello", { historySequence: 5.5 });
 
       const result = await service.appendToHistory(workspaceId, msg);
 
@@ -194,8 +194,8 @@ describe("HistoryService", () => {
 
     it("should update sequence counter when message has higher sequence", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 10 });
-      const msg2 = createMuxMessage("msg2", "user", "World");
+      const msg1 = createXumMessage("msg1", "user", "Hello", { historySequence: 10 });
+      const msg2 = createXumMessage("msg2", "user", "World");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
@@ -211,9 +211,9 @@ describe("HistoryService", () => {
       await fs.mkdir(workspaceDir, { recursive: true });
 
       const messages = [
-        createMuxMessage("msg-low", "user", "low", { historySequence: 0 }),
-        createMuxMessage("msg-high", "assistant", "high", { historySequence: 100 }),
-        createMuxMessage("msg-stale-tail", "assistant", "stale", { historySequence: 10 }),
+        createXumMessage("msg-low", "user", "low", { historySequence: 0 }),
+        createXumMessage("msg-high", "assistant", "high", { historySequence: 100 }),
+        createXumMessage("msg-stale-tail", "assistant", "stale", { historySequence: 10 }),
       ];
       const chatPath = path.join(workspaceDir, "chat.jsonl");
       await fs.writeFile(
@@ -222,7 +222,7 @@ describe("HistoryService", () => {
       );
 
       const restartedService = new HistoryService(config);
-      const nextMessage = createMuxMessage("msg-next", "user", "next");
+      const nextMessage = createXumMessage("msg-next", "user", "next");
       const appendResult = await restartedService.appendToHistory(workspaceId, nextMessage);
 
       expect(appendResult.success).toBe(true);
@@ -233,15 +233,15 @@ describe("HistoryService", () => {
       const workspaceId = "workspace-stale-provided-sequence";
       await service.appendToHistory(
         workspaceId,
-        createMuxMessage("msg-low", "user", "low", { historySequence: 0 })
+        createXumMessage("msg-low", "user", "low", { historySequence: 0 })
       );
       await service.appendToHistory(
         workspaceId,
-        createMuxMessage("msg-high", "assistant", "high", { historySequence: 100 })
+        createXumMessage("msg-high", "assistant", "high", { historySequence: 100 })
       );
 
       const restartedService = new HistoryService(config);
-      const staleMessage = createMuxMessage("msg-stale", "assistant", "stale", {
+      const staleMessage = createXumMessage("msg-stale", "assistant", "stale", {
         historySequence: 10,
       });
       const staleResult = await restartedService.appendToHistory(workspaceId, staleMessage);
@@ -251,7 +251,7 @@ describe("HistoryService", () => {
         expect(staleResult.error).toContain("stale historySequence 10");
       }
 
-      const nextMessage = createMuxMessage("msg-next", "user", "next");
+      const nextMessage = createXumMessage("msg-next", "user", "next");
       const nextResult = await restartedService.appendToHistory(workspaceId, nextMessage);
       expect(nextResult.success).toBe(true);
       expect(nextMessage.metadata?.historySequence).toBe(101);
@@ -259,7 +259,7 @@ describe("HistoryService", () => {
 
     it("should preserve other metadata fields", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello", {
+      const msg = createXumMessage("msg1", "user", "Hello", {
         timestamp: 123456,
         model: "claude-opus-4",
         providerMetadata: { test: "data" },
@@ -276,7 +276,7 @@ describe("HistoryService", () => {
 
     it("should include workspaceId in persisted message", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg);
 
@@ -296,14 +296,14 @@ describe("HistoryService", () => {
   describe("updateHistory", () => {
     it("should update message by historySequence", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "Hello");
-      const msg2 = createMuxMessage("msg2", "assistant", "Hi");
+      const msg1 = createXumMessage("msg1", "user", "Hello");
+      const msg2 = createXumMessage("msg2", "assistant", "Hi");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
 
       const messages = await collectFullHistory(service, workspaceId);
-      const updatedMsg = createMuxMessage("msg1", "user", "Updated Hello", {
+      const updatedMsg = createXumMessage("msg1", "user", "Updated Hello", {
         historySequence: messages[0].metadata?.historySequence,
       });
 
@@ -320,7 +320,7 @@ describe("HistoryService", () => {
 
     it("should return error if message has no historySequence", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       const result = await service.updateHistory(workspaceId, msg);
 
@@ -332,11 +332,11 @@ describe("HistoryService", () => {
 
     it("should return error if message with historySequence not found", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "Hello");
+      const msg1 = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg1);
 
-      const msg2 = createMuxMessage("msg2", "user", "Not found", { historySequence: 99 });
+      const msg2 = createXumMessage("msg2", "user", "Not found", { historySequence: 99 });
       const result = await service.updateHistory(workspaceId, msg2);
 
       expect(result.success).toBe(false);
@@ -347,13 +347,13 @@ describe("HistoryService", () => {
 
     it("should preserve historySequence when updating", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg);
 
       const messages = await collectFullHistory(service, workspaceId);
       const originalSequence = messages[0].metadata?.historySequence;
-      const updatedMsg = createMuxMessage("msg1", "user", "Updated", {
+      const updatedMsg = createXumMessage("msg1", "user", "Updated", {
         historySequence: originalSequence,
       });
 
@@ -365,7 +365,7 @@ describe("HistoryService", () => {
 
     it("preserves durable compaction metadata across late in-place rewrites", async () => {
       const workspaceId = "workspace1";
-      const placeholder = createMuxMessage("summary-msg", "assistant", "", {
+      const placeholder = createXumMessage("summary-msg", "assistant", "", {
         model: "openai:gpt-5",
       });
 
@@ -380,7 +380,7 @@ describe("HistoryService", () => {
       }
 
       // Simulate compaction finishing first and upgrading the streamed placeholder in place.
-      const compactionSummary = createMuxMessage("summary-msg", "assistant", "Compacted summary", {
+      const compactionSummary = createXumMessage("summary-msg", "assistant", "Compacted summary", {
         historySequence: sequence,
         compacted: "user",
         compactionBoundary: true,
@@ -392,7 +392,7 @@ describe("HistoryService", () => {
 
       // Simulate a late stream rewrite (e.g., simulateToolPolicyNoop path) that omits
       // compaction metadata. The durable boundary markers must survive this rewrite.
-      const lateRewrite = createMuxMessage(
+      const lateRewrite = createXumMessage(
         "summary-msg",
         "assistant",
         "Tool execution skipped because the requested tool is disabled by policy.",
@@ -419,7 +419,7 @@ describe("HistoryService", () => {
 
     it("self-heals by not preserving malformed compaction boundary metadata", async () => {
       const workspaceId = "workspace1";
-      const placeholder = createMuxMessage("summary-msg", "assistant", "", {
+      const placeholder = createXumMessage("summary-msg", "assistant", "", {
         model: "openai:gpt-5",
       });
 
@@ -434,7 +434,7 @@ describe("HistoryService", () => {
       }
 
       // Simulate malformed persisted boundary metadata (invalid epoch).
-      const malformedCompactionSummary = createMuxMessage(
+      const malformedCompactionSummary = createXumMessage(
         "summary-msg",
         "assistant",
         "Compacted summary",
@@ -451,7 +451,7 @@ describe("HistoryService", () => {
       );
       expect(malformedUpdateResult.success).toBe(true);
 
-      const lateRewrite = createMuxMessage("summary-msg", "assistant", "Late rewrite", {
+      const lateRewrite = createXumMessage("summary-msg", "assistant", "Late rewrite", {
         historySequence: sequence,
         model: "openai:gpt-5",
       });
@@ -466,7 +466,7 @@ describe("HistoryService", () => {
 
     it("self-heals by not preserving malformed compacted markers in compaction boundaries", async () => {
       const workspaceId = "workspace1";
-      const placeholder = createMuxMessage("summary-msg", "assistant", "", {
+      const placeholder = createXumMessage("summary-msg", "assistant", "", {
         model: "openai:gpt-5",
       });
 
@@ -480,7 +480,7 @@ describe("HistoryService", () => {
         return;
       }
 
-      const malformedCompactionSummary = createMuxMessage(
+      const malformedCompactionSummary = createXumMessage(
         "summary-msg",
         "assistant",
         "Compacted summary",
@@ -500,7 +500,7 @@ describe("HistoryService", () => {
       );
       expect(malformedUpdateResult.success).toBe(true);
 
-      const lateRewrite = createMuxMessage("summary-msg", "assistant", "Late rewrite", {
+      const lateRewrite = createXumMessage("summary-msg", "assistant", "Late rewrite", {
         historySequence: sequence,
         model: "openai:gpt-5",
       });
@@ -518,9 +518,9 @@ describe("HistoryService", () => {
   describe("deleteMessage", () => {
     it("should remove only the targeted message and preserve subsequent messages", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "First");
-      const msg2 = createMuxMessage("msg2", "assistant", "Second");
-      const msg3 = createMuxMessage("msg3", "user", "Third");
+      const msg1 = createXumMessage("msg1", "user", "First");
+      const msg2 = createXumMessage("msg2", "assistant", "Second");
+      const msg3 = createXumMessage("msg3", "user", "Third");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
@@ -533,7 +533,7 @@ describe("HistoryService", () => {
       expect(messages).toHaveLength(2);
       expect(messages.map((message) => message.id)).toEqual(["msg1", "msg3"]);
 
-      const msg4 = createMuxMessage("msg4", "assistant", "Fourth");
+      const msg4 = createXumMessage("msg4", "assistant", "Fourth");
       await service.appendToHistory(workspaceId, msg4);
 
       const messagesAfterAppend = await collectFullHistory(service, workspaceId);
@@ -549,7 +549,7 @@ describe("HistoryService", () => {
 
     it("should return error if message not found", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg);
 
@@ -565,15 +565,15 @@ describe("HistoryService", () => {
   describe("deleteMessages", () => {
     it("atomically removes only targeted rows and preserves later concurrent rows", async () => {
       const workspaceId = "workspace-delete-messages";
-      await service.appendToHistory(workspaceId, createMuxMessage("before", "assistant", "Before"));
+      await service.appendToHistory(workspaceId, createXumMessage("before", "assistant", "Before"));
       await service.appendToHistory(
         workspaceId,
-        createMuxMessage("wake-snapshot", "user", "Snapshot")
+        createXumMessage("wake-snapshot", "user", "Snapshot")
       );
-      await service.appendToHistory(workspaceId, createMuxMessage("wake", "user", "Wake"));
+      await service.appendToHistory(workspaceId, createXumMessage("wake", "user", "Wake"));
       await service.appendToHistory(
         workspaceId,
-        createMuxMessage("pause-boundary", "user", "Goal paused")
+        createXumMessage("pause-boundary", "user", "Goal paused")
       );
 
       const result = await service.deleteMessages(workspaceId, ["wake-snapshot", "wake"]);
@@ -585,8 +585,8 @@ describe("HistoryService", () => {
 
     it("does not rewrite history when any target is missing", async () => {
       const workspaceId = "workspace-delete-messages-missing";
-      await service.appendToHistory(workspaceId, createMuxMessage("wake", "user", "Wake"));
-      await service.appendToHistory(workspaceId, createMuxMessage("later", "user", "Later"));
+      await service.appendToHistory(workspaceId, createXumMessage("wake", "user", "Wake"));
+      await service.appendToHistory(workspaceId, createXumMessage("later", "user", "Later"));
 
       const result = await service.deleteMessages(workspaceId, ["wake", "missing"]);
       expect(result.success).toBe(false);
@@ -599,10 +599,10 @@ describe("HistoryService", () => {
   describe("truncateAfterMessage", () => {
     it("should remove message and all subsequent messages", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "First");
-      const msg2 = createMuxMessage("msg2", "assistant", "Second");
-      const msg3 = createMuxMessage("msg3", "user", "Third");
-      const msg4 = createMuxMessage("msg4", "assistant", "Fourth");
+      const msg1 = createXumMessage("msg1", "user", "First");
+      const msg2 = createXumMessage("msg2", "assistant", "Second");
+      const msg3 = createXumMessage("msg3", "user", "Third");
+      const msg4 = createXumMessage("msg4", "assistant", "Fourth");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
@@ -620,9 +620,9 @@ describe("HistoryService", () => {
 
     it("should update sequence counter after truncation", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "First");
-      const msg2 = createMuxMessage("msg2", "assistant", "Second");
-      const msg3 = createMuxMessage("msg3", "user", "Third");
+      const msg1 = createXumMessage("msg1", "user", "First");
+      const msg2 = createXumMessage("msg2", "assistant", "Second");
+      const msg3 = createXumMessage("msg3", "user", "Third");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
@@ -631,7 +631,7 @@ describe("HistoryService", () => {
       await service.truncateAfterMessage(workspaceId, "msg2");
 
       // Append a new message and check its sequence
-      const msg4 = createMuxMessage("msg4", "user", "New message");
+      const msg4 = createXumMessage("msg4", "user", "New message");
       await service.appendToHistory(workspaceId, msg4);
 
       const messages = await collectFullHistory(service, workspaceId);
@@ -642,15 +642,15 @@ describe("HistoryService", () => {
 
     it("should reset sequence counter when truncating all messages", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "First");
-      const msg2 = createMuxMessage("msg2", "assistant", "Second");
+      const msg1 = createXumMessage("msg1", "user", "First");
+      const msg2 = createXumMessage("msg2", "assistant", "Second");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
 
       await service.truncateAfterMessage(workspaceId, "msg1");
 
-      const msg3 = createMuxMessage("msg3", "user", "New");
+      const msg3 = createXumMessage("msg3", "user", "New");
       await service.appendToHistory(workspaceId, msg3);
 
       const messages = await collectFullHistory(service, workspaceId);
@@ -660,7 +660,7 @@ describe("HistoryService", () => {
 
     it("should return error if message not found", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg);
 
@@ -676,9 +676,9 @@ describe("HistoryService", () => {
   describe("truncateAfterMessage keepTargetMessage", () => {
     it("should retain the target message when requested", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "First");
-      const msg2 = createMuxMessage("msg2", "assistant", "Second");
-      const msg3 = createMuxMessage("msg3", "user", "Third");
+      const msg1 = createXumMessage("msg1", "user", "First");
+      const msg2 = createXumMessage("msg2", "assistant", "Second");
+      const msg3 = createXumMessage("msg3", "user", "Third");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
@@ -700,7 +700,7 @@ describe("HistoryService", () => {
   describe("clearHistory", () => {
     it("should delete chat.jsonl file", async () => {
       const workspaceId = "workspace1";
-      const msg = createMuxMessage("msg1", "user", "Hello");
+      const msg = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg);
 
@@ -719,12 +719,12 @@ describe("HistoryService", () => {
 
     it("should reset sequence counter", async () => {
       const workspaceId = "workspace1";
-      const msg1 = createMuxMessage("msg1", "user", "Hello");
+      const msg1 = createXumMessage("msg1", "user", "Hello");
 
       await service.appendToHistory(workspaceId, msg1);
       await service.clearHistory(workspaceId);
 
-      const msg2 = createMuxMessage("msg2", "user", "New message");
+      const msg2 = createXumMessage("msg2", "user", "New message");
       await service.appendToHistory(workspaceId, msg2);
 
       const messages = await collectFullHistory(service, workspaceId);
@@ -744,7 +744,7 @@ describe("HistoryService", () => {
 
       await service.clearHistory(workspaceId);
 
-      const msg = createMuxMessage("msg1", "user", "First");
+      const msg = createXumMessage("msg1", "user", "First");
       await service.appendToHistory(workspaceId, msg);
 
       const messages = await collectFullHistory(service, workspaceId);
@@ -759,8 +759,8 @@ describe("HistoryService", () => {
       await fs.mkdir(workspaceDir, { recursive: true });
 
       // Manually create history with specific sequences
-      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
-      const msg2 = createMuxMessage("msg2", "assistant", "Hi", { historySequence: 1 });
+      const msg1 = createXumMessage("msg1", "user", "Hello", { historySequence: 0 });
+      const msg2 = createXumMessage("msg2", "assistant", "Hi", { historySequence: 1 });
 
       const chatPath = path.join(workspaceDir, "chat.jsonl");
       await fs.writeFile(
@@ -775,7 +775,7 @@ describe("HistoryService", () => {
       const newService = new HistoryService(config);
 
       // Append a new message - should get sequence 2
-      const msg3 = createMuxMessage("msg3", "user", "How are you?");
+      const msg3 = createXumMessage("msg3", "user", "How are you?");
       await newService.appendToHistory(workspaceId, msg3);
 
       const messages = await collectFullHistory(newService, workspaceId);
@@ -788,8 +788,8 @@ describe("HistoryService", () => {
       const workspaceDir = config.getSessionDir(workspaceId);
       await fs.mkdir(workspaceDir, { recursive: true });
 
-      const validMessage = createMuxMessage("msg-valid", "user", "Hello", { historySequence: 3 });
-      const malformedMessage = createMuxMessage("msg-malformed", "assistant", "Hi", {
+      const validMessage = createXumMessage("msg-valid", "user", "Hello", { historySequence: 3 });
+      const malformedMessage = createXumMessage("msg-malformed", "assistant", "Hi", {
         historySequence: 42,
       });
       if (malformedMessage.metadata) {
@@ -806,7 +806,7 @@ describe("HistoryService", () => {
       );
 
       const newService = new HistoryService(config);
-      const msg3 = createMuxMessage("msg3", "user", "How are you?");
+      const msg3 = createXumMessage("msg3", "user", "How are you?");
       const appendResult = await newService.appendToHistory(workspaceId, msg3);
       expect(appendResult.success).toBe(true);
 
@@ -818,7 +818,7 @@ describe("HistoryService", () => {
 
     it("should start from 0 for new workspace", async () => {
       const workspaceId = "new-workspace";
-      const msg = createMuxMessage("msg1", "user", "First message");
+      const msg = createXumMessage("msg1", "user", "First message");
 
       await service.appendToHistory(workspaceId, msg);
 
@@ -853,7 +853,7 @@ describe("HistoryService", () => {
       preBoundaryIds.push(id);
       lines.push(
         JSON.stringify({
-          ...createMuxMessage(id, "user", `message ${i}`, { historySequence: seq++ }),
+          ...createXumMessage(id, "user", `message ${i}`, { historySequence: seq++ }),
           workspaceId,
         })
       );
@@ -863,7 +863,7 @@ describe("HistoryService", () => {
     const boundaryId = `boundary-${epoch}`;
     lines.push(
       JSON.stringify({
-        ...createMuxMessage(boundaryId, "assistant", "Compaction summary", {
+        ...createXumMessage(boundaryId, "assistant", "Compaction summary", {
           historySequence: seq++,
           compactionBoundary: true,
           compacted: "user",
@@ -879,7 +879,7 @@ describe("HistoryService", () => {
       postBoundaryIds.push(id);
       lines.push(
         JSON.stringify({
-          ...createMuxMessage(id, "user", `post message ${i}`, { historySequence: seq++ }),
+          ...createXumMessage(id, "user", `post message ${i}`, { historySequence: seq++ }),
           workspaceId,
         })
       );
@@ -895,8 +895,8 @@ describe("HistoryService", () => {
       const workspaceDir = config.getSessionDir(workspaceId);
       await fs.mkdir(workspaceDir, { recursive: true });
 
-      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
-      const msg2 = createMuxMessage("msg2", "assistant", "Hi", { historySequence: 1 });
+      const msg1 = createXumMessage("msg1", "user", "Hello", { historySequence: 0 });
+      const msg2 = createXumMessage("msg2", "assistant", "Hi", { historySequence: 1 });
       await fs.writeFile(
         path.join(workspaceDir, "chat.jsonl"),
         JSON.stringify({ ...msg1, workspaceId }) +
@@ -952,13 +952,13 @@ describe("HistoryService", () => {
       // Epoch 1 messages + boundary
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e1-user", "user", "msg", { historySequence: seq++ }),
+          ...createXumMessage("e1-user", "user", "msg", { historySequence: seq++ }),
           workspaceId,
         })
       );
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e1-boundary", "assistant", "Summary 1", {
+          ...createXumMessage("e1-boundary", "assistant", "Summary 1", {
             historySequence: seq++,
             compactionBoundary: true,
             compacted: "user",
@@ -971,13 +971,13 @@ describe("HistoryService", () => {
       // Epoch 2 messages + boundary
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e2-user", "user", "msg", { historySequence: seq++ }),
+          ...createXumMessage("e2-user", "user", "msg", { historySequence: seq++ }),
           workspaceId,
         })
       );
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e2-boundary", "assistant", "Summary 2", {
+          ...createXumMessage("e2-boundary", "assistant", "Summary 2", {
             historySequence: seq++,
             compactionBoundary: true,
             compacted: "idle",
@@ -990,7 +990,7 @@ describe("HistoryService", () => {
       // Post-epoch-2 message
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("post-e2", "user", "after both", { historySequence: seq++ }),
+          ...createXumMessage("post-e2", "user", "after both", { historySequence: seq++ }),
           workspaceId,
         })
       );
@@ -1023,13 +1023,13 @@ describe("HistoryService", () => {
       const workspaceDir = config.getSessionDir(workspaceId);
       await fs.mkdir(workspaceDir, { recursive: true });
 
-      const boundary = createMuxMessage("boundary", "assistant", "Summary", {
+      const boundary = createXumMessage("boundary", "assistant", "Summary", {
         historySequence: 0,
         compactionBoundary: true,
         compacted: "user",
         compactionEpoch: 1,
       });
-      const post = createMuxMessage("post", "user", "after", { historySequence: 1 });
+      const post = createXumMessage("post", "user", "after", { historySequence: 1 });
 
       await fs.writeFile(
         path.join(workspaceDir, "chat.jsonl"),
@@ -1061,13 +1061,13 @@ describe("HistoryService", () => {
 
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e1-user", "user", "epoch 1 user", { historySequence: seq++ }),
+          ...createXumMessage("e1-user", "user", "epoch 1 user", { historySequence: seq++ }),
           workspaceId,
         })
       );
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e1-boundary", "assistant", "summary 1", {
+          ...createXumMessage("e1-boundary", "assistant", "summary 1", {
             historySequence: seq++,
             compactionBoundary: true,
             compacted: "user",
@@ -1078,13 +1078,13 @@ describe("HistoryService", () => {
       );
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e2-user", "user", "epoch 2 user", { historySequence: seq++ }),
+          ...createXumMessage("e2-user", "user", "epoch 2 user", { historySequence: seq++ }),
           workspaceId,
         })
       );
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("e2-boundary", "assistant", "summary 2", {
+          ...createXumMessage("e2-boundary", "assistant", "summary 2", {
             historySequence: seq++,
             compactionBoundary: true,
             compacted: "idle",
@@ -1095,7 +1095,7 @@ describe("HistoryService", () => {
       );
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("post-e2", "user", "latest message", { historySequence: seq++ }),
+          ...createXumMessage("post-e2", "user", "latest message", { historySequence: seq++ }),
           workspaceId,
         })
       );
@@ -1130,7 +1130,7 @@ describe("HistoryService", () => {
       const lines = [
         messageLine(
           workspaceId,
-          createMuxMessage("old-boundary", "assistant", "old summary", {
+          createXumMessage("old-boundary", "assistant", "old summary", {
             historySequence: 0,
             compactionBoundary: true,
             compacted: "user",
@@ -1139,18 +1139,18 @@ describe("HistoryService", () => {
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("kept-user", "user", "durable preference", { historySequence: 1 })
+          createXumMessage("kept-user", "user", "durable preference", { historySequence: 1 })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("compact-request", "user", "Please compact", {
+          createXumMessage("compact-request", "user", "Please compact", {
             historySequence: 2,
             muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("new-summary", "assistant", "new summary", {
+          createXumMessage("new-summary", "assistant", "new summary", {
             historySequence: 3,
             compactionBoundary: true,
             compacted: "user",
@@ -1184,7 +1184,7 @@ describe("HistoryService", () => {
       const replayedPrefix = [
         messageLine(
           workspaceId,
-          createMuxMessage("old-boundary", "assistant", "old summary", {
+          createXumMessage("old-boundary", "assistant", "old summary", {
             historySequence: 0,
             compactionBoundary: true,
             compacted: "user",
@@ -1193,11 +1193,11 @@ describe("HistoryService", () => {
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("kept-user", "user", "durable preference", { historySequence: 1 })
+          createXumMessage("kept-user", "user", "durable preference", { historySequence: 1 })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("compact-request", "user", "Please compact", {
+          createXumMessage("compact-request", "user", "Please compact", {
             historySequence: 2,
             muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
           })
@@ -1205,7 +1205,7 @@ describe("HistoryService", () => {
       ];
       const summary = messageLine(
         workspaceId,
-        createMuxMessage("new-summary", "assistant", "new summary", {
+        createXumMessage("new-summary", "assistant", "new summary", {
           historySequence: 3,
           compactionBoundary: true,
           compacted: "user",
@@ -1243,7 +1243,7 @@ describe("HistoryService", () => {
       await writeHistoryLines(config, workspaceId, [
         messageLine(
           workspaceId,
-          createMuxMessage("old-boundary", "assistant", "old summary", {
+          createXumMessage("old-boundary", "assistant", "old summary", {
             historySequence: 0,
             compactionBoundary: true,
             compacted: "user",
@@ -1252,18 +1252,18 @@ describe("HistoryService", () => {
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("kept-user", "user", "durable preference", { historySequence: 1 })
+          createXumMessage("kept-user", "user", "durable preference", { historySequence: 1 })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("compact-request", "user", "Please compact", {
+          createXumMessage("compact-request", "user", "Please compact", {
             historySequence: 2,
             muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("summary", "assistant", "summary", {
+          createXumMessage("summary", "assistant", "summary", {
             historySequence: 3,
             compactionBoundary: true,
             compacted: "user",
@@ -1328,29 +1328,29 @@ describe("HistoryService", () => {
       await writeHistoryLines(config, workspaceId, [
         messageLine(
           workspaceId,
-          createMuxMessage("stale-user", "user", "old preference", { historySequence: 0 })
+          createXumMessage("stale-user", "user", "old preference", { historySequence: 0 })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("reset", "assistant", "Context reset", {
+          createXumMessage("reset", "assistant", "Context reset", {
             historySequence: 1,
             contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("kept-user", "user", "new preference", { historySequence: 2 })
+          createXumMessage("kept-user", "user", "new preference", { historySequence: 2 })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("compact-request", "user", "Please compact", {
+          createXumMessage("compact-request", "user", "Please compact", {
             historySequence: 3,
             muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("summary", "assistant", "summary", {
+          createXumMessage("summary", "assistant", "summary", {
             historySequence: 4,
             compactionBoundary: true,
             compacted: "user",
@@ -1379,7 +1379,7 @@ describe("HistoryService", () => {
       await writeHistoryLines(config, workspaceId, [
         messageLine(
           workspaceId,
-          createMuxMessage("valid-boundary", "assistant", "old summary", {
+          createXumMessage("valid-boundary", "assistant", "old summary", {
             historySequence: 0,
             compactionBoundary: true,
             compacted: "user",
@@ -1388,33 +1388,33 @@ describe("HistoryService", () => {
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("before-malformed", "user", "valid evidence before malformed row", {
+          createXumMessage("before-malformed", "user", "valid evidence before malformed row", {
             historySequence: 1,
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("malformed-boundary", "user", "corrupt boundary-like row", {
+          createXumMessage("malformed-boundary", "user", "corrupt boundary-like row", {
             historySequence: 2,
             compactionBoundary: true,
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("after-malformed", "user", "valid evidence after malformed row", {
+          createXumMessage("after-malformed", "user", "valid evidence after malformed row", {
             historySequence: 3,
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("compact-request", "user", "Please compact", {
+          createXumMessage("compact-request", "user", "Please compact", {
             historySequence: 4,
             muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
           })
         ),
         messageLine(
           workspaceId,
-          createMuxMessage("summary", "assistant", "summary", {
+          createXumMessage("summary", "assistant", "summary", {
             historySequence: 5,
             compactionBoundary: true,
             compacted: "user",
@@ -1484,7 +1484,7 @@ describe("HistoryService", () => {
           Array.from({ length: testCase.totalMessages }, (_, i) =>
             messageLine(
               testCase.workspaceId,
-              createMuxMessage(`msg-${i}`, "user", `message ${i}`, { historySequence: i })
+              createXumMessage(`msg-${i}`, "user", `message ${i}`, { historySequence: i })
             )
           )
         );
@@ -1500,11 +1500,11 @@ describe("HistoryService", () => {
     it("should skip malformed lines", async () => {
       const workspaceId = "ws-last-malformed";
       await writeHistoryLines(config, workspaceId, [
-        messageLine(workspaceId, createMuxMessage("msg1", "user", "Hello", { historySequence: 0 })),
+        messageLine(workspaceId, createXumMessage("msg1", "user", "Hello", { historySequence: 0 })),
         "BAD LINE",
         messageLine(
           workspaceId,
-          createMuxMessage("msg2", "assistant", "Hi", { historySequence: 1 })
+          createXumMessage("msg2", "assistant", "Hi", { historySequence: 1 })
         ),
       ]);
 
@@ -1530,7 +1530,7 @@ describe("HistoryService", () => {
       // Pre-boundary: message with emoji (4-byte UTF-8 chars)
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("emoji-msg", "user", "Hello 🌍🔥💻 world", {
+          ...createXumMessage("emoji-msg", "user", "Hello 🌍🔥💻 world", {
             historySequence: seq++,
           }),
           workspaceId,
@@ -1540,7 +1540,7 @@ describe("HistoryService", () => {
       // Boundary with CJK characters (3-byte UTF-8 chars)
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("boundary-utf8", "assistant", "要約：会話の概要", {
+          ...createXumMessage("boundary-utf8", "assistant", "要約：会話の概要", {
             historySequence: seq++,
             compactionBoundary: true,
             compacted: "user",
@@ -1553,7 +1553,7 @@ describe("HistoryService", () => {
       // Post-boundary: message with mixed scripts
       lines.push(
         JSON.stringify({
-          ...createMuxMessage("post-utf8", "user", "Ñoño café résumé über 日本語", {
+          ...createXumMessage("post-utf8", "user", "Ñoño café résumé über 日本語", {
             historySequence: seq++,
           }),
           workspaceId,
@@ -1591,7 +1591,7 @@ describe("HistoryService", () => {
       for (let i = 0; i < 5; i++) {
         lines.push(
           JSON.stringify({
-            ...createMuxMessage(`utf8-${i}`, "user", `メッセージ ${i} 🎯`, {
+            ...createXumMessage(`utf8-${i}`, "user", `メッセージ ${i} 🎯`, {
               historySequence: i,
             }),
             workspaceId,
@@ -1632,7 +1632,7 @@ describe("HistoryService", () => {
       const workspaceDir = config.getSessionDir(workspaceId);
       await fs.mkdir(workspaceDir, { recursive: true });
 
-      const msg = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
+      const msg = createXumMessage("msg1", "user", "Hello", { historySequence: 0 });
       await fs.writeFile(
         path.join(workspaceDir, "chat.jsonl"),
         JSON.stringify({ ...msg, workspaceId }) + "\n"
@@ -1649,7 +1649,7 @@ describe("HistoryService", () => {
     it("should iterate forward in chronological order", async () => {
       await appendNumberedMessages(service, wsId, 5);
 
-      const collected: MuxMessage[] = [];
+      const collected: XumMessage[] = [];
       const result = await service.iterateFullHistory(wsId, "forward", (chunk) => {
         collected.push(...chunk);
       });
@@ -1661,7 +1661,7 @@ describe("HistoryService", () => {
     it("should iterate backward with newest first", async () => {
       await appendNumberedMessages(service, wsId, 5);
 
-      const collected: MuxMessage[] = [];
+      const collected: XumMessage[] = [];
       const result = await service.iterateFullHistory(wsId, "backward", (chunk) => {
         collected.push(...chunk);
       });
@@ -1674,7 +1674,7 @@ describe("HistoryService", () => {
     it("should support early exit by returning false", async () => {
       await appendNumberedMessages(service, wsId, 10);
 
-      let found: MuxMessage | undefined;
+      let found: XumMessage | undefined;
       await service.iterateFullHistory(wsId, "forward", (chunk) => {
         for (const msg of chunk) {
           if (msg.id === "msg-3") {
@@ -1691,7 +1691,7 @@ describe("HistoryService", () => {
       await appendNumberedMessages(service, wsId, 10);
 
       // Find the first message encountered when reading backward (should be msg-9)
-      let firstSeen: MuxMessage | undefined;
+      let firstSeen: XumMessage | undefined;
       await service.iterateFullHistory(wsId, "backward", (chunk) => {
         firstSeen = chunk[0];
         return false; // stop after first chunk
@@ -1701,7 +1701,7 @@ describe("HistoryService", () => {
     });
 
     it("should return success for empty history", async () => {
-      const collected: MuxMessage[] = [];
+      const collected: XumMessage[] = [];
       const result = await service.iterateFullHistory(wsId, "forward", (chunk) => {
         collected.push(...chunk);
       });
@@ -1712,11 +1712,11 @@ describe("HistoryService", () => {
     it("should skip malformed lines during iteration", async () => {
       await writeHistoryLines(config, wsId, [
         "not valid json",
-        messageLine(wsId, createMuxMessage("valid-1", "user", "Valid message")),
+        messageLine(wsId, createXumMessage("valid-1", "user", "Valid message")),
         "{malformed",
       ]);
 
-      const collected: MuxMessage[] = [];
+      const collected: XumMessage[] = [];
       const result = await service.iterateFullHistory(wsId, "forward", (chunk) => {
         collected.push(...chunk);
       });
@@ -1729,20 +1729,20 @@ describe("HistoryService", () => {
   describe("sealed history rotation", () => {
     const wsId = "ws-rotation";
 
-    function boundaryMessage(id: string, epoch: number): MuxMessage {
-      return createMuxMessage(id, "assistant", `Summary ${epoch}`, {
+    function boundaryMessage(id: string, epoch: number): XumMessage {
+      return createXumMessage(id, "assistant", `Summary ${epoch}`, {
         compactionBoundary: true,
         compacted: "user",
         compactionEpoch: epoch,
       });
     }
 
-    async function readJsonlFile(filePath: string): Promise<MuxMessage[]> {
+    async function readJsonlFile(filePath: string): Promise<XumMessage[]> {
       const data = await fs.readFile(filePath, "utf-8");
       return data
         .split("\n")
         .filter((line) => line.trim())
-        .map((line) => JSON.parse(line) as MuxMessage);
+        .map((line) => JSON.parse(line) as XumMessage);
     }
 
     function chatPath(workspaceId: string): string {
@@ -1756,7 +1756,7 @@ describe("HistoryService", () => {
     it("rotates the sealed prefix into the archive when a boundary is appended", async () => {
       await appendNumberedMessages(service, wsId, 3); // seq 0..2
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after")); // seq 4
 
       // Active file holds only the latest epoch; sealed rows moved to the archive.
       const chatRows = await readJsonlFile(chatPath(wsId));
@@ -1786,12 +1786,12 @@ describe("HistoryService", () => {
 
     it("lazily rotates legacy files with a mid-file boundary on first read", async () => {
       const lines = [
-        messageLine(wsId, createMuxMessage("old-0", "user", "old", { historySequence: 0 })),
+        messageLine(wsId, createXumMessage("old-0", "user", "old", { historySequence: 0 })),
         messageLine(wsId, {
           ...boundaryMessage("boundary-1", 1),
           metadata: { ...boundaryMessage("boundary-1", 1).metadata, historySequence: 1 },
         }),
-        messageLine(wsId, createMuxMessage("post-0", "user", "after", { historySequence: 2 })),
+        messageLine(wsId, createXumMessage("post-0", "user", "after", { historySequence: 2 })),
       ];
       await writeHistoryLines(config, wsId, lines);
 
@@ -1809,11 +1809,11 @@ describe("HistoryService", () => {
     });
 
     it("reads boundary windows across the archive seam (skip + paging)", async () => {
-      await service.appendToHistory(wsId, createMuxMessage("e1-user", "user", "msg")); // seq 0
+      await service.appendToHistory(wsId, createXumMessage("e1-user", "user", "msg")); // seq 0
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 1
-      await service.appendToHistory(wsId, createMuxMessage("e2-user", "user", "msg")); // seq 2
+      await service.appendToHistory(wsId, createXumMessage("e2-user", "user", "msg")); // seq 2
       await service.appendToHistory(wsId, boundaryMessage("boundary-2", 2)); // seq 3
-      await service.appendToHistory(wsId, createMuxMessage("post", "user", "after")); // seq 4
+      await service.appendToHistory(wsId, createXumMessage("post", "user", "after")); // seq 4
 
       // Both sealed epochs live in the archive now.
       const archiveRows = await readJsonlFile(archivePath(wsId));
@@ -1856,7 +1856,7 @@ describe("HistoryService", () => {
       await fs.rm(chatPath(wsId));
 
       const restarted = new HistoryService(config);
-      const msg = createMuxMessage("new-msg", "user", "fresh");
+      const msg = createXumMessage("new-msg", "user", "fresh");
       const appendResult = await restarted.appendToHistory(wsId, msg);
       expect(appendResult.success).toBe(true);
       expect(msg.metadata?.historySequence).toBe(3);
@@ -1865,7 +1865,7 @@ describe("HistoryService", () => {
     it("deduplicates rows when a crash replays the sealed prefix", async () => {
       await appendNumberedMessages(service, wsId, 3); // seq 0..2 → archived after boundary
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after")); // seq 4
 
       // Simulate a crash between the archive append and the chat.jsonl rewrite:
       // the sealed prefix reappears at the head of chat.jsonl while the archive
@@ -1889,7 +1889,7 @@ describe("HistoryService", () => {
     it("returns the tail across the archive seam from getLastMessages", async () => {
       await appendNumberedMessages(service, wsId, 3); // seq 0..2
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after")); // seq 4
 
       const result = await service.getLastMessages(wsId, 4);
       expect(result.success).toBe(true);
@@ -1902,7 +1902,7 @@ describe("HistoryService", () => {
     it("truncates after an archived message and collapses the archive", async () => {
       await appendNumberedMessages(service, wsId, 3); // msg-0..2, seq 0..2
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after")); // seq 4
 
       const truncateResult = await service.truncateAfterMessage(wsId, "msg-1", {
         keepTargetMessage: true,
@@ -1921,7 +1921,7 @@ describe("HistoryService", () => {
       ).toBe(false);
 
       // The sequence counter continues from the cut point.
-      const msg = createMuxMessage("new-msg", "user", "fresh");
+      const msg = createXumMessage("new-msg", "user", "fresh");
       await service.appendToHistory(wsId, msg);
       expect(msg.metadata?.historySequence).toBe(2);
     });
@@ -1929,14 +1929,14 @@ describe("HistoryService", () => {
     it("never reuses archived sequences after truncating the whole active epoch", async () => {
       await appendNumberedMessages(service, wsId, 3); // msg-0..2, seq 0..2 → archived
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after")); // seq 4
 
       // Truncate at the boundary itself (without keeping it) — the active file
       // becomes empty while the archive still holds seq 0..2.
       const truncateResult = await service.truncateAfterMessage(wsId, "boundary-1");
       expect(truncateResult.success).toBe(true);
 
-      const msg = createMuxMessage("new-msg", "user", "fresh");
+      const msg = createXumMessage("new-msg", "user", "fresh");
       await service.appendToHistory(wsId, msg);
       expect(msg.metadata?.historySequence).toBe(3);
     });
@@ -1985,7 +1985,7 @@ describe("HistoryService", () => {
       const deleteResult = await restarted.deleteMessage(wsId, "boundary-1");
       expect(deleteResult.success).toBe(true);
 
-      const msg = createMuxMessage("new-msg", "user", "fresh");
+      const msg = createXumMessage("new-msg", "user", "fresh");
       await restarted.appendToHistory(wsId, msg);
       expect(msg.metadata?.historySequence).toBe(3);
     });
@@ -2004,7 +2004,7 @@ describe("HistoryService", () => {
       const migrateResult = await restarted.migrateWorkspaceId(wsId, newWsId);
       expect(migrateResult.success).toBe(true);
 
-      const msg = createMuxMessage("new-msg", "user", "fresh");
+      const msg = createXumMessage("new-msg", "user", "fresh");
       await restarted.appendToHistory(newWsId, msg);
       expect(msg.metadata?.historySequence).toBe(3);
     });
@@ -2031,7 +2031,7 @@ describe("HistoryService", () => {
       await appendNumberedMessages(service, wsId, 8);
       await service.appendToHistory(
         wsId,
-        createMuxMessage("assistant-usage", "assistant", "reply", {
+        createXumMessage("assistant-usage", "assistant", "reply", {
           contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
           contextProviderMetadata: { openai: {} },
           model: "openai:gpt-4o",
@@ -2039,7 +2039,7 @@ describe("HistoryService", () => {
       );
       await service.appendToHistory(
         wsId,
-        createMuxMessage("assistant-provider-metadata", "assistant", "reply", {
+        createXumMessage("assistant-provider-metadata", "assistant", "reply", {
           contextProviderMetadata: { openai: {} },
           model: "openai:gpt-4o",
         })
@@ -2071,24 +2071,24 @@ describe("HistoryService", () => {
         await appendNumberedMessages(service, wsId, 12);
         await service.appendToHistory(
           wsId,
-          createMuxMessage("reset-boundary", "assistant", "", {
+          createXumMessage("reset-boundary", "assistant", "", {
             contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
           })
         );
       }
       await service.appendToHistory(
         wsId,
-        createMuxMessage(
+        createXumMessage(
           "workflow-display",
           "user",
           `workflow trigger display ${"x".repeat(2_000)}`,
           { muxMetadata: { type: "workflow-trigger-display", rawCommand: "/wf", runId: "run-1" } }
         )
       );
-      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
+      await service.appendToHistory(wsId, createXumMessage("user-active", "user", "prompt"));
       await service.appendToHistory(
         wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
+        createXumMessage("assistant-active", "assistant", "active reply", {
           contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
           model: "openai:gpt-4o",
         })
@@ -2117,7 +2117,7 @@ describe("HistoryService", () => {
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
       await service.appendToHistory(
         wsId,
-        createMuxMessage("active-usage", "assistant", "reply", {
+        createXumMessage("active-usage", "assistant", "reply", {
           contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
           model: "openai:gpt-4o",
         })
@@ -2137,7 +2137,7 @@ describe("HistoryService", () => {
     it("restores a markerless archive tombstone left by an older truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after"));
       await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
 
       const restarted = new HistoryService(config);
@@ -2154,7 +2154,7 @@ describe("HistoryService", () => {
     it("restores an interrupted archive tombstone when only the final chat matches", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after"));
       const chatContents = await fs.readFile(chatPath(wsId), "utf-8");
       const hash = (contents: string) => createHash("sha256").update(contents).digest("hex");
       await fs.writeFile(
@@ -2182,7 +2182,7 @@ describe("HistoryService", () => {
       const targetWorkspaceId = "forked-workspace";
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after"));
       const chatContents = await fs.readFile(chatPath(wsId), "utf-8");
       const hash = (contents: string) => createHash("sha256").update(contents).digest("hex");
       await fs.writeFile(
@@ -2204,7 +2204,7 @@ describe("HistoryService", () => {
     it("does not restore a committed archive tombstone before appending", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await service.appendToHistory(wsId, createXumMessage("post-0", "user", "after"));
       await fs.writeFile(
         `${archivePath(wsId)}.truncate.json`,
         JSON.stringify({ finalArchiveHash: null, finalChatHash: null })
@@ -2213,7 +2213,7 @@ describe("HistoryService", () => {
       await fs.rm(chatPath(wsId));
 
       const restarted = new HistoryService(config);
-      const message = createMuxMessage("new-msg", "user", "fresh");
+      const message = createXumMessage("new-msg", "user", "fresh");
       expect((await restarted.appendToHistory(wsId, message)).success).toBe(true);
       expect(message.metadata?.historySequence).toBe(0);
       expect((await collectFullHistory(restarted, wsId)).map((item) => item.id)).toEqual([

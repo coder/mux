@@ -1,4 +1,4 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -47,7 +47,7 @@ export function sanitizeAnthropicDocumentFilename(
  * @param messages - XumMessage array to process
  * @returns New array with sanitized PDF filenames (does not mutate input)
  */
-export function sanitizeAnthropicPdfFilenames(messages: MuxMessage[]): MuxMessage[] {
+export function sanitizeAnthropicPdfFilenames(messages: XumMessage[]): XumMessage[] {
   let didChange = false;
 
   const result = messages.map((msg) => {

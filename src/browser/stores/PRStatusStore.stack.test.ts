@@ -17,7 +17,7 @@ const STACK_VIEW_FIXTURE = JSON.stringify({
       needsRebase: false,
       pr: {
         number: 101,
-        url: "https://github.com/coder/mux/pull/101",
+        url: "https://github.com/coder/xum/pull/101",
         state: "OPEN",
       },
     },
@@ -31,7 +31,7 @@ const STACK_VIEW_FIXTURE = JSON.stringify({
       needsRebase: true,
       pr: {
         number: 102,
-        url: "https://github.com/coder/mux/pull/102",
+        url: "https://github.com/coder/xum/pull/102",
         state: "OPEN",
       },
     },
@@ -62,7 +62,7 @@ describe("parseStackViewOutput", () => {
           needsRebase: false,
           pr: {
             number: 101,
-            url: "https://github.com/coder/mux/pull/101",
+            url: "https://github.com/coder/xum/pull/101",
             state: "OPEN",
           },
         },
@@ -72,7 +72,7 @@ describe("parseStackViewOutput", () => {
           needsRebase: true,
           pr: {
             number: 102,
-            url: "https://github.com/coder/mux/pull/102",
+            url: "https://github.com/coder/xum/pull/102",
             state: "QUEUED",
           },
         },

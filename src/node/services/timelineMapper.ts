@@ -86,7 +86,7 @@ const MACHINE_AUTHORED_TURN_TYPES = new Set([
 ]);
 
 // muxMetadata crosses the oRPC boundary as `any`, so read its string fields defensively.
-function readMuxMetadataField(
+function readXumMetadataField(
   metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"],
   field: "type" | "source" | "runId"
 ): string | undefined {
@@ -104,7 +104,7 @@ function isMachineAuthoredTurn(
   if (metadata?.synthetic === true) {
     return true;
   }
-  const muxType = readMuxMetadataField(metadata, "type");
+  const muxType = readXumMetadataField(metadata, "type");
   return muxType != null && MACHINE_AUTHORED_TURN_TYPES.has(muxType);
 }
 
@@ -128,7 +128,7 @@ function isUnloggedMachineTurn(
   if (metadata.kind === GOAL_CONTINUATION_KIND || metadata.kind === GOAL_BUDGET_LIMIT_KIND) {
     return true;
   }
-  const muxType = readMuxMetadataField(metadata, "type");
+  const muxType = readXumMetadataField(metadata, "type");
   return muxType === "heartbeat-request" || muxType === "goal-pause-boundary";
 }
 
@@ -175,7 +175,7 @@ function classifyMachineTurn(
   event: Extract<WorkspaceChatMessage, { type: "message" }>,
   text: string
 ): MachineTurnRow | null {
-  const muxType = readMuxMetadataField(event.metadata, "type");
+  const muxType = readXumMetadataField(event.metadata, "type");
   if (muxType === "bash-monitor-wake") {
     const processes = readMonitorWakeProcesses(event.metadata);
     return {
@@ -184,7 +184,7 @@ function classifyMachineTurn(
     };
   }
   if (isWorkflowResultMessage(event)) {
-    const runId = readMuxMetadataField(event.metadata, "runId");
+    const runId = readXumMetadataField(event.metadata, "runId");
     return {
       kind: "workflow.result",
       status: "completed",
@@ -235,8 +235,8 @@ function mapMessage(
   if (event.role === "user") {
     // A /compact request is persisted as a user message, but it is Xum asking for a summary, not a
     // prompt the human wrote, so it must not appear among their prompts.
-    if (readMuxMetadataField(event.metadata, "type") === "compaction-request") {
-      const compactionSource = readMuxMetadataField(event.metadata, "source");
+    if (readXumMetadataField(event.metadata, "type") === "compaction-request") {
+      const compactionSource = readXumMetadataField(event.metadata, "source");
       return [
         {
           ts,

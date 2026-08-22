@@ -1,12 +1,12 @@
 import { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
 import type { OnChatMode, WorkspaceChatMessage } from "../../src/common/orpc/types";
-import { MuxAgent } from "../../src/node/acp/agent";
+import { XumAgent } from "../../src/node/acp/agent";
 import type { ORPCClient, ServerConnection } from "../../src/node/acp/serverConnection";
 
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
 
 interface Harness {
-  agent: MuxAgent;
+  agent: XumAgent;
   sendMessageCalls: Array<{
     workspaceId: string;
     message: string;
@@ -285,7 +285,7 @@ interface HarnessOptions {
   }) => Promise<{ success: boolean; data?: unknown; error?: unknown }>;
   /** Custom output WritableStream for simulating stdout backpressure. */
   acpOutputStream?: WritableStream<Uint8Array>;
-  agentOptions?: ConstructorParameters<typeof MuxAgent>[2];
+  agentOptions?: ConstructorParameters<typeof XumAgent>[2];
 }
 
 function createHarness(options?: HarnessOptions): Harness {
@@ -405,15 +405,15 @@ function createHarness(options?: HarnessOptions): Harness {
     output: options?.acpOutputStream,
   });
 
-  let agentInstance: MuxAgent | null = null;
+  let agentInstance: XumAgent | null = null;
   const connection = new AgentSideConnection((connectionToAgent) => {
-    const createdAgent = new MuxAgent(connectionToAgent, server, options?.agentOptions);
+    const createdAgent = new XumAgent(connectionToAgent, server, options?.agentOptions);
     agentInstance = createdAgent;
     return createdAgent;
   }, stream);
 
   if (agentInstance == null) {
-    throw new Error("createHarness: failed to construct MuxAgent");
+    throw new Error("createHarness: failed to construct XumAgent");
   }
 
   return {
@@ -441,7 +441,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getLastMuxMetadata(harness: Harness): Record<string, unknown> {
+function getLastXumMetadata(harness: Harness): Record<string, unknown> {
   const lastSend = harness.sendMessageCalls.at(-1);
   if (lastSend == null) {
     throw new Error("Expected prompt send call before reading muxMetadata");
@@ -456,7 +456,7 @@ function getLastMuxMetadata(harness: Harness): Record<string, unknown> {
 }
 
 function getPromptCorrelationId(harness: Harness): string {
-  const promptCorrelationId = getLastMuxMetadata(harness)["acpPromptId"];
+  const promptCorrelationId = getLastXumMetadata(harness)["acpPromptId"];
   if (typeof promptCorrelationId !== "string") {
     throw new Error("Expected prompt send options to include acpPromptId");
   }
@@ -481,7 +481,7 @@ async function startPromptTurn(
   sessionId: string,
   text = "hello"
 ): Promise<{
-  promptPromise: ReturnType<MuxAgent["prompt"]>;
+  promptPromise: ReturnType<XumAgent["prompt"]>;
   promptCorrelationId: string;
 }> {
   const promptPromise = harness.agent.prompt({
@@ -497,8 +497,8 @@ async function createDefaultPromptTurn(
   harness: Harness,
   cwd = "/repo/acp-go-sdk"
 ): Promise<{
-  newSessionResponse: Awaited<ReturnType<MuxAgent["newSession"]>>;
-  promptPromise: ReturnType<MuxAgent["prompt"]>;
+  newSessionResponse: Awaited<ReturnType<XumAgent["newSession"]>>;
+  promptPromise: ReturnType<XumAgent["prompt"]>;
   promptCorrelationId: string;
 }> {
   await initializeDefaultAgent(harness);
@@ -933,7 +933,7 @@ describe("ACP prompt stream correlation", () => {
       newSessionResponse.sessionId
     );
 
-    const muxMetadata = getLastMuxMetadata(harness);
+    const muxMetadata = getLastXumMetadata(harness);
 
     expect(muxMetadata["acpDelegatedTools"]).toEqual([
       "file_read",

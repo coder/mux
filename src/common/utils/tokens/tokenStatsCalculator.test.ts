@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import {
   collectUniqueToolNames,
@@ -194,7 +194,7 @@ describe("countEncryptedWebSearchTokens", () => {
 
 describe("collectUniqueToolNames", () => {
   test("collects tool names from assistant messages", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "1",
         role: "assistant",
@@ -224,7 +224,7 @@ describe("collectUniqueToolNames", () => {
   });
 
   test("deduplicates tool names", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "1",
         role: "assistant",
@@ -253,7 +253,7 @@ describe("collectUniqueToolNames", () => {
   });
 
   test("ignores user messages", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "1",
         role: "user",
@@ -273,7 +273,7 @@ describe("collectUniqueToolNames", () => {
 
 describe("extractSyncMetadata", () => {
   test("accumulates system message tokens", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "1",
         role: "assistant",
@@ -293,7 +293,7 @@ describe("extractSyncMetadata", () => {
   });
 
   test("extracts usage history", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "1",
         role: "assistant",
@@ -316,7 +316,7 @@ describe("extractSyncMetadata", () => {
   });
 
   test("ignores user messages", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "1",
         role: "user",
@@ -331,7 +331,7 @@ describe("extractSyncMetadata", () => {
 });
 
 test("resolves mapped metadata model for usage history costs", () => {
-  const messages: MuxMessage[] = [
+  const messages: XumMessage[] = [
     {
       id: "1",
       role: "assistant",

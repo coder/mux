@@ -70,7 +70,7 @@ export const SessionUsageTokenStatsCacheSchema = z.object({
     maxHistorySequence: z
       .number()
       .optional()
-      .meta({ description: "Max MuxMessage.metadata.historySequence seen in the message list" }),
+      .meta({ description: "Max XumMessage.metadata.historySequence seen in the message list" }),
   }),
   consumers: z.array(TokenConsumerSchema).meta({ description: "Sorted descending by token count" }),
   totalTokens: z.number(),

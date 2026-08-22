@@ -5,7 +5,7 @@ import assert from "@/common/utils/assert";
 import { MAX_POST_COMPACTION_LOADED_SKILLS } from "@/common/constants/attachments";
 import type { LoadedSkillSnapshot } from "@/common/types/attachment";
 import type { AgentSkillFrontmatter, AgentSkillScope } from "@/common/types/agentSkill";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { AgentSkillPackageSchema, AgentSkillScopeSchema } from "@/common/orpc/schemas/agentSkill";
 import {
   extractAgentSkillBodyFromSnapshotText,
@@ -103,10 +103,10 @@ export function stringifyAgentSkillFrontmatter(frontmatter: AgentSkillFrontmatte
   return yaml;
 }
 
-function getMessageTextContent(message: MuxMessage): string {
+function getMessageTextContent(message: XumMessage): string {
   return message.parts
     .filter(
-      (part): part is Extract<MuxMessage["parts"][number], { type: "text" }> => part.type === "text"
+      (part): part is Extract<XumMessage["parts"][number], { type: "text" }> => part.type === "text"
     )
     .map((part) => part.text)
     .join("");
@@ -137,7 +137,7 @@ function extractLoadedSkillSnapshotFromToolOutput(output: unknown): LoadedSkillS
 }
 
 function extractLoadedSkillSnapshotFromSyntheticMessage(
-  message: MuxMessage
+  message: XumMessage
 ): LoadedSkillSnapshot | null {
   const snapshotMeta = message.metadata?.agentSkillSnapshot;
   if (!snapshotMeta) {
@@ -167,7 +167,7 @@ function extractLoadedSkillSnapshotFromSyntheticMessage(
   });
 }
 
-function extractLoadedSkillSnapshotsFromMessage(message: MuxMessage): LoadedSkillSnapshot[] {
+function extractLoadedSkillSnapshotsFromMessage(message: XumMessage): LoadedSkillSnapshot[] {
   const snapshots: LoadedSkillSnapshot[] = [];
 
   for (const part of message.parts) {
@@ -213,7 +213,7 @@ export function mergeLoadedSkillSnapshots(snapshots: LoadedSkillSnapshot[]): Loa
 }
 
 export function extractLoadedSkillSnapshotsFromMessages(
-  messages: MuxMessage[]
+  messages: XumMessage[]
 ): LoadedSkillSnapshot[] {
   assert(Array.isArray(messages), "extractLoadedSkillSnapshotsFromMessages requires messages");
 

@@ -7,13 +7,13 @@ import { StreamErrorTypeSchema } from "./errors";
 import {
   FilePartSchema,
   ModelFallbackRecordSchema,
-  MuxMessageSchema,
-  MuxReasoningPartSchema,
-  MuxTextPartSchema,
-  MuxToolPartSchema,
+  XumMessageSchema,
+  XumReasoningPartSchema,
+  XumTextPartSchema,
+  XumToolPartSchema,
 } from "./message";
-import type { MuxMessageMetadata } from "../../types/message";
-import { MuxProviderOptionsSchema } from "./providerOptions";
+import type { XumMessageMetadata } from "../../types/message";
+import { XumProviderOptionsSchema } from "./providerOptions";
 import { RuntimeModeSchema } from "./runtime";
 import { WorkflowRunIdSchema, WorkflowRunRecordSchema } from "./workflow";
 
@@ -199,9 +199,9 @@ export const StreamDeltaEventSchema = z.object({
 });
 
 export const CompletedMessagePartSchema = z.discriminatedUnion("type", [
-  MuxReasoningPartSchema,
-  MuxTextPartSchema,
-  MuxToolPartSchema,
+  XumReasoningPartSchema,
+  XumTextPartSchema,
+  XumToolPartSchema,
 ]);
 
 // Match LanguageModelV2Usage from @ai-sdk/provider exactly
@@ -259,7 +259,7 @@ export const StreamEndEventSchema = z.object({
       duration: z.number().optional(),
       ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
-      muxMetadata: z.custom<MuxMessageMetadata>().optional(),
+      muxMetadata: z.custom<XumMessageMetadata>().optional(),
       historySequence: z.number().optional().meta({
         description: "Present when loading from history",
       }),
@@ -268,7 +268,7 @@ export const StreamEndEventSchema = z.object({
       }),
     })
     .meta({
-      description: "Structured metadata from backend - directly mergeable with MuxMetadata",
+      description: "Structured metadata from backend - directly mergeable with XumMetadata",
     }),
   parts: z.array(CompletedMessagePartSchema).meta({
     description: "Parts array preserves temporal ordering of reasoning, text, and tool calls",
@@ -606,7 +606,7 @@ export const WorkspaceInitEventSchema = z.discriminatedUnion("type", [
 // Chat message wrapper with type discriminator for streaming events
 // XumMessageSchema is used for persisted data (chat.jsonl) which doesn't have a type field.
 // This wrapper adds a type discriminator for real-time streaming events.
-export const ChatMuxMessageSchema = MuxMessageSchema.extend({
+export const ChatXumMessageSchema = XumMessageSchema.extend({
   type: z.literal("message"),
 });
 
@@ -700,7 +700,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   // Init events
   ...WorkspaceInitEventSchema.def.options,
   // Chat messages with type discriminator
-  ChatMuxMessageSchema,
+  ChatXumMessageSchema,
 ]);
 
 // Update Status
@@ -774,7 +774,7 @@ export const SendMessageOptionsSchema = z.object({
   mode: AgentModeSchema.optional().catch(undefined).meta({
     description: "Legacy base mode (plan/exec/compact) for backend fallback",
   }),
-  providerOptions: MuxProviderOptionsSchema.optional(),
+  providerOptions: XumProviderOptionsSchema.optional(),
   acpPromptId: z
     .string()
     .optional()

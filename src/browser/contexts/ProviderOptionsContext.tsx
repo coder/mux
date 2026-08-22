@@ -4,15 +4,15 @@ import {
   PROVIDER_OPTIONS_ANTHROPIC_KEY,
   PROVIDER_OPTIONS_GOOGLE_KEY,
 } from "@/common/constants/storage";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 interface ProviderOptionsContextType {
-  options: MuxProviderOptions;
-  setAnthropicOptions: (options: MuxProviderOptions["anthropic"]) => void;
-  setGoogleOptions: (options: MuxProviderOptions["google"]) => void;
+  options: XumProviderOptions;
+  setAnthropicOptions: (options: XumProviderOptions["anthropic"]) => void;
+  setGoogleOptions: (options: XumProviderOptions["google"]) => void;
   /** Check if a specific model has 1M context enabled */
   has1MContext: (modelId: string) => boolean;
   /** Toggle 1M context for a specific model */
@@ -31,8 +31,8 @@ const ProviderOptionsContext = createContext<ProviderOptionsContextType | undefi
  * a user's old beta preference for custom Sonnet 4 / 4.5 entries.
  */
 function migrateGlobalToPerModel(
-  options: MuxProviderOptions["anthropic"]
-): MuxProviderOptions["anthropic"] {
+  options: XumProviderOptions["anthropic"]
+): XumProviderOptions["anthropic"] {
   if (
     !options?.use1MContext ||
     (options.use1MContextModels && options.use1MContextModels.length > 0)
@@ -57,7 +57,7 @@ function migrateGlobalToPerModel(
 export function ProviderOptionsProvider({ children }: { children: React.ReactNode }) {
   const { config: providersConfig } = useProvidersConfig();
   const [anthropicOptions, setAnthropicOptions] = usePersistedState<
-    MuxProviderOptions["anthropic"]
+    XumProviderOptions["anthropic"]
   >(PROVIDER_OPTIONS_ANTHROPIC_KEY, {}, { listener: true });
 
   // One-time migration from global boolean to per-model set
@@ -70,7 +70,7 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
     }
   }
 
-  const [googleOptions, setGoogleOptions] = usePersistedState<MuxProviderOptions["google"]>(
+  const [googleOptions, setGoogleOptions] = usePersistedState<XumProviderOptions["google"]>(
     PROVIDER_OPTIONS_GOOGLE_KEY,
     {},
     { listener: true }

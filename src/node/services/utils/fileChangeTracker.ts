@@ -1,7 +1,7 @@
 import { stat, readFile, realpath } from "fs/promises";
 import assert from "@/common/utils/assert";
 import { computeDiff } from "@/node/utils/diff";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { createFileChangeNotificationMessageId } from "@/node/services/utils/messageIds";
 
 /**
@@ -52,7 +52,7 @@ interface DetectedChange {
  */
 export function createFileChangeNotificationMessage(
   changedFileAttachments: EditedFileAttachment[]
-): MuxMessage {
+): XumMessage {
   assert(changedFileAttachments.length > 0, "file change notification requires attachments");
 
   const notice = changedFileAttachments
@@ -64,7 +64,7 @@ export function createFileChangeNotificationMessage(
     )
     .join("\n\n");
 
-  return createMuxMessage(
+  return createXumMessage(
     createFileChangeNotificationMessageId(),
     "user",
     `<system-file-update>\n${notice}\n</system-file-update>`,

@@ -10,7 +10,7 @@ import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { createTestHistoryService } from "./testHistoryService";
 
@@ -49,7 +49,7 @@ describe("AgentSession post-compaction context retry", () => {
       ],
     });
 
-    const history: MuxMessage[] = [
+    const history: XumMessage[] = [
       {
         id: "compaction-summary",
         role: "assistant",

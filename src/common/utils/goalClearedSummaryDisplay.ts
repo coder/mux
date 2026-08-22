@@ -1,10 +1,10 @@
-import type { MuxMessageMetadata } from "@/common/types/message";
+import type { XumMessageMetadata } from "@/common/types/message";
 
 const LEGACY_GOAL_CLEARED_SUMMARY_PREFIX = "Goal cleared: ";
 
 export function getGoalClearedSummaryDisplayText(
   content: string,
-  muxMetadata: MuxMessageMetadata | undefined
+  muxMetadata: XumMessageMetadata | undefined
 ): string {
   if (muxMetadata?.type !== "goal-cleared-summary") {
     return content;

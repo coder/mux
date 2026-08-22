@@ -13,7 +13,7 @@ import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
   INSTRUCTION_SCOPE,
   collectInstructionContents,
-  collectMuxOnlyInstructionContents,
+  collectXumOnlyInstructionContents,
   type InstructionSet,
   type InstructionSources,
 } from "@/common/types/instructions";
@@ -477,7 +477,7 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
- * @param projectConfigs - Project configs from ~/.mux/config.json for per-project customInstructions
+ * @param projectConfigs - Project configs from ~/.xum/config.json for per-project customInstructions
  * @param claudeSkillsCompatEnabled - Whether to include ~/.claude/CLAUDE.md before native globals
  * @returns Structured instruction sources (ordered global and context entries)
  */
@@ -612,7 +612,7 @@ export async function buildSystemMessage(
      */
     modes?: readonly string[];
     /**
-     * Project configs from ~/.mux/config.json, used to append per-project
+     * Project configs from ~/.xum/config.json, used to append per-project
      * `customInstructions` (Settings → Instructions) to the prompt.
      */
     projectConfigs?: Map<string, ProjectConfig>;
@@ -666,8 +666,8 @@ export async function buildSystemMessage(
   // so a "Model: …" heading in a shared AGENTS.md (read by non-Xum agents too)
   // stays ordinary markdown. Extraction runs per file: a scoped section at the
   // end of one file must not swallow the next file's unscoped content.
-  const muxContextContents = collectMuxOnlyInstructionContents(instructionSources.context);
-  const muxGlobalContents = collectMuxOnlyInstructionContents(instructionSources.global);
+  const muxContextContents = collectXumOnlyInstructionContents(instructionSources.context);
+  const muxGlobalContents = collectXumOnlyInstructionContents(instructionSources.global);
 
   const agentPromptSections = (options?.agentSystemPromptSections ?? [])
     .map((section) => section.trim())

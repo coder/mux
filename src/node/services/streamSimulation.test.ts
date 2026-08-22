@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
-import { createMuxMessage, type MuxMetadata } from "@/common/types/message";
+import { createXumMessage, type XumMetadata } from "@/common/types/message";
 import type { StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
 import {
@@ -67,7 +67,7 @@ describe("streamSimulation", () => {
 
       const appendResult = await historyService.appendToHistory(
         ctx.workspaceId,
-        createMuxMessage(ctx.assistantMessageId, "assistant", "", {
+        createXumMessage(ctx.assistantMessageId, "assistant", "", {
           historySequence: ctx.historySequence,
         })
       );
@@ -77,7 +77,7 @@ describe("streamSimulation", () => {
 
       const streamEnd = getCapturedEvent<StreamEndEvent>(events, "stream-end");
       const streamEndMetadata = streamEnd.metadata as StreamEndEvent["metadata"] &
-        Pick<MuxMetadata, "mode">;
+        Pick<XumMetadata, "mode">;
       expect(streamEndMetadata.agentId).toBe("exec");
       expect(streamEndMetadata.mode).toBe("exec");
 

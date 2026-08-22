@@ -14,7 +14,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: false,
       pr: {
         number: 28051,
-        url: "https://github.com/coder/mux/pull/28051",
+        url: "https://github.com/coder/xum/pull/28051",
         state: "MERGED",
         title: "feat: add the stack foundation",
       },
@@ -25,7 +25,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: false,
       pr: {
         number: 28052,
-        url: "https://github.com/coder/mux/pull/28052",
+        url: "https://github.com/coder/xum/pull/28052",
         state: "OPEN",
         title: "feat: cache stack metadata for visible workspaces",
       },
@@ -36,7 +36,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: false,
       pr: {
         number: 28053,
-        url: "https://github.com/coder/mux/pull/28053",
+        url: "https://github.com/coder/xum/pull/28053",
         state: "OPEN",
         title: "feat: add a pull request stack dropdown with long titles",
         isDraft: true,
@@ -48,7 +48,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: true,
       pr: {
         number: 28054,
-        url: "https://github.com/coder/mux/pull/28054",
+        url: "https://github.com/coder/xum/pull/28054",
         state: "OPEN",
         title: "fix: keep the stack menu inside narrow viewports",
       },
@@ -64,7 +64,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: false,
       pr: {
         number: 28056,
-        url: "https://github.com/coder/mux/pull/28056",
+        url: "https://github.com/coder/xum/pull/28056",
         state: "QUEUED",
         title: "feat: finish stack awareness",
       },

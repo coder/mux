@@ -20,7 +20,7 @@ import {
 } from "@/common/constants/codexOAuth";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import type { ServiceTier, XAIServiceTier } from "@/common/config/schemas/providersConfig";
 import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
@@ -492,7 +492,7 @@ export function wrapFetchWithAnthropicCacheControl(
  * This ensures the UI immediately reflects that the user has been logged out
  * when the gateway session expires.
  */
-function wrapFetchWithMuxGatewayAutoLogout(
+function wrapFetchWithXumGatewayAutoLogout(
   baseFetch: typeof fetch,
   providerService: ProviderService
 ): typeof fetch {
@@ -1064,7 +1064,7 @@ export class ProviderModelFactory {
    */
   async createModel(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions,
+    muxProviderOptions?: XumProviderOptions,
     opts?: {
       agentInitiated?: boolean;
       workspaceId?: string;
@@ -1110,7 +1110,7 @@ export class ProviderModelFactory {
 
   private async _createModelCore(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions,
+    muxProviderOptions?: XumProviderOptions,
     opts?: {
       agentInitiated?: boolean;
       routeContext?: RouteContext;
@@ -1849,7 +1849,7 @@ export class ProviderModelFactory {
               injectCacheControl: !disableBeta,
             })
           : baseFetch;
-        const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
+        const fetchWithAutoLogout = wrapFetchWithXumGatewayAutoLogout(
           fetchWithCacheControl,
           this.providerService
         );
@@ -2281,7 +2281,7 @@ export class ProviderModelFactory {
   async resolveAndCreateModel(
     modelString: string,
     thinkingLevel: ThinkingLevel,
-    muxProviderOptions?: MuxProviderOptions,
+    muxProviderOptions?: XumProviderOptions,
     opts?: { agentInitiated?: boolean; workspaceId?: string }
   ): Promise<
     Result<

@@ -23,7 +23,7 @@ import {
 } from "@/common/orpc/schemas/goal";
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalBoardV1 } from "@/common/types/goal";
 import {
-  createMuxMessage,
+  createXumMessage,
   isSyntheticSnapshotUserMessage,
   pickStartupRetrySendOptions,
 } from "@/common/types/message";
@@ -591,7 +591,7 @@ export class WorkspaceGoalService {
     // declarative state model as Resume without rewriting prior continuation
     // history. The row is model-visible but not rendered unless synthetic debug
     // messages are enabled, matching other context-only system breadcrumbs.
-    const message = createMuxMessage(
+    const message = createXumMessage(
       `goal-paused-${Date.now()}-${crypto.randomUUID()}`,
       "user",
       "Goal paused by the user. Do not continue the goal until a later goal continuation message.",
@@ -2868,7 +2868,7 @@ export class WorkspaceGoalService {
     // in the AI request payload but hides it from the rendered transcript,
     // which is what we want here.
     const summary = `Goal cleared: "${goal.objective}" — spent $${formatCentsBare(goal.costCents)} over ${goal.turnsUsed} turns (status: ${goal.status})`;
-    const message = createMuxMessage(
+    const message = createXumMessage(
       `goal-cleared-${Date.now()}-${crypto.randomUUID()}`,
       "assistant",
       summary,

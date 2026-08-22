@@ -13,7 +13,7 @@
 @source "../../../src/browser/**/*.{ts,tsx}";
 
 /*
- * Minimal CSS bundle for the mux VS Code webview.
+ * Minimal CSS bundle for the Xum VS Code webview.
  *
  * This intentionally reuses mux's existing design tokens and markdown/code styles so
  * the transcript matches the desktop app as closely as possible.
@@ -402,7 +402,6 @@
 @utility task-divider {
   border-color: var(--surface-task-divider);
 }
-
 
 html,
 body {

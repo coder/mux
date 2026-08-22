@@ -26,7 +26,7 @@ import {
   withMcpPromptRefs,
   type CompactionFollowUpInput,
   type DisplayedMessage,
-  type MuxMessageMetadata,
+  type XumMessageMetadata,
 } from "@/common/types/message";
 
 interface CompactAndRetryState {
@@ -73,7 +73,7 @@ export function buildFollowUpFromSource(
   // provider content and preserve slash metadata so retried rows remain editable
   // as their original invocation.
   let text = source.content;
-  let promptMetadata: MuxMessageMetadata | undefined;
+  let promptMetadata: XumMessageMetadata | undefined;
   // Trim only for command detection/extraction (the parser accepted the
   // original send from a trimmed view); rawCommand keeps source.content
   // verbatim so the retried row displays exactly like the original.

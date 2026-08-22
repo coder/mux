@@ -858,7 +858,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     // Ensure mux-owned SSH config is set up for Coder workspaces.
     initLogger.logStep("Configuring SSH for Coder...");
     try {
-      await this.coderService.ensureMuxCoderSSHConfig();
+      await this.coderService.ensureXumCoderSSHConfig();
     } catch (error) {
       const errorMsg = getErrorMessage(error);
       log.error("Failed to configure SSH for Coder", { error });

@@ -3,7 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { z } from "zod";
 
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { getErrorMessage } from "@/common/utils/errors";
 import { accumulateStepsProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import assert from "@/common/utils/assert";
@@ -33,7 +33,7 @@ interface HarvestChunk {
 interface HarvestEvidenceMessage {
   id: string;
   sequence: number | null;
-  role: MuxMessage["role"];
+  role: XumMessage["role"];
   text: string;
   truncated: boolean;
 }
@@ -46,7 +46,7 @@ export interface MemoryHarvestResult {
   streamError?: string;
 }
 
-function partToText(part: MuxMessage["parts"][number]): string {
+function partToText(part: XumMessage["parts"][number]): string {
   if (part.type === "text") return part.text;
   if (part.type === "dynamic-tool") return `[tool:${part.toolName}]`;
   return `[${part.type}]`;
@@ -64,7 +64,7 @@ function truncateForHarvest(text: string): { text: string; truncated: boolean } 
   };
 }
 
-function formatMessageForHarvest(message: MuxMessage): HarvestEvidenceMessage {
+function formatMessageForHarvest(message: XumMessage): HarvestEvidenceMessage {
   const sequence = message.metadata?.historySequence;
   const joinedText = neutralizeHarvestText(message.parts.map(partToText).join("\n").trim());
   const truncated = truncateForHarvest(joinedText);
@@ -77,7 +77,7 @@ function formatMessageForHarvest(message: MuxMessage): HarvestEvidenceMessage {
   };
 }
 
-function buildHarvestChunks(messages: MuxMessage[]): HarvestChunk[] {
+function buildHarvestChunks(messages: XumMessage[]): HarvestChunk[] {
   const chunks: HarvestChunk[] = [];
   let currentMessages: HarvestEvidenceMessage[] = [];
   let currentIds = new Set<string>();
@@ -120,7 +120,7 @@ function normalizeCandidateKey(candidate: MemoryCandidate): string {
 
 function renderInbox(args: {
   metadata: CompactionCompletionMetadata;
-  summary: MuxMessage;
+  summary: XumMessage;
   candidates: MemoryCandidate[];
 }): string {
   const lines = [
@@ -195,8 +195,8 @@ export async function runMemoryHarvest(args: {
   memoryService: MemoryService;
   ctx: MemoryScopeContext;
   completionMetadata: CompactionCompletionMetadata;
-  messages: MuxMessage[];
-  summary: MuxMessage;
+  messages: XumMessage[];
+  summary: XumMessage;
   abortSignal?: AbortSignal;
   /**
    * Best-effort cost telemetry: headless harvest bypasses the chat cost

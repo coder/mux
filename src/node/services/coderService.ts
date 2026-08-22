@@ -2,7 +2,7 @@
  * Service for interacting with the Coder CLI.
  * Used to create/manage Coder workspaces as SSH targets for Xum workspaces.
  */
-import { ensureMuxCoderSSHConfigFile } from "@/node/runtime/muxSshConfigWriter";
+import { ensureXumCoderSSHConfigFile } from "@/node/runtime/xumSshConfigWriter";
 import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { toWindowsPath } from "@/node/utils/paths";
@@ -1531,7 +1531,7 @@ export class CoderService {
    * Ensure mux-owned SSH config is set up for Coder workspaces.
    * Run before every Coder workspace connection (idempotent).
    */
-  async ensureMuxCoderSSHConfig(): Promise<void> {
+  async ensureXumCoderSSHConfig(): Promise<void> {
     log.debug("Ensuring mux-owned Coder SSH config");
     const coderBinary = await this.resolveCoderBinaryPath();
     if (coderBinary == null) {
@@ -1539,7 +1539,7 @@ export class CoderService {
       return;
     }
 
-    await ensureMuxCoderSSHConfigFile({
+    await ensureXumCoderSSHConfigFile({
       coderBinaryPath: coderBinary,
     });
   }
