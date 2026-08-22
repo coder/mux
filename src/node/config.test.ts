@@ -356,6 +356,53 @@ describe("Config", () => {
       errorSpy.mockRestore();
     });
 
+    it("logs again when the backup is re-verified at a different path", () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      const nowSpy = spyOn(Date, "now").mockReturnValue(1000);
+
+      config.loadConfigOrDefault();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+
+      // Delete the confirmed sidecar; recreation at a new path must replace the stale
+      // guidance that points at the deleted file.
+      fs.rmSync(`${configFile}.corrupt-1000`);
+      nowSpy.mockReturnValue(2000);
+      config.loadConfigOrDefault();
+
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+      expect(String(errorSpy.mock.calls[1]?.[0])).toContain("corrupt-2000");
+
+      config.loadConfigOrDefault();
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+      nowSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it("creates sidecars with owner-only permissions", () => {
+      if (process.platform === "win32") {
+        return;
+      }
+      const configFile = configFilePath();
+      // Pin a permissive umask: under a 0077 umask this assertion would pass vacuously.
+      const prevUmask = process.umask(0o022);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      try {
+        fs.writeFileSync(configFile, '{ "projects": ');
+        config.loadConfigOrDefault();
+
+        const [backup] = corruptBackups();
+        // Sidecars can hold credentials; peer file proves the narrowing is not ambient.
+        expect(fs.statSync(backup).mode & 0o777).toBe(0o600);
+        expect(fs.statSync(configFile).mode & 0o777).toBe(0o644);
+      } finally {
+        process.umask(prevUmask);
+        errorSpy.mockRestore();
+      }
+    });
+
     it("logs a corrupt config once across Config instances on the same path", () => {
       const corruptData = '{ "projects": ';
       fs.writeFileSync(configFilePath(), corruptData);

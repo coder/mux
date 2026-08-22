@@ -821,7 +821,7 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
 }
 
 interface ConfigLoadFailureState {
-  /** Signature (content + error) of the last logged load failure, for log dedupe. */
+  /** Signature (content + error + backup detail) of the last logged load failure, for log dedupe. */
   failureSignature: string | null;
   /**
    * Content hash of corrupt config bytes whose sidecar backup was verified on disk during
@@ -967,24 +967,18 @@ export class Config {
   private handleConfigLoadFailure(rawBytes: Buffer | undefined, error: unknown): void {
     const state = configLoadFailureState(this.configFile);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const failureSignature = crypto
-      .createHash("sha256")
-      .update(rawBytes ?? "<config unreadable>")
-      .update("\0")
-      .update(errorMessage)
-      .digest("hex");
-    const alreadyLogged = failureSignature === state.failureSignature;
     // Backup confirmation is keyed on content alone: the same corrupt bytes need only one
     // sidecar regardless of which error message they produced.
     const contentSignature =
       rawBytes !== undefined ? crypto.createHash("sha256").update(rawBytes).digest("hex") : null;
-    const wasConfirmed =
-      state.backupSignature !== null && state.backupSignature === contentSignature;
 
     // Re-verify preservation against the disk on every failed load rather than trusting a
     // cached confirmation: a sidecar deleted or truncated since the last load must re-block
     // the edit gate (and be re-created) or a defaults write would destroy the only copy.
     let backupStatus = "No backup was created because the file contents could not be read.";
+    // The actionable part of backupStatus (verified sidecar path, or the failure error);
+    // folded into the log-dedupe signature so any change in remediation logs again.
+    let backupDetail = "<unreadable>";
     let backupConfirmed = false;
     if (rawBytes !== undefined) {
       try {
@@ -1004,18 +998,21 @@ export class Config {
         });
 
         if (duplicate) {
-          backupStatus = `Backup skipped because identical bytes already exist at ${path.join(configDir, duplicate.name)}.`;
+          const duplicatePath = path.join(configDir, duplicate.name);
+          backupStatus = `Backup skipped because identical bytes already exist at ${duplicatePath}.`;
+          backupDetail = duplicatePath;
         } else {
           // Write the bytes that actually failed parsing (not a re-read of the file, which
           // another process may have replaced), leaving the corrupt source in place so
           // throwOnError cleanup guards continue to reject it. "wx" creates exclusively;
           // on a same-millisecond collision retry with a suffix instead of overwriting an
-          // earlier snapshot.
+          // earlier snapshot. Mode 0600 because config.json can hold credentials (e.g.
+          // muxGovernorToken) that the source file's permissions may protect.
           const basePath = `${this.configFile}.corrupt-${Date.now()}`;
           let backupPath = basePath;
           for (let suffix = 1; ; suffix++) {
             try {
-              fs.writeFileSync(backupPath, rawBytes, { flag: "wx" });
+              fs.writeFileSync(backupPath, rawBytes, { flag: "wx", mode: 0o600 });
               break;
             } catch (writeError) {
               if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -1025,26 +1022,35 @@ export class Config {
             }
           }
           backupStatus = `The original bytes were backed up to ${backupPath}.`;
+          backupDetail = backupPath;
         }
         backupConfirmed = true;
       } catch (backupError) {
         const backupErrorMessage =
           backupError instanceof Error ? backupError.message : String(backupError);
         backupStatus = `Backup failed (${backupErrorMessage}); it will be retried on the next load, and settings changes will not overwrite config.json until a backup succeeds.`;
+        backupDetail = `failed: ${backupErrorMessage}`;
       }
     }
     // Until a sidecar is confirmed for these exact bytes, enqueueConfigEdit refuses to
     // overwrite the corrupt source.
     state.backupSignature = backupConfirmed ? contentSignature : null;
 
-    // Log on a new failure and on preservation transitions in either direction: gaining a
-    // backup surfaces the sidecar path, and losing one (sidecar deleted, recreation failed)
-    // surfaces the actionable backup error while edits are blocked. Silent otherwise to
-    // avoid per-load spam.
-    if (alreadyLogged && backupConfirmed === wasConfirmed) {
+    // Dedupe on content + error + actionable backup detail: repeated loads of the same
+    // state stay silent, while any change in remediation (backup gained or lost, sidecar
+    // verified at a different path, a different backup error) replaces stale guidance.
+    const logSignature = crypto
+      .createHash("sha256")
+      .update(rawBytes ?? "<config unreadable>")
+      .update("\0")
+      .update(errorMessage)
+      .update("\0")
+      .update(backupDetail)
+      .digest("hex");
+    if (logSignature === state.failureSignature) {
       return;
     }
-    state.failureSignature = failureSignature;
+    state.failureSignature = logSignature;
 
     const guidance =
       rawBytes === undefined
