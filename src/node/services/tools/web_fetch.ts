@@ -16,7 +16,7 @@ import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 
-const USER_AGENT = "Xum/1.0 (https://github.com/coder/mux; web-fetch tool)";
+const USER_AGENT = "Xum/1.0 (https://github.com/coder/xum; web-fetch tool)";
 const WEB_FETCH_MAX_REDIRECTS = 10;
 const WEB_FETCH_RESOLVE_TIMEOUT_SECS = 5;
 const WEB_FETCH_RUNTIME_TIMEOUT_GRACE_SECS = 1;

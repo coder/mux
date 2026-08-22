@@ -19,7 +19,7 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".+",
-          "endsPattern": "mux VS Code extension: watching for changes\\.\\.\\."
+          "endsPattern": "Xum VS Code extension: watching for changes\\.\\.\\."
         }
       },
       "presentation": {

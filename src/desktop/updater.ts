@@ -21,8 +21,8 @@ function getGitHubRepo(): { owner: string; repo: string } {
 
   if (url) {
     // Matches github.com/owner/repo in URLs like:
-    //   git+https://github.com/coder/mux.git
-    //   https://github.com/coder/mux
+    //   git+https://github.com/coder/xum.git
+    //   https://github.com/coder/xum
     //   git@github.com:coder/mux.git
     //   git+https://github.com/acme/mux.desktop.git
     const match = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);

@@ -1,6 +1,6 @@
 # VS Code Extension Build System
 # ==============================
-# Isolated build system for the mux VS Code/Cursor extension
+# Isolated build system for the Xum VS Code/Cursor extension
 
 .PHONY: all build install clean test test-integration test-orpc help
 
@@ -50,12 +50,12 @@ install: build ## Build and install extension locally
 test: node_modules/.installed ## Run extension unit tests
 	@bun test
 
-## Run extension integration tests (requires running mux server)
-test-integration: node_modules/.installed ## Run extension integration tests (requires mux server)
+## Run extension integration tests (requires running Xum server)
+test-integration: node_modules/.installed ## Run extension integration tests (requires Xum server)
 	@TEST_INTEGRATION=1 bun test
 
-## Run oRPC connection smoke test (requires running mux server)
-test-orpc: ## Connect to mux server and list workspaces via oRPC
+## Run oRPC connection smoke test (requires running Xum server)
+test-orpc: ## Connect to Xum server and list workspaces via oRPC
 	@TEST_INTEGRATION=1 bun test ./src/api/orpcConnection.integration.test.ts
 
 ## Clean build artifacts

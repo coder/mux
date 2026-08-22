@@ -1,4 +1,4 @@
-# Mux design system — how to build with it
+# Xum design system — how to build with it
 
 These components are Mux's real, compiled React components (the desktop app's UI:
 chat tool-call cards, message states, settings sections, banners, modals, small
@@ -30,14 +30,14 @@ There are **no CSS-module class maps**; style layout with Tailwind utility class
 built from Mux's semantic color tokens (NOT raw hex). Real families (all in the
 shipped stylesheet):
 
-| Purpose     | Utilities                                                                                    |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| Surfaces    | `bg-background`, `bg-background-secondary`, `bg-surface-primary`, `bg-surface-secondary`     |
-| Text        | `text-foreground`, `text-muted-foreground`, `text-content-primary`, `text-content-secondary` |
-| Borders     | `border-border`                                                                              |
-| Accent      | `bg-accent`, `text-accent`                                                                   |
+| Purpose     | Utilities                                                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Surfaces    | `bg-background`, `bg-background-secondary`, `bg-surface-primary`, `bg-surface-secondary`                                                                                                                     |
+| Text        | `text-foreground`, `text-muted-foreground`, `text-content-primary`, `text-content-secondary`                                                                                                                 |
+| Borders     | `border-border`                                                                                                                                                                                              |
+| Accent      | `bg-accent`, `text-accent`                                                                                                                                                                                   |
 | Agent modes | `text-plan-mode` / `bg-plan-mode` — same for `edit` / `exec` / `thinking` / `task`. `ask` & `debug` ship only as `--color-<mode>-mode` tokens (no utility): use `style={{ color: "var(--color-ask-mode)" }}` |
-| Radius      | `rounded-md`                                                                                 |
+| Radius      | `rounded-md`                                                                                                                                                                                                 |
 
 For a token Tailwind doesn't expose as a utility, reference it directly:
 `style={{ color: "var(--color-content-primary)" }}`. Token names live in the

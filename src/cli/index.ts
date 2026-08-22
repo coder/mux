@@ -126,7 +126,7 @@ function startCli(): void {
     if (!isCommandAvailable("desktop", env)) {
       console.error("The 'desktop' command requires Electron to be installed.");
       console.error("When installed via npm, use the packaged desktop app instead.");
-      console.error("Download from: https://github.com/coder/mux/releases");
+      console.error("Download from: https://github.com/coder/xum/releases");
       process.exit(1);
     }
     launchDesktop();

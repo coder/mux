@@ -374,7 +374,7 @@ export function AboutDialog() {
           )}
 
           <a
-            href="https://github.com/coder/mux/releases"
+            href="https://github.com/coder/xum/releases"
             target="_blank"
             rel="noopener noreferrer"
             className="titlebar-no-drag text-accent inline-block text-xs hover:underline"

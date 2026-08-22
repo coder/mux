@@ -676,7 +676,7 @@ export class XumAgent implements Agent {
   authenticate(_params: AuthenticateRequest): Promise<AuthenticateResponse> {
     this.assertInitialized("authenticate");
 
-    // Local mux server connections do not currently require ACP-level auth.
+    // Local Xum server connections do not currently require ACP-level auth.
     return Promise.resolve({});
   }
 

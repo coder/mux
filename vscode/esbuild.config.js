@@ -11,13 +11,7 @@ function resolveXumImport(subpath) {
   const base = path.resolve(__dirname, "..", "src", subpath);
 
   // Prefer explicit source extensions.
-  const candidates = [
-    `${base}.ts`,
-    `${base}.tsx`,
-    `${base}.js`,
-    `${base}.jsx`,
-    `${base}.json`,
-  ];
+  const candidates = [`${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.jsx`, `${base}.json`];
 
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -66,7 +60,6 @@ function ensureOutDir() {
 
 let webviewCssBuildPromise = null;
 
-
 function copySetiFont() {
   const src = path.resolve(__dirname, "..", "public", "seti.woff");
   const dest = path.resolve(__dirname, "out", "seti.woff");
@@ -103,8 +96,6 @@ function copyKatexAssets() {
     fs.copyFileSync(src, dest);
   }
 }
-
-
 
 function buildWebviewCss() {
   if (webviewCssBuildPromise) {
@@ -284,7 +275,7 @@ async function main() {
 
     // Keep process alive.
     // eslint-disable-next-line no-console
-    console.log("mux VS Code extension: watching for changes...");
+    console.log("Xum VS Code extension: watching for changes...");
     return;
   }
 

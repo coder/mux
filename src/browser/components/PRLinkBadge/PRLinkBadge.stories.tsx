@@ -31,7 +31,7 @@ function makePRLink(
 ): GitHubPRLinkWithStatus {
   return {
     type: "github-pr",
-    url: `https://github.com/coder/mux/pull/${number}`,
+    url: `https://github.com/coder/xum/pull/${number}`,
     owner: "coder",
     repo: "mux",
     number,
@@ -145,8 +145,8 @@ export const LinksDropdownContext: Story = {
     const links = [
       "https://docs.example.com/links",
       "https://api.example.com/v1/docs",
-      "https://github.com/coder/mux/issues/1500",
-      "https://github.com/coder/mux/actions/runs/12345",
+      "https://github.com/coder/xum/issues/1500",
+      "https://github.com/coder/xum/actions/runs/12345",
     ];
 
     return (

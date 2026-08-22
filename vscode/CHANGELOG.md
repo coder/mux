@@ -7,7 +7,7 @@ All notable changes to the "mux" extension will be documented in this file.
 ### Added
 
 - Initial release
-- Command to open mux workspaces from VS Code and Cursor
+- Command to open Xum workspaces from VS Code and Cursor
 - Support for local workspaces
 - Support for SSH workspaces via Remote-SSH extension
   - Automatically detects VS Code Remote-SSH (`ms-vscode-remote.remote-ssh`)

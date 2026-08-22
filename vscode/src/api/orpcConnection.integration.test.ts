@@ -19,7 +19,7 @@ integrationTestOrSkip(
 
     assert(
       lock,
-      `No running mux server found (missing/stale lockfile at ${lockfile.getLockPath()}). ` +
+      `No running Xum server found (missing/stale lockfile at ${lockfile.getLockPath()}). ` +
         `Start mux and re-run with TEST_INTEGRATION=1.`
     );
 

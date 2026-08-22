@@ -14,7 +14,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: false,
       pr: {
         number: 101,
-        url: "https://github.com/coder/mux/pull/101",
+        url: "https://github.com/coder/xum/pull/101",
         state: "MERGED",
         title: "First layer",
       },
@@ -30,7 +30,7 @@ const STACK: WorkspaceStackInfo = {
       needsRebase: true,
       pr: {
         number: 103,
-        url: "https://github.com/coder/mux/pull/103",
+        url: "https://github.com/coder/xum/pull/103",
         state: "OPEN",
         title: "Top layer",
       },
@@ -64,10 +64,10 @@ describe("PRStackBadge", () => {
       "mike/feat-b",
       "mike/feat-a",
     ]);
-    expect(rows[0].getAttribute("href")).toBe("https://github.com/coder/mux/pull/103");
+    expect(rows[0].getAttribute("href")).toBe("https://github.com/coder/xum/pull/103");
     expect(rows[1].tagName).toBe("DIV");
     expect(rows[1].getAttribute("aria-current")).toBe("true");
-    expect(rows[2].getAttribute("href")).toBe("https://github.com/coder/mux/pull/101");
+    expect(rows[2].getAttribute("href")).toBe("https://github.com/coder/xum/pull/101");
 
     const menuItems = view.getAllByRole("menuitem");
     expect(menuItems[menuItems.length - 1]).toBe(view.getByTestId("stack-trunk-row"));

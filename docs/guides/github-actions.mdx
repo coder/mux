@@ -34,9 +34,9 @@ Here's a minimal example that runs Xum in a GitHub Action:
 
 ## Example: Auto-Cleanup Workflow
 
-This is the exact workflow used live in the Xum repo (see [`.github/workflows/auto-cleanup.yml`](https://github.com/coder/mux/blob/main/.github/workflows/auto-cleanup.yml)). It runs periodically to identify low-risk cleanup opportunities and maintains a refactor PR with improvements.
+This is the exact workflow used live in the Xum repo (see [`.github/workflows/auto-cleanup.yml`](https://github.com/coder/xum/blob/main/.github/workflows/auto-cleanup.yml)). It runs periodically to identify low-risk cleanup opportunities and maintains a refactor PR with improvements.
 
-The prompt is stored in a separate file ([`.github/prompts/auto-cleanup.md`](https://github.com/coder/mux/blob/main/.github/prompts/auto-cleanup.md)) and piped via stdin, keeping the workflow file clean and the prompt easy to iterate on.
+The prompt is stored in a separate file ([`.github/prompts/auto-cleanup.md`](https://github.com/coder/xum/blob/main/.github/prompts/auto-cleanup.md)) and piped via stdin, keeping the workflow file clean and the prompt easy to iterate on.
 
 Xum's repo uses a workflow-specific repository secret (`AUTO_CLEANUP_ANTHROPIC_API_KEY`) for this job so auto-cleanup spend stays isolated from terminal-bench, while the runtime environment still uses the standard `ANTHROPIC_API_KEY` name.
 

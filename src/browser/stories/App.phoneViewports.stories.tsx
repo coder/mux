@@ -103,7 +103,7 @@ index 1111111..2222222 100644
 `;
 const TOUCH_REVIEW_IMMERSIVE_NUMSTAT = "2\t0\tsrc/mobile/review.tsx";
 
-const PR_LINK_URL = "https://github.com/coder/mux/pull/3753";
+const PR_LINK_URL = "https://github.com/coder/xum/pull/3753";
 const PR_DETECTION_JSON = JSON.stringify({
   number: 3753,
   url: PR_LINK_URL,
