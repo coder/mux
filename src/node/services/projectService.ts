@@ -424,6 +424,8 @@ function hasRegisteredSubProjectAncestor(
 
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
+  /** Canonical paths with git initialization in flight; see create() claim below. */
+  private readonly activeGitInits = new Set<string>();
   private directoryPicker?: (initialPath?: string | null) => Promise<string | null>;
   private readonly sshPromptService: SshPromptService | undefined;
   private workspaceService?: WorkspaceRemover;
@@ -452,6 +454,7 @@ export class ProjectService {
     projectPath: string,
     options?: { initGit?: boolean }
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    let gitInitClaimKey: string | null = null;
     try {
       // Validate input
       if (!projectPath || projectPath.trim().length === 0) {
@@ -634,6 +637,15 @@ export class ProjectService {
       }
 
       if (options?.initGit) {
+        // Exclusive per-canonical-path claim: two initGit creates targeting the same
+        // pre-existing empty directory would otherwise interleave git init and failure
+        // rollback, letting one call delete the .git the other just initialized.
+        if (this.activeGitInits.has(canonicalPath)) {
+          return Err("Another project creation is already initializing this directory");
+        }
+        this.activeGitInits.add(canonicalPath);
+        gitInitClaimKey = canonicalPath;
+
         const gitInitResult = await this.initializeGitRepository(normalizedPath);
         if (!gitInitResult.success) {
           await cleanupCreatedDirectory();
@@ -689,6 +701,17 @@ export class ProjectService {
         const hasNewDescendantProject = freshDescendantProjectPaths.some(
           (candidatePath) => !descendantProjectPaths.includes(candidatePath)
         );
+        // Re-check the canonical parent for initGit: the snapshot-time rejection above
+        // can miss a parent registered concurrently, and the lexical freshParent check
+        // below cannot see it when this path reaches the checkout through a symlink.
+        if (
+          options?.initGit &&
+          findDeepestTopLevelParentProject(canonicalPath, freshConfig.projects)
+        ) {
+          transformFailure = "hierarchy-changed";
+          createResult = Err("Project hierarchy changed concurrently; please retry");
+          return freshConfig;
+        }
         if (freshParentProjectPath !== parentProjectPath || hasNewDescendantProject) {
           // A new descendant registered under this path claims the directory tree we
           // created: recursive cleanup would delete that project's checkout, so treat
@@ -717,10 +740,21 @@ export class ProjectService {
       if (transformFailure === "depth" || transformFailure === "hierarchy-changed") {
         await cleanupCreatedDirectory();
       }
+      if (createResult.success && !this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
+        // Config persistence (editConfig → private saveConfig) logs-and-continues on
+        // write failures. Without this check a git-initialized project would report
+        // success, vanish after restart, and block retries on the leftover .git.
+        await cleanupCreatedDirectory();
+        return Err("Failed to save project configuration");
+      }
       return createResult;
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
+    } finally {
+      if (gitInitClaimKey) {
+        this.activeGitInits.delete(gitInitClaimKey);
+      }
     }
   }
 
@@ -1460,6 +1494,8 @@ export class ProjectService {
   private async initializeGitRepository(
     normalizedPath: string
   ): Promise<Result<{ initializedGitDir: boolean }>> {
+    // Set before running `git init`: even a failing init can leave a partial .git
+    // behind (e.g. a broken init template), which must be rolled back too.
     let initializedGitDir = false;
     try {
       const isGitRepo = await isGitRepository(normalizedPath);
@@ -1470,9 +1506,9 @@ export class ProjectService {
           return Err("Directory is already a git repository with commits");
         }
       } else {
+        initializedGitDir = true;
         using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"]);
         await initProc.result;
-        initializedGitDir = true;
       }
 
       // A born branch is required by worktree and SSH runtimes. Keep the fallback
@@ -1494,8 +1530,9 @@ export class ProjectService {
       this.fileCompletionsCache.delete(normalizedPath);
       return Ok({ initializedGitDir });
     } catch (error) {
-      // Roll back a .git we created so the directory returns to its prior state and a
-      // retry is not rejected as non-empty (e.g. when the initial commit fails).
+      // Roll back a .git we created (or that a failed init left partially behind) so
+      // the directory returns to its prior state and a retry is not rejected as
+      // non-empty (e.g. when the initial commit fails).
       if (initializedGitDir) {
         await fsPromises
           .rm(path.join(normalizedPath, ".git"), { recursive: true, force: true })
