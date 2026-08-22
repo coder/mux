@@ -737,6 +737,84 @@ describe("RefineService", () => {
     }
   });
 
+  it("keeps the staged set resumable until the audit summary is appended", async () => {
+    // Codex r28: clearStagedRefineSet ran BEFORE the audit summary append, so
+    // a crash in that window left every mutation + journal row durable while
+    // the resumable staged state was gone — the next apply refused with "no
+    // staged refine edits" and the audit row (the only durable record of the
+    // rollback IDs) could never be reconstructed. The staged file must
+    // survive up to and including the audit append and be consumed only
+    // after; the surviving crash window (append done, clear lost) resumes as
+    // a fully-attempted set: zero re-mutation, at worst a duplicate audit row.
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "clear-order-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "Lesson whose audit row must precede staged cleanup.\n",
+              },
+            },
+          ],
+          "one lesson staged"
+        ),
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    const stagedPath = path.join(fixture.sessionDir, "refine-staged.json");
+    const realAppend = fixture.historyService.appendToHistory.bind(fixture.historyService);
+    // Observed at audit-append time: the staged file's presence and its exact
+    // bytes (the fully-attempted post-crash state used in phase 2 below).
+    let stagedBytesAtAppend: string | null = null;
+    const appendSpy = spyOn(fixture.historyService, "appendToHistory").mockImplementation(
+      async (...appendArgs) => {
+        if (await pathExists(stagedPath)) {
+          stagedBytesAtAppend = await fsPromises.readFile(stagedPath, "utf8");
+        }
+        return realAppend(...appendArgs);
+      }
+    );
+    const realCreate = fixture.memoryService.create.bind(fixture.memoryService);
+    const createSpy = spyOn(fixture.memoryService, "create").mockImplementation(realCreate);
+    try {
+      const result = await fixture.service.apply(WORKSPACE_ID);
+      expect(result.success).toBe(true);
+      // The audit append observed the staged file still on disk
+      // (crash-resumable) and the set was consumed only afterwards.
+      expect(stagedBytesAtAppend).not.toBeNull();
+      expect(await pathExists(stagedPath)).toBe(false);
+
+      // Phase 2 — simulate the surviving crash window (process died after
+      // the audit append, before the clear): restore the fully-attempted
+      // staged file and re-apply.
+      await fsPromises.writeFile(stagedPath, stagedBytesAtAppend ?? "");
+      const resumed = await fixture.service.apply(WORKSPACE_ID);
+      expect(resumed.success).toBe(true);
+      if (!resumed.success) return;
+      // Zero re-mutation and no new journal row; the resume reports the
+      // already-applied edit and re-appends the audit row — a duplicate
+      // summary is the accepted cost of never losing the rollback IDs.
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(await listRefinements(fixture.sessionDir)).toHaveLength(1);
+      expect(resumed.data.applied).toHaveLength(1);
+      const appliedRows = (await fixture.readChat()).filter((row) => {
+        const muxMetadata = row.metadata?.muxMetadata;
+        return muxMetadata?.type === "refine-summary" && muxMetadata.stagedSetHash === undefined;
+      });
+      expect(appliedRows).toHaveLength(2);
+      // Consumed again: nothing left to apply.
+      expect(await pathExists(stagedPath)).toBe(false);
+    } finally {
+      appendSpy.mockRestore();
+      createSpy.mockRestore();
+    }
+  });
+
   it("recovers journaled edits into the attempted set instead of replaying them", async () => {
     // Crash window: tool.execute completed (its refinement journal row is
     // durable) but the process died before the attempted-progress rewrite

@@ -515,11 +515,6 @@ export class RefineService {
         this.options.onStagedEditAttempted?.(edit.toolCallId);
       }
     }
-    // Consume the staged set regardless of per-edit outcomes so a re-run of
-    // apply can never double-apply; failures were reported above and a fresh
-    // /refine can restage.
-    await clearStagedRefineSet(sessionDir);
-
     const applied = await this.collectAppliedEdits(
       sessionDir,
       workspaceId,
@@ -554,6 +549,20 @@ export class RefineService {
     if (!record.noOp) {
       await this.appendSummaryMessage(workspaceId, record, { mode: "applied" });
     }
+    // Consume the staged set only AFTER the audit summary append: clearing
+    // first opened a crash window where every mutation + journal row was
+    // durable but the resumable staged state was gone — the next apply
+    // refused ("no staged refine edits") and the audit row holding the
+    // rollback IDs could never be reconstructed. A crash after the append
+    // but before this clear instead resumes as a fully-attempted set: zero
+    // re-mutation (attempted IDs + journal-first recovery above), at worst a
+    // duplicate audit row — a far better failure than lost rollback
+    // addresses. Re-runs still can never double-apply (per-edit attempted
+    // progress is persisted before this point); failures were reported above
+    // and a fresh /refine can restage. The append itself is best-effort by
+    // design, so this ordering guards the crash window, not logged append
+    // failures.
+    await clearStagedRefineSet(sessionDir);
     return Ok(record);
   }
 
