@@ -955,12 +955,13 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
             visually cohesive, while DialogFooter renders outside the wrapper
             as a direct DialogContent grid child for proper edge alignment. */}
         <div className="space-y-3">
+          {/* flex-wrap keeps the three labeled modes inside narrow dialogs (~375px). */}
           <ToggleGroup
             type="single"
             value={mode}
             onValueChange={handleModeChange}
             disabled={isCreating}
-            className="h-9 bg-transparent"
+            className="h-auto min-h-9 flex-wrap gap-y-1 bg-transparent"
           >
             <ToggleGroupItem value="pick-folder" size="sm" className="h-7 gap-1.5 px-3 text-[13px]">
               <FolderOpen className="h-3.5 w-3.5" />

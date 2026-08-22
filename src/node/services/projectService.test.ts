@@ -209,6 +209,61 @@ describe("ProjectService", () => {
       expect(config.loadConfigOrDefault().projects.size).toBe(0);
     });
 
+    it("rejects initGit inside a registered project tree", async () => {
+      const parentPath = await createLocalGitRepository(tempDir, "parent-repo");
+      const parentResult = await service.create(parentPath);
+      expect(parentResult.success).toBe(true);
+
+      const nestedPath = path.join(parentPath, "nested-new-repo");
+      const result = await service.create(nestedPath, { initGit: true });
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain(
+        "Cannot create a new git repository inside an existing project"
+      );
+      // The rejected nested directory must not linger inside the parent checkout.
+      expect(fs.stat(nestedPath)).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(nestedPath)).toBe(false);
+    });
+
+    it("rolls back git init in a pre-existing directory when the initial commit fails", async () => {
+      if (process.platform === "win32") return;
+
+      const projectPath = path.join(tempDir, "existing-empty-project");
+      await fs.mkdir(projectPath);
+      // Real `git init` so the .git rollback has something to remove; the shim fails
+      // only the commit step to model hook/signing failures after a successful init.
+      const realGit = execSync("command -v git", { encoding: "utf-8" }).trim();
+      const fakeGit = await installFakeGit(
+        tempDir,
+        "create-commit-failure",
+        `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "commit" ]; then
+    printf 'commit failed' >&2
+    exit 1
+  fi
+done
+exec ${realGit} "$@"
+`
+      );
+
+      const result = await withEnv(fakeGit.env, () =>
+        service.create(projectPath, { initGit: true })
+      );
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain("commit failed");
+      // The user's directory survives, but the partial .git must be rolled back so a
+      // retry is not rejected as non-empty.
+      expect((await fs.stat(projectPath)).isDirectory()).toBe(true);
+      expect(fs.stat(path.join(projectPath, ".git"))).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+
+      const retry = await service.create(projectPath, { initGit: true });
+      expect(retry.success).toBe(true);
+    });
+
     it("removes a newly created directory when git initialization fails", async () => {
       if (process.platform === "win32") return;
 
@@ -227,6 +282,24 @@ describe("ProjectService", () => {
       expect(!result.success && result.error).toContain("git failed");
       expect(fs.stat(projectPath)).rejects.toThrow();
       expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+    });
+
+    it("concurrent initGit creates of the same new path leave one intact repository", async () => {
+      const projectPath = path.join(tempDir, "concurrent-git-project");
+
+      const [first, second] = await Promise.all([
+        service.create(projectPath, { initGit: true }),
+        service.create(projectPath, { initGit: true }),
+      ]);
+
+      const outcomes = [first, second];
+      expect(outcomes.filter((r) => r.success)).toHaveLength(1);
+      // The loser must never run git operations in the winner's directory, so the
+      // winner's repository stays intact and registered.
+      expect(
+        execSync("git rev-list --count HEAD", { cwd: projectPath, encoding: "utf-8" }).trim()
+      ).toBe("1");
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
     });
 
     // Regression (PR #3694 Codex P1): two concurrent create() calls for the same
