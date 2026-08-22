@@ -180,8 +180,8 @@ jobs:
           # Upload only the AppImage (not latest-linux.yml) to avoid
           # overwriting the auto-update manifest produced by the x64 job.
           gh release upload "$RELEASE_TAG" \
-            release/xum-*-arm64.AppImage \
-            release/mux-*-arm64.AppImage \
+            release/xum-*-arm64-linux.AppImage \
+            release/mux-*-arm64-linux.AppImage \
             --clobber
 
   build-windows:

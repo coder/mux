@@ -27,11 +27,15 @@ const AppInfo = ElectronBuilderAppInfo as unknown as new (
 const LEGACY_MUX_BIN_PATH = fileURLToPath(
   new URL("../../../packages/mux-compat/bin/mux.js", import.meta.url)
 );
-const LOWERCASE_ARTIFACT_TEMPLATE = "xum-${version}-${arch}.${ext}";
+// `${os}` keeps an OS token ("mac"/"win"/"linux") in every published filename.
+// electron-builder includes it by default; dropping it makes release assets
+// invisible to installers that match assets by OS (mise/ubi, Homebrew, asdf).
+const LOWERCASE_ARTIFACT_TEMPLATE = "xum-${version}-${arch}-${os}.${ext}";
 
-function expandArtifactName(arch: string, ext: string): string {
+function expandArtifactName(arch: string, ext: string, os: string): string {
   return LOWERCASE_ARTIFACT_TEMPLATE.replaceAll("${version}", packageJson.version)
     .replaceAll("${arch}", arch)
+    .replaceAll("${os}", os)
     .replaceAll("${ext}", ext);
 }
 
@@ -94,8 +98,8 @@ describe("xum package transition contract", () => {
     expect(packageJson.build.linux.artifactName).toBe(LOWERCASE_ARTIFACT_TEMPLATE);
     expect(packageJson.build.win.artifactName).toBe(LOWERCASE_ARTIFACT_TEMPLATE);
 
-    const expanded = expandArtifactName("arm64", "dmg");
-    expect(expanded).toBe(`xum-${packageJson.version}-arm64.dmg`);
+    const expanded = expandArtifactName("arm64", "dmg", "mac");
+    expect(expanded).toBe(`xum-${packageJson.version}-arm64-mac.dmg`);
     expect(expanded.startsWith(`${packageJson.name}-`)).toBe(false);
     expect(expanded.startsWith(`${packageJson.build.productName}-`)).toBe(false);
   });
