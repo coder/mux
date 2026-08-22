@@ -6077,32 +6077,42 @@ export class TaskService {
     notifications: readonly TerminalAttentionNotification[]
   ): Promise<{
     deliverableNotificationIds: Set<string>;
-    latestMessageTimestampByTaskId: Map<string, number>;
+    terminalMessageNotificationIds: Set<string>;
+    latestLegacyMessageTimestampByTaskId: Map<string, number>;
   }> {
     const deliverableNotificationIds = new Set<string>();
-    const latestMessageTimestampByTaskId = new Map<string, number>();
+    const terminalMessageNotificationIds = new Set<string>();
+    const latestLegacyMessageTimestampByTaskId = new Map<string, number>();
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(ownerWorkspaceId);
     if (!historyResult.success) {
-      return { deliverableNotificationIds, latestMessageTimestampByTaskId };
+      return {
+        deliverableNotificationIds,
+        terminalMessageNotificationIds,
+        latestLegacyMessageTimestampByTaskId,
+      };
     }
-    const existingReportMessages = new Map<string, MuxMessage>();
-    const existingTaskIds = new Set<string>();
+    const existingTerminalMessagesByNotificationId = new Map<string, MuxMessage>();
     for (const message of historyResult.data) {
       if (message.role !== "user" || message.metadata?.synthetic !== true) continue;
-      const taskId = parseTerminalSubagentTaskId(
-        message.parts
-          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-          .map((part) => part.text)
-          .join("\n")
-      );
+      const content = message.parts
+        .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      const taskId = parseTerminalSubagentTaskId(content);
       if (taskId == null) continue;
-      existingTaskIds.add(taskId);
-      existingReportMessages.set(taskId, message);
+      const executionVersion = parseTerminalSubagentExecutionVersion(content) ?? undefined;
+      const notificationId = TerminalAttentionStore.notificationId(
+        "agent_task",
+        taskId,
+        executionVersion
+      );
+      terminalMessageNotificationIds.add(notificationId);
+      existingTerminalMessagesByNotificationId.set(notificationId, message);
       const timestamp = message.metadata?.timestamp;
-      if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
-        latestMessageTimestampByTaskId.set(
+      if (executionVersion == null && typeof timestamp === "number" && Number.isFinite(timestamp)) {
+        latestLegacyMessageTimestampByTaskId.set(
           taskId,
-          Math.max(latestMessageTimestampByTaskId.get(taskId) ?? 0, timestamp)
+          Math.max(latestLegacyMessageTimestampByTaskId.get(taskId) ?? 0, timestamp)
         );
       }
     }
@@ -6111,8 +6121,8 @@ export class TaskService {
       await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(ownerWorkspaceId);
     const sessionDir = this.config.getSessionDir(ownerWorkspaceId);
     for (const notification of notifications) {
-      if (existingTaskIds.has(notification.sourceId)) {
-        const existingMessage = existingReportMessages.get(notification.sourceId);
+      if (terminalMessageNotificationIds.has(notification.id)) {
+        const existingMessage = existingTerminalMessagesByNotificationId.get(notification.id);
         if (existingMessage != null && workspaceTurnMuxMetadata != null) {
           const existingCorrelation = this.getWorkspaceTurnMetadataFromValue(
             existingMessage.metadata?.muxMetadata
@@ -6140,7 +6150,7 @@ export class TaskService {
               updatedMessage
             );
             if (updateResult.success) {
-              existingReportMessages.set(notification.sourceId, updatedMessage);
+              existingTerminalMessagesByNotificationId.set(notification.id, updatedMessage);
               this.workspaceService.emitChatEvent(ownerWorkspaceId, {
                 ...updatedMessage,
                 type: "message",
@@ -6162,11 +6172,28 @@ export class TaskService {
         continue;
       }
 
-      const report = await readSubagentReportArtifact(sessionDir, notification.sourceId);
-      const failure =
-        report == null
+      const storedReport =
+        notification.terminalOutcome === "completed"
+          ? await readSubagentReportArtifact(sessionDir, notification.sourceId)
+          : null;
+      const report =
+        storedReport != null &&
+        (storedReport.executionVersion == null ||
+          storedReport.executionVersion === notification.generationId)
+          ? storedReport
+          : null;
+      const storedFailure =
+        notification.terminalOutcome !== "completed"
           ? await readSubagentFailureArtifact(sessionDir, notification.sourceId)
           : null;
+      const failure =
+        storedFailure != null &&
+        (storedFailure.executionVersion == null ||
+          storedFailure.executionVersion === notification.generationId)
+          ? storedFailure
+          : null;
+      const executionVersion =
+        report?.executionVersion ?? failure?.executionVersion ?? notification.generationId;
       const content = report
         ? formatSubagentReportUserMessage({
             childWorkspaceId: notification.sourceId,
@@ -6174,6 +6201,7 @@ export class TaskService {
             title: report.title ?? "Subagent report",
             reportMarkdown: report.reportMarkdown,
             status: "completed",
+            ...(executionVersion != null ? { executionVersion } : {}),
             ...(report.model != null ? { model: report.model } : {}),
             ...(report.thinkingLevel != null ? { thinkingLevel: report.thinkingLevel } : {}),
             ...(report.structuredOutput !== undefined
@@ -6184,6 +6212,7 @@ export class TaskService {
           ? formatSubagentFailureUserMessage({
               childWorkspaceId: notification.sourceId,
               agentType: "agent",
+              ...(executionVersion != null ? { executionVersion } : {}),
               errorType: failure.errorType,
               errorMessage: failure.errorMessage,
             })
@@ -6219,11 +6248,15 @@ export class TaskService {
         continue;
       }
       this.workspaceService.emitChatEvent(ownerWorkspaceId, { ...message, type: "message" });
-      existingTaskIds.add(notification.sourceId);
-      latestMessageTimestampByTaskId.set(notification.sourceId, timestamp);
+      terminalMessageNotificationIds.add(notification.id);
+      existingTerminalMessagesByNotificationId.set(notification.id, message);
       deliverableNotificationIds.add(notification.id);
     }
-    return { deliverableNotificationIds, latestMessageTimestampByTaskId };
+    return {
+      deliverableNotificationIds,
+      terminalMessageNotificationIds,
+      latestLegacyMessageTimestampByTaskId,
+    };
   }
 
   private async consumeRespondedAgentTerminalAttention(ownerWorkspaceId: string): Promise<void> {
@@ -6232,9 +6265,9 @@ export class TaskService {
     );
     if (pending.length === 0) return;
 
-    const pendingIds = new Set(pending.map((notification) => notification.sourceId));
-    const terminalSequenceByTaskId = new Map<string, number>();
-    const responded = new Set<string>();
+    const pendingNotificationIds = new Set(pending.map((notification) => notification.id));
+    const terminalSequenceByNotificationId = new Map<string, number>();
+    const respondedNotificationIds = new Set<string>();
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(ownerWorkspaceId);
     if (!historyResult.success) {
       log.warn("Failed to inspect terminal sub-agent responses", {
@@ -6252,9 +6285,17 @@ export class TaskService {
           .join("\n");
         const taskId = parseTerminalSubagentTaskId(text);
         const historySequence = message.metadata?.historySequence;
-        if (taskId != null && pendingIds.has(taskId) && typeof historySequence === "number") {
-          terminalSequenceByTaskId.set(taskId, historySequence);
-          responded.delete(taskId);
+        if (taskId != null && typeof historySequence === "number") {
+          const executionVersion = parseTerminalSubagentExecutionVersion(text) ?? undefined;
+          const notificationId = TerminalAttentionStore.notificationId(
+            "agent_task",
+            taskId,
+            executionVersion
+          );
+          if (pendingNotificationIds.has(notificationId)) {
+            terminalSequenceByNotificationId.set(notificationId, historySequence);
+            respondedNotificationIds.delete(notificationId);
+          }
         }
         continue;
       }
@@ -6262,14 +6303,16 @@ export class TaskService {
       if (message.role === "assistant" && message.metadata?.partial !== true) {
         const requestHistorySequence = message.metadata?.requestHistorySequence;
         if (typeof requestHistorySequence !== "number") continue;
-        for (const [taskId, terminalSequence] of terminalSequenceByTaskId) {
-          if (requestHistorySequence >= terminalSequence) responded.add(taskId);
+        for (const [notificationId, terminalSequence] of terminalSequenceByNotificationId) {
+          if (requestHistorySequence >= terminalSequence) {
+            respondedNotificationIds.add(notificationId);
+          }
         }
       }
     }
 
     for (const notification of pending) {
-      if (responded.has(notification.sourceId)) {
+      if (respondedNotificationIds.has(notification.id)) {
         await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
       }
     }
@@ -6346,7 +6389,8 @@ export class TaskService {
     );
     const {
       deliverableNotificationIds: deliverableAgentNotificationIds,
-      latestMessageTimestampByTaskId,
+      terminalMessageNotificationIds,
+      latestLegacyMessageTimestampByTaskId,
     } = await this.ensureAgentTerminalMessages(ownerWorkspaceId, agentNotifications);
     const workspaceTurnNotifications = pending.filter(
       (notification) => notification.sourceKind === "workspace_turn"
@@ -6366,12 +6410,22 @@ export class TaskService {
           record.workspaceId
         );
       if (isPersistentChildContinuation) {
-        const latestTerminalMessageAt = latestMessageTimestampByTaskId.get(record.workspaceId);
+        const deliveryVersion = this.workspaceTurnTerminalAttentionGenerationId(record);
+        const hasVersionedTerminalMessage = [record.handleId, deliveryVersion].some(
+          (generationId) =>
+            terminalMessageNotificationIds.has(
+              TerminalAttentionStore.notificationId("agent_task", record.workspaceId, generationId)
+            )
+        );
+        const latestLegacyTerminalMessageAt = latestLegacyMessageTimestampByTaskId.get(
+          record.workspaceId
+        );
         const continuationCreatedAt = Date.parse(record.createdAt);
         if (
-          latestTerminalMessageAt != null &&
-          Number.isFinite(continuationCreatedAt) &&
-          latestTerminalMessageAt >= continuationCreatedAt
+          hasVersionedTerminalMessage ||
+          (latestLegacyTerminalMessageAt != null &&
+            Number.isFinite(continuationCreatedAt) &&
+            latestLegacyTerminalMessageAt >= continuationCreatedAt)
         ) {
           // A persistent child continuation reports through the stable child transcript row. Once
           // that report/failure is in parent history, a second task_await wake for the private
@@ -6505,6 +6559,7 @@ export class TaskService {
             skipAutoResumeReset: true,
             synthetic: true,
             agentInitiated: true,
+            workspaceTurnContinuation: workspaceTurnMuxMetadata != null,
             onCanceled: () => {
               this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
               this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
@@ -10641,7 +10696,7 @@ export class TaskService {
   private async interruptWorkspaceTurnFromUncorrelatedStreamEnd(
     event: StreamEndEvent
   ): Promise<boolean> {
-    let checkedStreamEndOrdering = false;
+    let checkedStreamEndOrderingHandleId: string | undefined;
     let matchedActiveTurn = false;
     while (true) {
       const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
@@ -10674,8 +10729,8 @@ export class TaskService {
         return true;
       }
 
-      if (!checkedStreamEndOrdering) {
-        checkedStreamEndOrdering = true;
+      if (checkedStreamEndOrderingHandleId !== record.handleId) {
+        checkedStreamEndOrderingHandleId = record.handleId;
         if (await this.isStreamEndBeforeWorkspaceTurnPrompt(record, event)) {
           log.debug("Ignoring stale uncorrelated stream-end before queued workspace turn prompt", {
             workspaceId: event.workspaceId,
@@ -11680,6 +11735,7 @@ export class TaskService {
       "failAgentTaskTerminally: errorMessage must be non-empty"
     );
 
+    const executionVersion = coerceNonEmptyString(entry.workspace.taskExecutionId);
     let transitionedToInterrupted = false;
     let parentWorkspaceId = entry.workspace.parentWorkspaceId;
     await this.editWorkspaceEntry(
@@ -11725,6 +11781,7 @@ export class TaskService {
             workflowOwnedAncestorWorkspaceIds,
             errorType: failure.errorType,
             errorMessage: failure.errorMessage,
+            ...(executionVersion != null ? { executionVersion } : {}),
             model: entry.workspace.taskModelString,
             nowMs: persistedAtMs,
           });
@@ -11781,6 +11838,7 @@ export class TaskService {
     if (!parentWorkspaceId) {
       return;
     }
+    const executionVersion = coerceNonEmptyString(childEntry.workspace.taskExecutionId);
     // An active waiter (foreground task tool call or task_await) already
     // surfaced the rejection to the parent's in-flight turn.
     if (hadForegroundWaiters) {
@@ -11808,6 +11866,7 @@ export class TaskService {
       formatSubagentFailureUserMessage({
         childWorkspaceId,
         agentType: coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent",
+        ...(executionVersion != null ? { executionVersion } : {}),
         errorType: failure.errorType,
         errorMessage: failure.errorMessage,
       }),
@@ -11845,10 +11904,9 @@ export class TaskService {
     // The failure message is already injected above. Enqueue even when other children are active:
     // the drain defers on blocking work, and the later settling child may have a foreground waiter
     // that suppresses its own terminal wake-up.
-    const generationId = await this.getAgentTerminalAttentionGenerationId(
-      parentWorkspaceId,
-      childWorkspaceId
-    );
+    const generationId =
+      executionVersion ??
+      (await this.getAgentTerminalAttentionGenerationId(parentWorkspaceId, childWorkspaceId));
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
@@ -12712,6 +12770,7 @@ export class TaskService {
       return { finalized: true };
     }
 
+    const executionVersion = coerceNonEmptyString(latestChildEntry?.workspace.taskExecutionId);
     const reportTitle = coerceNonEmptyString(reportArgs.title);
     this.timelineRecorder.record(parentWorkspaceId, {
       kind: "task.reported",
@@ -12756,6 +12815,7 @@ export class TaskService {
           ancestorWorkspaceIds,
           workflowOwnedAncestorWorkspaceIds,
           reportMarkdown: reportArgs.reportMarkdown,
+          ...(executionVersion != null ? { executionVersion } : {}),
           model: latestChildEntry?.workspace.taskModelString,
           thinkingLevel: latestChildEntry?.workspace.taskThinkingLevel,
           title: reportArgs.title,
@@ -12790,12 +12850,10 @@ export class TaskService {
 
     await this.maybeStartPatchGenerationForReportedTask(childWorkspaceId);
 
-    await this.deliverReportToParent(
-      parentWorkspaceId,
-      childWorkspaceId,
-      latestChildEntry,
-      reportArgs
-    );
+    await this.deliverReportToParent(parentWorkspaceId, childWorkspaceId, latestChildEntry, {
+      ...reportArgs,
+      ...(executionVersion != null ? { executionVersion } : {}),
+    });
 
     // Resolve foreground waiters.
     const hadForegroundWaiters = this.resolveWaiters(childWorkspaceId, {
@@ -12850,10 +12908,9 @@ export class TaskService {
     // The report is already delivered to a foreground waiter, queued as a workspace-turn
     // continuation, or appended to parent history. Enqueue the notification even when other
     // children are active. The drain defers on blocking work.
-    const generationId = await this.getAgentTerminalAttentionGenerationId(
-      parentWorkspaceId,
-      childWorkspaceId
-    );
+    const generationId =
+      executionVersion ??
+      (await this.getAgentTerminalAttentionGenerationId(parentWorkspaceId, childWorkspaceId));
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
@@ -13350,12 +13407,12 @@ export class TaskService {
 
   private async reserveAgentTerminalAttention(
     parentWorkspaceId: string,
-    childWorkspaceId: string
+    childWorkspaceId: string,
+    executionVersion?: string
   ): Promise<{ id: string; created: boolean; claimed: boolean }> {
-    const generationId = await this.getAgentTerminalAttentionGenerationId(
-      parentWorkspaceId,
-      childWorkspaceId
-    );
+    const generationId =
+      executionVersion ??
+      (await this.getAgentTerminalAttentionGenerationId(parentWorkspaceId, childWorkspaceId));
     const id = TerminalAttentionStore.notificationId("agent_task", childWorkspaceId, generationId);
     return this.terminalAttentionLocks.withLock(parentWorkspaceId, async () => {
       if (!this.claimTerminalAttention(parentWorkspaceId, id)) {
@@ -13417,6 +13474,7 @@ export class TaskService {
       title?: string;
       structuredOutput?: unknown;
       planFilePath?: string;
+      executionVersion?: string;
     }
   ): Promise<void> {
     assert(
@@ -13461,6 +13519,7 @@ export class TaskService {
       title?: string;
       structuredOutput?: unknown;
       planFilePath?: string;
+      executionVersion?: string;
     }
   ): Promise<readonly string[]> {
     const agentType = coerceNonEmptyString(childEntry?.workspace.agentType) ?? "agent";
@@ -13556,6 +13615,7 @@ export class TaskService {
       title: titlePrefix,
       reportMarkdown: report.reportMarkdown,
       status: "completed",
+      ...(report.executionVersion != null ? { executionVersion: report.executionVersion } : {}),
       ...(childModelString != null ? { model: childModelString } : {}),
       ...(childThinkingLevel != null ? { thinkingLevel: childThinkingLevel } : {}),
       ...(report.structuredOutput !== undefined
@@ -13577,7 +13637,8 @@ export class TaskService {
         );
         const terminalAttention = await this.reserveAgentTerminalAttention(
           parentWorkspaceId,
-          childWorkspaceId
+          childWorkspaceId,
+          report.executionVersion
         );
         if (!terminalAttention.claimed) {
           // Another path owns this durable report, or this generation already completed delivery.

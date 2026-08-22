@@ -66,6 +66,29 @@ describe("subagentReportArtifacts", () => {
     expect(artifact?.planFilePath).toBe(planFilePath);
   });
 
+  test("upsertSubagentReportArtifact preserves the execution version", async () => {
+    const workspaceId = "parent-1";
+    const childTaskId = "child-versioned";
+    const executionVersion = "wst_versioned_report";
+
+    await upsertSubagentReportArtifact({
+      workspaceId,
+      workspaceSessionDir: testDir,
+      childTaskId,
+      parentWorkspaceId: workspaceId,
+      ancestorWorkspaceIds: [workspaceId],
+      reportMarkdown: "versioned report",
+      executionVersion,
+      nowMs: Date.now(),
+    });
+
+    const artifacts = await readSubagentReportArtifactsFile(testDir);
+    expect(artifacts.artifactsByChildTaskId[childTaskId]?.executionVersion).toBe(executionVersion);
+    expect((await readSubagentReportArtifact(testDir, childTaskId))?.executionVersion).toBe(
+      executionVersion
+    );
+  });
+
   test("upsertSubagentReportArtifact preserves structured output", async () => {
     const workspaceId = "parent-1";
     const childTaskId = "child-structured";

@@ -30,6 +30,8 @@ export interface SubagentFailureArtifact {
   parentWorkspaceId: string;
   createdAtMs: number;
   updatedAtMs: number;
+  /** Execution generation that produced this artifact (optional for legacy entries). */
+  executionVersion?: string;
   /** StreamErrorType that terminally failed the task (e.g. "model_refusal"). */
   errorType: string;
   /** Human-readable failure message; waiters reject with exactly this text. */
@@ -112,7 +114,11 @@ export async function readSubagentFailureArtifact(
     return null;
   }
 
-  return entry;
+  const executionVersion =
+    typeof entry.executionVersion === "string" && entry.executionVersion.trim().length > 0
+      ? entry.executionVersion.trim()
+      : undefined;
+  return { ...entry, executionVersion };
 }
 
 export async function upsertSubagentFailureArtifact(params: {
@@ -124,12 +130,18 @@ export async function upsertSubagentFailureArtifact(params: {
   ancestorWorkspaceIds: string[];
   errorType: string;
   errorMessage: string;
+  executionVersion?: string;
   workflowOwnedAncestorWorkspaceIds?: string[];
   model?: string;
   nowMs?: number;
 }): Promise<void> {
   await workspaceFileLocks.withLock(params.workspaceId, async () => {
     const nowMs = params.nowMs ?? Date.now();
+
+    const executionVersion =
+      typeof params.executionVersion === "string" && params.executionVersion.trim().length > 0
+        ? params.executionVersion.trim()
+        : undefined;
 
     const file = await readSubagentFailureArtifactsFile(params.workspaceSessionDir);
     const existing = file.failuresByChildTaskId[params.childTaskId] ?? null;
@@ -139,6 +151,7 @@ export async function upsertSubagentFailureArtifact(params: {
       parentWorkspaceId: params.parentWorkspaceId,
       createdAtMs: existing?.createdAtMs ?? nowMs,
       updatedAtMs: nowMs,
+      executionVersion,
       errorType: params.errorType,
       errorMessage: params.errorMessage,
       ancestorWorkspaceIds: params.ancestorWorkspaceIds,

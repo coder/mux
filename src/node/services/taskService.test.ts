@@ -56,7 +56,10 @@ import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
-import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import {
+  formatSubagentReportEnvelope,
+  parseSubagentReportEnvelope,
+} from "@/common/utils/subagentReportEnvelope";
 import { defaultModel } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import type { AgentAiDefaults, AgentAiSubagentProfile } from "@/common/types/agentAiDefaults";
@@ -64,7 +67,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   buildWorkflowRunCardMessage,
@@ -77,6 +80,8 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { InitStateManager as RealInitStateManager } from "@/node/services/initStateManager";
 import assert from "node:assert";
+
+type TestWorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -2711,6 +2716,126 @@ describe("TaskService", () => {
     expect(snapshot).toMatchObject({ status: "running", workspaceId: created.workspaceId });
   });
 
+  test("stale stream-end ordering is rechecked when a failed reservation exposes a later turn", async () => {
+    const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
+    const oldAssistant = createMuxMessage(
+      "old-assistant-before-next-turn",
+      "assistant",
+      "Old turn",
+      {
+        model: "anthropic:claude-opus-4-6",
+        finishReason: "stop",
+      }
+    );
+    expect((await historyService.appendToHistory(created.workspaceId, oldAssistant)).success).toBe(
+      true
+    );
+
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+      getReservedWorkspaceTurnContinuation: (
+        workspaceId: string,
+        correlation: TestWorkspaceTurnMuxMetadata
+      ) => { released: Promise<boolean> } | undefined;
+      interruptWorkspaceTurnFromUncorrelatedStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
+      reserveActiveWorkspaceTurnContinuation: (workspaceId: string) => Promise<
+        | {
+            muxMetadata: TestWorkspaceTurnMuxMetadata;
+            released: Promise<boolean>;
+            [Symbol.dispose]: () => void;
+          }
+        | undefined
+      >;
+      settleWorkspaceTurnContinuationFailure: (
+        workspaceId: string,
+        muxMetadata: TestWorkspaceTurnMuxMetadata,
+        status: "interrupted" | "error",
+        error: string
+      ) => Promise<void>;
+      taskHandleStore: TaskHandleStore;
+    };
+    const reservation = await internal.reserveActiveWorkspaceTurnContinuation(created.workspaceId);
+    assert(reservation, "workspace-turn continuation reservation must exist");
+
+    let markReservationObserved!: () => void;
+    const reservationObserved = new Promise<void>((resolve) => {
+      markReservationObserved = resolve;
+    });
+    const getReserved = internal.getReservedWorkspaceTurnContinuation.bind(taskService);
+    const getReservedSpy = spyOn(
+      internal,
+      "getReservedWorkspaceTurnContinuation"
+    ).mockImplementation((workspaceId, correlation) => {
+      const current = getReserved(workspaceId, correlation);
+      if (current === reservation) {
+        markReservationObserved();
+      }
+      return current;
+    });
+
+    try {
+      const handled = internal.interruptWorkspaceTurnFromUncorrelatedStreamEnd({
+        type: "stream-end",
+        workspaceId: created.workspaceId,
+        messageId: oldAssistant.id,
+        metadata: {
+          model: "anthropic:claude-opus-4-6",
+          finishReason: "stop",
+        },
+        parts: [],
+      });
+      await reservationObserved;
+
+      await internal.settleWorkspaceTurnContinuationFailure(
+        created.workspaceId,
+        reservation.muxMetadata,
+        "error",
+        "The reserved continuation failed."
+      );
+      const nextHandleId = "wst_next_turn_after_failed_reservation";
+      const nextTurnId = "next-turn-after-failed-reservation";
+      await internal.taskHandleStore.upsertWorkspaceTurn({
+        kind: "workspace_turn",
+        handleId: nextHandleId,
+        ownerWorkspaceId: parentId,
+        workspaceId: created.workspaceId,
+        turnId: nextTurnId,
+        status: "running",
+        createdAt: "2026-08-21T00:00:01.000Z",
+        updatedAt: "2026-08-21T00:00:01.000Z",
+        createdWorkspace: false,
+        disposableWorkspace: false,
+      });
+      const nextPrompt = createMuxMessage("next-turn-prompt", "user", "Run the next turn", {
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: nextHandleId,
+          ownerWorkspaceId: parentId,
+          turnId: nextTurnId,
+        },
+      });
+      expect((await historyService.appendToHistory(created.workspaceId, nextPrompt)).success).toBe(
+        true
+      );
+      internal.activeWorkspaceTurnHandleByWorkspaceId.set(created.workspaceId, {
+        handleId: nextHandleId,
+        ownerWorkspaceId: parentId,
+      });
+      reservation[Symbol.dispose]();
+
+      expect(await handled).toBe(true);
+      expect(await taskService.getWorkspaceTurnSnapshot(parentId, nextHandleId)).toMatchObject({
+        status: "running",
+      });
+    } finally {
+      getReservedSpy.mockRestore();
+      reservation[Symbol.dispose]();
+    }
+  });
+
   test("getWorkspaceTurnSnapshot recovers stale completed handles from matching history", async () => {
     const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
     const appendResult = await historyService.appendToHistory(
@@ -3181,6 +3306,67 @@ describe("TaskService", () => {
     );
     await internal.consumeRespondedAgentTerminalAttention(parentId);
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("a response consumes only the included terminal report generation", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const taskId = "task-versioned-response-consumption";
+    const previousGeneration = "wst_previous_response_generation";
+    const pendingGeneration = "wst_pending_response_generation";
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const previousNotification = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: taskId,
+      generationId: previousGeneration,
+    });
+    const pendingNotification = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: taskId,
+      generationId: pendingGeneration,
+    });
+    assert(previousNotification, "previous terminal notification must exist");
+    assert(pendingNotification, "pending terminal notification must exist");
+
+    const { historyService, taskService } = createTaskServiceHarness(config);
+    const reportMessage = createMuxMessage(
+      "previous-versioned-terminal-report",
+      "user",
+      formatSubagentReportEnvelope({
+        taskId,
+        agentType: "explore",
+        status: "completed",
+        executionVersion: previousGeneration,
+        title: "Previous result",
+        reportMarkdown: "The previous generation completed.",
+      }),
+      { timestamp: Date.now(), synthetic: true, uiVisible: true }
+    );
+    await historyService.appendToHistory(parentId, reportMessage);
+    const reportSequence = reportMessage.metadata?.historySequence;
+    assert(typeof reportSequence === "number", "report history sequence is required");
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage("versioned-response", "assistant", "Used the previous result.", {
+        timestamp: Date.now(),
+        requestHistorySequence: reportSequence,
+      })
+    );
+
+    await (
+      taskService as unknown as {
+        consumeRespondedAgentTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+      }
+    ).consumeRespondedAgentTerminalAttention(parentId);
+
+    expect(await terminalAttentionStore.get(parentId, previousNotification.id)).toMatchObject({
+      status: "delivered",
+    });
+    expect(await terminalAttentionStore.get(parentId, pendingNotification.id)).toMatchObject({
+      status: "pending",
+    });
   });
 
   test("late report still resumes an intentionally backgrounded parent once", async () => {
@@ -3693,6 +3879,62 @@ describe("TaskService", () => {
 
     releaseIdleWait();
     await flushTerminalAttentionDrains(taskService);
+  });
+
+  test("queued terminal attention fallback keeps the active workspace-turn correlation", async () => {
+    let sendCount = 0;
+    const sendMessage = mock((...args: unknown[]): Promise<Result<void, SendMessageError>> => {
+      sendCount += 1;
+      const internal = args[3] as { requireIdle?: boolean } | undefined;
+      if (sendCount === 2 && internal?.requireIdle === true) {
+        return Promise.resolve(
+          Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+        );
+      }
+      return Promise.resolve(Ok(undefined));
+    });
+    const { config, parentId, taskService } = await startWorkspaceTurnForTest({ sendMessage });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const nestedHandleId = "wst_terminal_fallback_continuation";
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: nestedHandleId,
+      ownerWorkspaceId: "childworkspace",
+      workspaceId: "completed-nested-workspace",
+      turnId: "nested-terminal-fallback",
+      status: "completed",
+      createdAt: "2026-08-21T00:00:00.000Z",
+      updatedAt: "2026-08-21T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "The nested workspace turn completed.",
+    });
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: "childworkspace",
+      sourceKind: "workspace_turn",
+      sourceId: nestedHandleId,
+    });
+
+    await (
+      taskService as unknown as {
+        drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+      }
+    ).drainTerminalAttention("childworkspace");
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage.mock.calls[2]?.[2]).toMatchObject({
+      muxMetadata: {
+        type: "workspace-turn-task",
+        taskHandleId: "wst_handle",
+        ownerWorkspaceId: parentId,
+        turnId: "turn",
+      },
+    });
+    expect(sendMessage.mock.calls[2]?.[3]).toMatchObject({
+      workspaceTurnContinuation: true,
+    });
   });
 
   test("persistent child reports supersede their private continuation wake prompt", async () => {
@@ -5510,6 +5752,150 @@ describe("TaskService", () => {
         workspaceTurnContinuation: true,
       })
     );
+
+    const terminalCall = workspaceMocks.sendMessage.mock.calls.find((call) => {
+      const internal = call[3] as { queueDedupeKey?: string } | undefined;
+      return internal?.queueDedupeKey?.startsWith("agent-terminal-report:") === true;
+    });
+    expect(parseSubagentReportEnvelope(String(terminalCall?.[1]))).toMatchObject({
+      taskId: "nested-terminal-agent",
+      executionVersion: "wst_nested_terminal_generation",
+      reportMarkdown: "The nested terminal report is complete.",
+    });
+  });
+
+  test("terminal recovery appends the report for the pending execution generation", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "persistent-child-generation-recovery";
+    const previousGeneration = "wst_previous_generation";
+    const pendingGeneration = "wst_pending_generation";
+    const { historyService, taskService } = createTaskServiceHarness(config);
+
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "previous-generation-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childTaskId,
+          agentType: "explore",
+          status: "completed",
+          executionVersion: previousGeneration,
+          title: "Previous generation",
+          reportMarkdown: "The previous execution completed.",
+        }),
+        { timestamp: Date.parse("2026-08-21T00:00:00.000Z"), synthetic: true, uiVisible: true }
+      )
+    );
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      executionVersion: pendingGeneration,
+      reportMarkdown: "The latest execution completed.",
+      title: "Latest generation",
+      nowMs: Date.parse("2026-08-21T00:00:01.000Z"),
+    });
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const notification = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: childTaskId,
+      generationId: pendingGeneration,
+    });
+    assert(notification, "terminal attention notification must be created");
+
+    const ensureResult = await (
+      taskService as unknown as {
+        ensureAgentTerminalMessages: (
+          ownerWorkspaceId: string,
+          notifications: ReadonlyArray<typeof notification>
+        ) => Promise<{ deliverableNotificationIds: Set<string> }>;
+      }
+    ).ensureAgentTerminalMessages(parentId, [notification]);
+
+    expect(ensureResult.deliverableNotificationIds.has(notification.id)).toBe(true);
+    const historyResult = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) throw new Error("parent history read failed");
+    const terminalReports = historyResult.data.flatMap((message) => {
+      if (message.role !== "user" || message.metadata?.synthetic !== true) return [];
+      const content = message.parts
+        .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      const parsed = parseSubagentReportEnvelope(content);
+      return parsed?.taskId === childTaskId ? [parsed] : [];
+    });
+    expect(terminalReports).toHaveLength(2);
+    expect(
+      terminalReports.some(
+        (report) =>
+          report.taskId === childTaskId &&
+          report.executionVersion === pendingGeneration &&
+          report.reportMarkdown === "The latest execution completed."
+      )
+    ).toBe(true);
+  });
+
+  test("terminal recovery uses the notification outcome when legacy artifacts conflict", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "persistent-child-conflicting-artifacts";
+    const pendingGeneration = "wst_pending_failure_generation";
+    const sessionDir = config.getSessionDir(parentId);
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: sessionDir,
+      childTaskId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "This success belongs to an older legacy execution.",
+      nowMs: Date.parse("2026-08-21T00:00:00.000Z"),
+    });
+    await upsertSubagentFailureArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: sessionDir,
+      childTaskId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      executionVersion: pendingGeneration,
+      errorType: "authentication",
+      errorMessage: "The current execution failed authentication.",
+      nowMs: Date.parse("2026-08-21T00:00:01.000Z"),
+    });
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const notification = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: childTaskId,
+      generationId: pendingGeneration,
+      terminalOutcome: "failed",
+    });
+    assert(notification, "terminal attention notification must be created");
+    const { historyService, taskService } = createTaskServiceHarness(config);
+
+    const ensureResult = await (
+      taskService as unknown as {
+        ensureAgentTerminalMessages: (
+          ownerWorkspaceId: string,
+          notifications: ReadonlyArray<typeof notification>
+        ) => Promise<{ deliverableNotificationIds: Set<string> }>;
+      }
+    ).ensureAgentTerminalMessages(parentId, [notification]);
+
+    expect(ensureResult.deliverableNotificationIds.has(notification.id)).toBe(true);
+    const historyResult = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) throw new Error("parent history read failed");
+    const serializedHistory = JSON.stringify(historyResult.data);
+    expect(serializedHistory).toContain("<mux_subagent_failure>");
+    expect(serializedHistory).toContain(pendingGeneration);
+    expect(serializedHistory).toContain("The current execution failed authentication.");
+    expect(serializedHistory).not.toContain("This success belongs to an older legacy execution.");
   });
 
   test("backfills workspace-turn correlation on an existing terminal report", async () => {
