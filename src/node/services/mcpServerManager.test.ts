@@ -354,6 +354,50 @@ describe("MCPServerManager", () => {
     expect(Object.keys(result.tools)).toHaveLength(1);
   });
 
+  test("an unreadable mutation epoch sweeps once, then serves normally", async () => {
+    // readMutationEpochToken returns a FRESH synthetic token per read when
+    // the staging root is unreadable (non-ENOENT). Treating each read as a
+    // new mutation would sweep on every serve: prompt refresh loops (bumped
+    // mutation counters) would never stabilize and the serve bracket loop
+    // would exhaust its attempts. Consecutive unreadable tokens must compare
+    // equivalent — one sweep on the transition, normal serving after.
+    manager.dispose();
+    let reads = 0;
+    let unreadable = false;
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: {
+        keyPrefix: "plugin:",
+        readToken: () => Promise.resolve(unreadable ? `unreadable-${++reads}` : "epoch-1"),
+      },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-unreadable-epoch";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    const close = mock(() => Promise.resolve(undefined));
+    access.startServers = () =>
+      Promise.resolve(startResult([[pluginKey, { tools: { echo: testTool() }, close }]]));
+
+    const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(Object.keys(first.tools)).toHaveLength(1);
+
+    // The staging root becomes unreadable: the token transition sweeps once.
+    unreadable = true;
+    const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Object.keys(second.tools)).toHaveLength(1);
+
+    // Still unreadable: fresh synthetic tokens are equivalent — no further
+    // sweeps, the cached instance is served untouched.
+    const closesBefore = close.mock.calls.length;
+    const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(close.mock.calls.length).toBe(closesBefore);
+    expect(Object.keys(third.tools)).toHaveLength(1);
+  });
+
   test("cross-process sweep refreshes cached override snapshots from disk", async () => {
     // A sibling's uninstall prunes plugin keys from workspace override FILES.
     // Cached copies — the per-call overlay cache AND recorded request options

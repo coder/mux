@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
+import { hasErrorCode } from "@/node/services/tools/skillFileUtils";
 
 /** Staging dir name under the mux home dir — NOT under ~/.mux/plugins, which discovery scans. */
 export const STAGING_DIR_NAME = "plugin-staging";
@@ -30,6 +31,40 @@ export const STAGING_DIR_NAME = "plugin-staging";
  * already changed" for any mutation that ran during the scan window.
  */
 export const MUTATION_EPOCH_FILE = "mutation-epoch";
+
+/**
+ * Prefix of the synthetic token readMutationEpochToken returns when the
+ * epoch file exists but cannot be read (non-ENOENT failure). Each read
+ * yields a FRESH token so bracket-style consumers (discovery gate) fail
+ * closed; consumers that would otherwise loop on every serve (the MCP
+ * manager's cross-process sweep) treat two unreadable tokens as equivalent
+ * instead — see areMutationEpochTokensEquivalent.
+ */
+export const MUTATION_EPOCH_UNREADABLE_PREFIX = "unreadable-";
+
+/**
+ * Whether two mutation epoch reads represent the same observable state.
+ * Distinct unreadable tokens compare EQUIVALENT: a persistently unreadable
+ * staging root produces a fresh token per read, and treating that as a
+ * constant stream of mutations would livelock sweep-per-serve consumers.
+ * The transition INTO the unreadable state still compares different, so one
+ * sweep runs; mutations during a persistent outage are caught when the root
+ * becomes readable again (the real epoch differs from the unreadable token).
+ */
+export function areMutationEpochTokensEquivalent(
+  a: string | undefined,
+  b: string | undefined
+): boolean {
+  if (a === b) {
+    return true;
+  }
+  return (
+    a !== undefined &&
+    b !== undefined &&
+    a.startsWith(MUTATION_EPOCH_UNREADABLE_PREFIX) &&
+    b.startsWith(MUTATION_EPOCH_UNREADABLE_PREFIX)
+  );
+}
 
 export const PROMOTION_JOURNAL_PREFIX = "promotion-";
 export const UPDATE_JOURNAL_PREFIX = "update-";
@@ -58,7 +93,10 @@ export async function containerHasUnreconciledJournals(containerPath: string): P
       (entry) => isJournalName(entry) && entry.endsWith(".json")
     );
   } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ENOENT");
+    // hasErrorCode, not `instanceof Error`: under babel-jest's vm sandbox,
+    // fs errors come from another realm and fail instanceof, which would
+    // misreport every missing staging root as "has journals".
+    return !hasErrorCode(error, "ENOENT");
   }
 }
 
@@ -90,9 +128,13 @@ export async function readMutationEpochToken(stagingRoot: string): Promise<strin
   try {
     return await fsPromises.readFile(path.join(stagingRoot, MUTATION_EPOCH_FILE), "utf-8");
   } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "ENOENT"
+    // hasErrorCode, not `instanceof Error`: under babel-jest's vm sandbox,
+    // fs errors come from another realm and fail instanceof — every missing
+    // epoch file would then read as a FRESH unreadable token, which consumers
+    // treat as a constant stream of plugin mutations.
+    return hasErrorCode(error, "ENOENT")
       ? undefined
-      : `unreadable-${randomUUID()}`;
+      : `${MUTATION_EPOCH_UNREADABLE_PREFIX}${randomUUID()}`;
   }
 }
 

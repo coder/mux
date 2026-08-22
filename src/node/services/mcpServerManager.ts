@@ -28,6 +28,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import type { AgentPluginsMcpContext } from "@/node/services/agentPlugins/mcpConfig";
+import { areMutationEpochTokensEquivalent } from "@/node/services/agentPlugins/journals";
 import type { PolicyService } from "@/node/services/policyService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import {
@@ -1174,7 +1175,10 @@ export class MCPServerManager {
         this.lastPluginInvalidationToken = token;
         return;
       }
-      if (token === this.lastPluginInvalidationToken) {
+      // Equivalence, not equality: a persistently unreadable staging root
+      // yields a fresh synthetic token per read, and sweeping on every serve
+      // would livelock prompt refresh loops and the serve bracket loop.
+      if (areMutationEpochTokensEquivalent(token, this.lastPluginInvalidationToken)) {
         return;
       }
       log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
@@ -1639,7 +1643,7 @@ export class MCPServerManager {
         return result;
       }
       const token = await this.pluginInvalidation.readToken();
-      if (token === this.lastPluginInvalidationToken) {
+      if (areMutationEpochTokensEquivalent(token, this.lastPluginInvalidationToken)) {
         return result;
       }
       if (attempt >= 5) {
