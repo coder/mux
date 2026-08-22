@@ -149,6 +149,39 @@ describe("attachReasoningReplayMetadata", () => {
     expect(output[1]).toBe(noReplay);
   });
 
+  test("drops a malformed non-string legacy signature instead of forwarding it", () => {
+    const input = assistantMessage([
+      { type: "reasoning", text: "corrupt", signature: 12345 as unknown as string },
+    ]);
+
+    const [output] = attachReasoningReplayMetadata([input]);
+
+    expect(output).toBe(input);
+    expect("providerMetadata" in reasoningParts(output)[0]).toBe(false);
+  });
+
+  test("drops malformed providerOptions fields while keeping valid siblings", () => {
+    const input = assistantMessage([
+      {
+        type: "reasoning",
+        text: "partially corrupt",
+        providerOptions: {
+          anthropic: "not-an-object",
+          openai: { itemId: 42, reasoningEncryptedContent: "enc_ok" },
+          xai: { itemId: "rs_ok", reasoningEncryptedContent: { nested: true } },
+          google: { thoughtSignature: "" },
+        } as unknown as MuxReasoningPart["providerOptions"],
+      },
+    ]);
+
+    const [output] = attachReasoningReplayMetadata([input]);
+
+    expect(reasoningParts(output)[0].providerMetadata).toEqual({
+      openai: { reasoningEncryptedContent: "enc_ok" },
+      xai: { itemId: "rs_ok" },
+    });
+  });
+
   test("does not mutate the input parts", () => {
     const part: MuxReasoningPart = {
       type: "reasoning",

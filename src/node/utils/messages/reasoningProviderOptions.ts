@@ -21,33 +21,45 @@ export interface ReasoningProviderMetadata {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /**
- * Extract replay data from stream providerMetadata into the persisted
- * providerOptions shape. Anthropic needs signatures; OpenAI/xAI Responses
- * need itemId + encrypted content when store=false (ZDR); Google needs
- * thought signatures. Replay happens via attachReasoningReplayMetadata.
+ * Runtime-validate reasoning replay data into the persisted providerOptions
+ * shape, keeping only recognized string/null fields. History rows are read
+ * with unchecked JSON casts, so a corrupt part must degrade to "no replay
+ * metadata" rather than forwarding junk the provider would reject (which
+ * would brick every subsequent request in the workspace).
  */
-export function reasoningProviderOptionsFromMetadata(
-  providerMetadata: ReasoningProviderMetadata | undefined
+export function sanitizeReasoningReplayMetadata(
+  value: unknown
 ): MuxReasoningPart["providerOptions"] | undefined {
-  if (!providerMetadata) return undefined;
+  const record = asRecord(value);
+  if (!record) return undefined;
 
   const options: NonNullable<MuxReasoningPart["providerOptions"]> = {};
 
-  const anthropicSignature = providerMetadata.anthropic?.signature;
-  if (typeof anthropicSignature === "string" && anthropicSignature.length > 0) {
+  const anthropicSignature = nonEmptyString(asRecord(record.anthropic)?.signature);
+  if (anthropicSignature) {
     options.anthropic = { signature: anthropicSignature };
   }
 
-  const googleThoughtSignature = providerMetadata.google?.thoughtSignature;
-  if (typeof googleThoughtSignature === "string" && googleThoughtSignature.length > 0) {
+  const googleThoughtSignature = nonEmptyString(asRecord(record.google)?.thoughtSignature);
+  if (googleThoughtSignature) {
     options.google = { thoughtSignature: googleThoughtSignature };
   }
 
   for (const provider of ["openai", "xai"] as const) {
-    const meta = providerMetadata[provider];
+    const meta = asRecord(record[provider]);
     if (!meta) continue;
-    const itemId = typeof meta.itemId === "string" ? meta.itemId : undefined;
+    const itemId = nonEmptyString(meta.itemId);
     const encrypted =
       typeof meta.reasoningEncryptedContent === "string"
         ? meta.reasoningEncryptedContent
@@ -62,6 +74,18 @@ export function reasoningProviderOptionsFromMetadata(
   }
 
   return Object.keys(options).length > 0 ? options : undefined;
+}
+
+/**
+ * Extract replay data from stream providerMetadata into the persisted
+ * providerOptions shape. Anthropic needs signatures; OpenAI/xAI Responses
+ * need itemId + encrypted content when store=false (ZDR); Google needs
+ * thought signatures. Replay happens via attachReasoningReplayMetadata.
+ */
+export function reasoningProviderOptionsFromMetadata(
+  providerMetadata: ReasoningProviderMetadata | undefined
+): MuxReasoningPart["providerOptions"] | undefined {
+  return sanitizeReasoningReplayMetadata(providerMetadata);
 }
 
 export function mergeReasoningProviderOptions(
@@ -111,11 +135,17 @@ export function attachReasoningReplayMetadata(messages: MuxMessage[]): MuxMessag
     const parts = message.parts.map((part) => {
       if (part.type !== "reasoning") return part;
 
-      const legacySignature = part.signature
-        ? { anthropic: { signature: part.signature } }
+      // Sanitize both sources: history rows are unchecked JSON casts, so
+      // malformed values must be dropped instead of forwarded to the provider.
+      const legacySignatureValue = nonEmptyString(part.signature);
+      const legacySignature = legacySignatureValue
+        ? { anthropic: { signature: legacySignatureValue } }
         : undefined;
       // providerOptions wins over the legacy field when both carry a signature.
-      const replayMetadata = mergeReasoningProviderOptions(legacySignature, part.providerOptions);
+      const replayMetadata = mergeReasoningProviderOptions(
+        legacySignature,
+        sanitizeReasoningReplayMetadata(part.providerOptions)
+      );
       if (!replayMetadata) return part;
 
       changed = true;

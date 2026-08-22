@@ -310,6 +310,56 @@ describe("reasoning replay in built provider requests", () => {
     ]);
   });
 
+  it("merges later partial options without clobbering encrypted content when coalescing", async () => {
+    // ZDR shape: first part of the run carries itemId + encrypted content
+    // (attached at reasoning-end), a later delta repeats only the itemId.
+    // Coalescing must merge namespaces, not replace the accumulated object.
+    const result = await buildRequest(
+      "openai",
+      "high",
+      historyWith([
+        {
+          type: "reasoning",
+          text: "a",
+          providerOptions: { openai: { itemId: "rs_1", reasoningEncryptedContent: "enc" } },
+        },
+        { type: "reasoning", text: "b", providerOptions: { openai: { itemId: "rs_1" } } },
+        { type: "text", text: "answer" },
+      ])
+    );
+
+    expect(reasoningRequestParts(result)).toEqual([
+      {
+        type: "reasoning",
+        text: "ab",
+        providerOptions: { openai: { itemId: "rs_1", reasoningEncryptedContent: "enc" } },
+      },
+    ]);
+  });
+
+  it("keeps a malformed history row from poisoning the built request", async () => {
+    // Self-healing doctrine: corrupt replay metadata in chat.jsonl must degrade
+    // to plain reasoning handling, not forward junk the provider rejects.
+    const result = await buildRequest(
+      "openai",
+      "high",
+      historyWith([
+        {
+          type: "reasoning",
+          text: "corrupt metadata",
+          signature: 999,
+          providerOptions: { openai: { itemId: 42 } },
+        } as unknown as MuxMessage["parts"][number],
+        { type: "text", text: "answer" },
+      ])
+    );
+
+    const assistant = result.filter(isAssistantMessage);
+    expect(assistant.length).toBeGreaterThan(0);
+    expect(JSON.stringify(result)).not.toContain('"itemId":42');
+    expect(JSON.stringify(result)).not.toContain("999");
+  });
+
   it("keeps OpenAI options from the first part when coalescing a streamed run", async () => {
     const result = await buildRequest(
       "openai",
