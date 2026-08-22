@@ -4524,12 +4524,22 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         expect(result.success).toBe(false);
         expect(result.success ? "" : result.error).toContain("durably invalidated");
         expect(result.success ? "" : result.error).toContain("journal write failed");
+
+        // A retry reaches the no-op branch (the boundary row already
+        // landed) — it must RE-ATTEMPT the pending cleanup, not report
+        // success while the invalidation is still not durable: a restart
+        // could otherwise restore pre-reset kernel vars across the boundary.
+        discardSpy.mockImplementationOnce(() => Promise.reject(new Error("journal write failed")));
+        const retry = await workspaceService.resetContext(workspaceId);
+        expect(retry.success).toBe(false);
+        expect(retry.success ? "" : retry.error).toContain("durably invalidated");
       } finally {
         discardSpy.mockRestore();
       }
 
-      // Partial-failure semantics: the chat-side boundary DID apply (only the
-      // sandbox invalidation is outstanding), so a follow-up reset noops.
+      // Once cleanup succeeds, the retry settles as a clean noop (the
+      // chat-side boundary already applied; the real discard re-runs and
+      // lands durably).
       expect(await workspaceService.resetContext(workspaceId)).toEqual({
         success: true,
         data: "noop",

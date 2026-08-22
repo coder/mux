@@ -10017,6 +10017,37 @@ export class WorkspaceService extends EventEmitter {
         historyResult.data
       );
       if (!hasProviderEligibleMessages(activeContextMessages)) {
+        // An earlier reset may have failed AFTER writing its boundary but
+        // BEFORE its durable cleanup landed (the partial-failure Errs below).
+        // A retry then reaches this branch — no provider-eligible rows after
+        // the boundary — so pending cleanup must be re-attempted before the
+        // no-op is reported, or the UI claims success while a restart can
+        // still restore pre-reset carryover or kernel vars across the reset
+        // boundary. Both steps are idempotent: the pending-state unlink
+        // treats ENOENT as success and a discard tombstone re-publish is
+        // harmless, so a genuinely clean no-op stays a no-op.
+        try {
+          await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+        } catch (error) {
+          return Err(
+            `Nothing to reset, but persisted post-compaction carryover from an earlier partial ` +
+              `reset could not be durably discarded (${getErrorMessage(error)}). Pre-reset ` +
+              `read/skill context may be re-injected after a restart; retry once the session ` +
+              `storage is writable.`
+          );
+        }
+        try {
+          await sandboxHostService.discardScope(
+            workspaceId,
+            this.config.getSessionDir(workspaceId)
+          );
+        } catch (error) {
+          return Err(
+            `Nothing to reset, but the sandbox kernel state could not be durably invalidated ` +
+              `(${getErrorMessage(error)}). The sandbox stays unavailable and cleared variables ` +
+              `may reappear after a restart; retry once the session storage is writable.`
+          );
+        }
         return Ok("noop");
       }
 
