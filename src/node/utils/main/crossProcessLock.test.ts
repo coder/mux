@@ -43,11 +43,29 @@ describe("acquireCrossProcessLock", () => {
 
   test("reclaims a holder past the stale ceiling even when its pid is alive", async () => {
     const lockPath = await tempLockPath();
-    // acquiredAt 0 puts the holder beyond any stale ceiling (pid-reuse guard).
+    // An old positive timestamp puts the holder beyond the stale ceiling (pid-reuse guard).
     await fsPromises.writeFile(
       lockPath,
-      JSON.stringify({ pid: process.pid, token: "stale", acquiredAt: 0 })
+      JSON.stringify({ pid: process.pid, token: "stale", acquiredAt: Date.now() - 120_000 })
     );
+    const release = await acquireCrossProcessLock({ lockPath, ...baseOptions });
+    await release();
+    expect(await pathExists(lockPath)).toBe(false);
+  });
+
+  test("reclaims a lock with an implausibly future timestamp as corrupt", async () => {
+    const lockPath = await tempLockPath();
+    await fsPromises.writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        token: "future-clock",
+        acquiredAt: Date.now() + 24 * 60 * 60 * 1000,
+      })
+    );
+    // Corrupt records observe the publication grace before reclamation.
+    const old = new Date(Date.now() - 10_000);
+    await fsPromises.utimes(lockPath, old, old);
     const release = await acquireCrossProcessLock({ lockPath, ...baseOptions });
     await release();
     expect(await pathExists(lockPath)).toBe(false);
@@ -112,7 +130,10 @@ describe("acquireCrossProcessLock", () => {
 
   test("contending acquirers over a stale lock are mutually exclusive", async () => {
     const lockPath = await tempLockPath();
-    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "stale", acquiredAt: 0 }));
+    await fsPromises.writeFile(
+      lockPath,
+      JSON.stringify({ pid: 1, token: "stale", acquiredAt: Date.now() - 120_000 })
+    );
     let inside = 0;
     let overlaps = 0;
     await Promise.all(
@@ -136,7 +157,10 @@ describe("acquireCrossProcessLock", () => {
 describe("reclaimStaleLock", () => {
   test("takes ownership of a stale lock in place and confirms", async () => {
     const lockPath = await tempLockPath();
-    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 }));
+    await fsPromises.writeFile(
+      lockPath,
+      JSON.stringify({ pid: 1, token: "s", acquiredAt: Date.now() - 120_000 })
+    );
     const token = await reclaimStaleLock(lockPath, 60_000);
     expect(token).toBeDefined();
     const holder = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as { token: string };
@@ -192,7 +216,7 @@ describe("reclaimStaleLock", () => {
 
   test("backs off while a competing reclaimer holds a fresh reclaim mutex", async () => {
     const lockPath = await tempLockPath();
-    const stale = JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 });
+    const stale = JSON.stringify({ pid: 1, token: "s", acquiredAt: Date.now() - 120_000 });
     await fsPromises.writeFile(lockPath, stale);
     const mutexDir = `${lockPath}.reclaim`;
     await fsPromises.mkdir(mutexDir);
@@ -206,7 +230,10 @@ describe("reclaimStaleLock", () => {
 
   test("breaks a reclaim mutex abandoned by a crashed reclaimer", async () => {
     const lockPath = await tempLockPath();
-    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 }));
+    await fsPromises.writeFile(
+      lockPath,
+      JSON.stringify({ pid: 1, token: "s", acquiredAt: Date.now() - 120_000 })
+    );
     const mutexDir = `${lockPath}.reclaim`;
     await fsPromises.mkdir(mutexDir);
     // Age the mutex beyond RECLAIM_MUTEX_STALE_MS.
@@ -223,7 +250,10 @@ describe("reclaimStaleLock", () => {
     // is atomic, so no observer may ever see ENOENT — the property that keeps
     // a third process's wx-create from slipping in mid-reclaim.
     const lockPath = await tempLockPath();
-    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 }));
+    await fsPromises.writeFile(
+      lockPath,
+      JSON.stringify({ pid: 1, token: "s", acquiredAt: Date.now() - 120_000 })
+    );
     let sawAbsent = false;
     let stop = false;
     const watcher = (async () => {

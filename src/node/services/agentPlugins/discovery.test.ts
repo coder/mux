@@ -10,7 +10,7 @@ import {
   journalDerivedDiscoveryGate,
   setAgentPluginDiscoveryGate,
 } from "./discovery";
-import { bumpContainerMutationEpoch, STAGING_DIR_NAME } from "./journals";
+import { bumpContainerMutationEpoch, MUTATION_EPOCH_FILE, STAGING_DIR_NAME } from "./journals";
 import { AGENT_PLUGIN_SCHEMA_ID_1_0_0 } from "./manifest";
 
 async function writePlugin(
@@ -405,6 +405,21 @@ describe("journalDerivedDiscoveryGate", () => {
 
     const session = await journalDerivedDiscoveryGate([container]);
     expect(session.suppressed).toEqual([container]);
+  });
+
+  test("suppresses a container while its mutation epoch is unreadable", async () => {
+    using tmp = new DisposableTempDir("agent-plugins");
+    const container = path.join(tmp.path, "plugins");
+    const stagingRoot = path.join(tmp.path, STAGING_DIR_NAME);
+    await fs.mkdir(container, { recursive: true });
+    await fs.mkdir(stagingRoot, { recursive: true });
+    // A directory at the epoch path is a deterministic non-ENOENT read
+    // failure without relying on permission behavior of the test user.
+    await fs.mkdir(path.join(stagingRoot, MUTATION_EPOCH_FILE));
+
+    const session = await journalDerivedDiscoveryGate([container]);
+    expect(session.suppressed).toEqual([container]);
+    expect(await session.confirm()).toEqual([container]);
   });
 
   test("confirm flags a mutation whose whole journal lifetime fit inside the scan window", async () => {

@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { Config } from "@/node/config";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
+import { shellQuote } from "@/common/utils/shell";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import {
   discoverAgentPlugins,
@@ -196,6 +197,49 @@ describe("AgentPluginInstallService", () => {
     // Only *.js is executable by workflow discovery; notes.txt is not listed.
     expect(preview.workflows).toEqual(["release.js"]);
     expect(preview.slashCommands).toEqual([{ name: "standup", description: "Daily standup" }]);
+  });
+
+  test("preview ignores configured checkout filters from global Git config", async () => {
+    // An untrusted repository controls .gitattributes. If staging inherits the
+    // user's global filter.<name>.smudge/process configuration, clone/checkout
+    // executes that command BEFORE the consent preview appears.
+    const marker = path.join(muxRoot, "checkout-filter-executed");
+    const filterScript = path.join(muxRoot, "checkout-filter.js");
+    await fsPromises.writeFile(
+      filterScript,
+      [
+        'const fs = require("node:fs");',
+        'fs.writeFileSync(process.argv[2], "executed");',
+        "process.stdin.pipe(process.stdout);",
+      ].join("\n")
+    );
+    await fsPromises.writeFile(path.join(remoteDir, ".gitattributes"), "payload filter=pwn\n");
+    await fsPromises.writeFile(path.join(remoteDir, "payload"), "attacker-controlled\n");
+    await commitAll(remoteDir, "checkout filter fixture");
+
+    const globalConfig = path.join(muxRoot, "attacker-global-gitconfig");
+    const filterCommand = [
+      shellQuote(process.execPath),
+      shellQuote(filterScript),
+      shellQuote(marker),
+    ].join(" ");
+    await fsPromises.writeFile(
+      globalConfig,
+      `[filter "pwn"]\n\tsmudge = ${filterCommand}\n\trequired = true\n`
+    );
+    const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    try {
+      const preview = await service.preview({ input: remoteDir });
+      expect(preview.manifest.name).toBe("demo-plugin");
+      expect(await pathExists(marker)).toBe(false);
+    } finally {
+      if (previousGlobal === undefined) {
+        delete process.env.GIT_CONFIG_GLOBAL;
+      } else {
+        process.env.GIT_CONFIG_GLOBAL = previousGlobal;
+      }
+    }
   });
 
   test("preview stages+validates without writing; install promotes and records the registry", async () => {
@@ -944,6 +988,33 @@ describe("AgentPluginInstallService", () => {
 
     expect(await pathExists(targetPath)).toBe(false);
     expect(await pathExists(journalPath)).toBe(false);
+  });
+
+  test("journal reconciliation timeout fails closed without hanging callers", async () => {
+    const boundedService = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      reconciliationTimeoutMs: 10,
+    });
+    const internals = boundedService as unknown as {
+      reconciliationState: Promise<boolean>;
+      reconcileJournals: () => Promise<boolean>;
+      attemptReconcileJournals: (context: string) => Promise<boolean>;
+    };
+    // Let the constructor's real empty-root pass settle, then simulate stalled
+    // storage for a later recovery pass through the same startup code path.
+    await internals.reconciliationState;
+    const neverSettles = new Promise<boolean>(() => undefined);
+    const reconcileSpy = spyOn(internals, "reconcileJournals").mockImplementation(
+      () => neverSettles
+    );
+    try {
+      const startedAt = Date.now();
+      const healthy = await internals.attemptReconcileJournals("timeout regression");
+      expect(healthy).toBe(false);
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    } finally {
+      reconcileSpy.mockRestore();
+    }
   });
 
   test("promotion recovery leaves a user-replaced tree at the same path alone", async () => {

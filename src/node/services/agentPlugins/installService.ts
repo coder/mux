@@ -38,6 +38,7 @@ import { log } from "@/node/services/log";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
+import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { acquireCrossProcessLock } from "@/node/utils/main/crossProcessLock";
 import { shellQuote } from "@/common/utils/shell";
 import { execFileAsync } from "@/node/utils/disposableExec";
@@ -152,6 +153,9 @@ const MUTATION_LOCK_ACQUIRE_TIMEOUT_MS = 10 * 60 * 1000;
 /** Pid-reuse guard: no plugin mutation legitimately runs this long. */
 const MUTATION_LOCK_STALE_MS = 30 * 60 * 1000;
 
+/** Bound discovery/settings waits on startup crash-recovery I/O. */
+const JOURNAL_RECONCILIATION_TIMEOUT_MS = 30_000;
+
 const LS_REMOTE_TIMEOUT_MS = 30_000;
 const CLONE_TIMEOUT_MS = 120_000;
 
@@ -200,9 +204,20 @@ function gitEnv(): Record<string, string> {
   // config sets protocol.ext.allow=always), and disabling hooks does not
   // restrict helpers. GIT_ALLOW_PROTOCOL is an env-level whitelist that
   // overrides protocol.*.allow configuration for every staging invocation.
+  //
+  // SECURITY: ignore system/global Git configuration during ALL staging Git
+  // operations. An attacker-controlled repository can assign a user-defined
+  // filter through .gitattributes; if the user's global config defines that
+  // filter's smudge/process command, Git executes it during clone/checkout —
+  // before consent. The staging flow deliberately accepts only the explicit
+  // URL/ref plus the numbered safe config below; authentication must come
+  // from transport-level mechanisms (SSH agent, URL credentials rejected
+  // separately), never executable credential/filter/helper configuration.
   const env: Record<string, string> = {
     GIT_TERMINAL_PROMPT: "0",
     GIT_ALLOW_PROTOCOL: "file:git:http:https:ssh",
+    GIT_CONFIG_GLOBAL: os.devNull,
+    GIT_CONFIG_SYSTEM: os.devNull,
     ...GIT_NO_HOOKS_ENV,
   };
   if (process.env.GIT_SSH_COMMAND === undefined) {
@@ -415,17 +430,18 @@ export class AgentPluginInstallService {
    */
   private readonly activeStagingPaths = new Set<string>();
 
+  /** The single underlying recovery pass; timeout callers never start a competing pass. */
+  private reconciliationWork: Promise<boolean> | undefined;
   /**
-   * Latest journal-reconciliation attempt, resolving to whether it SUCCEEDED.
-   * Kicked off at construction because a session can serve agent requests
-   * (whose global plugin discovery, MCP config, and hook loading scan the
-   * container) without ever opening the Plugins section — an orphaned
+   * Latest bounded journal-reconciliation attempt, resolving to whether it
+   * SUCCEEDED. Kicked off at construction because a session can serve agent
+   * requests (whose global plugin discovery, MCP config, and hook loading scan
+   * the container) without ever opening the Plugins section — an orphaned
    * promotion would load as an unmanaged plugin, hooks included, before
    * list()'s reconciliation ever ran. The discovery gate consumes the status:
-   * `false` (unreadable registry, failed restore/quarantine) suppresses the
-   * managed container from scans until a later attempt succeeds — merely
-   * awaiting a failed pass would release discovery over the unreconciled
-   * tree. Never rejects (startup must not crash the app).
+   * `false` (timeout, unreadable registry, failed restore/quarantine)
+   * suppresses the managed container from scans until a later attempt
+   * succeeds. Never rejects (startup must not crash the app).
    */
   private reconciliationState: Promise<boolean>;
 
@@ -439,6 +455,8 @@ export class AgentPluginInstallService {
       workspaceMcpOverridesService?: WorkspaceMcpOverridesService;
       /** Test override for the staged-clone checkout quota. */
       stagingQuota?: { maxBytes: number; maxFiles: number };
+      /** Test override for the recovery wait bound. */
+      reconciliationTimeoutMs?: number;
     }
   ) {
     assert(path.isAbsolute(config.rootDir), "AgentPluginInstallService: rootDir must be absolute");
@@ -492,21 +510,45 @@ export class AgentPluginInstallService {
    * left unconsumed (failed restore/quarantine, unidentified target tree) —
    * both mean the managed container may hold unreconciled state.
    */
-  private attemptReconcileJournals(context: string): Promise<boolean> {
-    return this.reconcileJournals().then(
-      (allConsumed) => {
-        if (!allConsumed) {
-          log.warn(`Plugin journal reconciliation left unresolved journals (${context})`);
+  private async attemptReconcileJournals(context: string): Promise<boolean> {
+    let work = this.reconciliationWork;
+    if (work === undefined) {
+      const started = this.reconcileJournals().then(
+        (allConsumed) => {
+          if (!allConsumed) {
+            log.warn(`Plugin journal reconciliation left unresolved journals (${context})`);
+          }
+          return allConsumed;
+        },
+        (error: unknown) => {
+          log.warn(`Plugin journal reconciliation failed (${context})`, {
+            error: getErrorMessage(error),
+          });
+          return false;
         }
-        return allConsumed;
-      },
-      (error: unknown) => {
-        log.warn(`Plugin journal reconciliation failed (${context})`, {
-          error: getErrorMessage(error),
-        });
-        return false;
-      }
-    );
+      );
+      work = started.then((result) => {
+        // Clear only this pass: a later attempt may already have installed a
+        // successor promise by the time an old, delayed pass settles.
+        if (this.reconciliationWork === work) {
+          this.reconciliationWork = undefined;
+        }
+        return result;
+      });
+      this.reconciliationWork = work;
+    }
+
+    const timeoutMs = this.deps.reconciliationTimeoutMs ?? JOURNAL_RECONCILIATION_TIMEOUT_MS;
+    const settled = await raceWithAbortAndTimeout(work, { timeoutMs });
+    if (settled.kind === "ok") {
+      return settled.value;
+    }
+    // The underlying pass remains the sole reconciliationWork. Discovery and
+    // settings callers stop waiting and fail closed (managed container
+    // suppressed); a later retry races the SAME pass instead of starting a
+    // competing filesystem mutation while stalled storage may still recover.
+    log.warn(`Plugin journal reconciliation timed out (${context})`, { timeoutMs });
+    return false;
   }
 
   /**

@@ -48,6 +48,9 @@ export interface LockHolder {
   acquiredAt: number;
 }
 
+/** Tolerate tiny wall-clock adjustments, but reject locks that could stay live indefinitely. */
+const MAX_LOCK_FUTURE_SKEW_MS = 60_000;
+
 /** Parse the lock file; undefined when missing/unreadable/corrupt. */
 async function readLockHolder(lockPath: string): Promise<LockHolder | undefined> {
   try {
@@ -56,7 +59,17 @@ async function readLockHolder(lockPath: string): Promise<LockHolder | undefined>
       return undefined;
     }
     const { pid, token, acquiredAt } = parsed as Record<string, unknown>;
-    if (typeof pid !== "number" || typeof token !== "string" || typeof acquiredAt !== "number") {
+    if (
+      typeof pid !== "number" ||
+      !Number.isInteger(pid) ||
+      pid <= 0 ||
+      typeof token !== "string" ||
+      token.length === 0 ||
+      typeof acquiredAt !== "number" ||
+      !Number.isFinite(acquiredAt) ||
+      acquiredAt <= 0 ||
+      acquiredAt > Date.now() + MAX_LOCK_FUTURE_SKEW_MS
+    ) {
       return undefined;
     }
     return { pid, token, acquiredAt };

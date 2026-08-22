@@ -33,37 +33,15 @@ export const STAGING_DIR_NAME = "plugin-staging";
 export const MUTATION_EPOCH_FILE = "mutation-epoch";
 
 /**
- * Prefix of the synthetic token readMutationEpochToken returns when the
- * epoch file exists but cannot be read (non-ENOENT failure). Each read
- * yields a FRESH token so bracket-style consumers (discovery gate) fail
- * closed; consumers that would otherwise loop on every serve (the MCP
- * manager's cross-process sweep) treat two unreadable tokens as equivalent
- * instead — see areMutationEpochTokensEquivalent.
+ * Stable sentinel returned when the mutation epoch exists but cannot be read
+ * (non-ENOENT failure). Stable identity prevents sweep-per-serve consumers
+ * from manufacturing perpetual mutation changes; consumers fail closed for
+ * plugin content explicitly via isMutationEpochUnreadable.
  */
-export const MUTATION_EPOCH_UNREADABLE_PREFIX = "unreadable-";
+export const MUTATION_EPOCH_UNREADABLE_TOKEN = "xum-plugin-epoch-unreadable";
 
-/**
- * Whether two mutation epoch reads represent the same observable state.
- * Distinct unreadable tokens compare EQUIVALENT: a persistently unreadable
- * staging root produces a fresh token per read, and treating that as a
- * constant stream of mutations would livelock sweep-per-serve consumers.
- * The transition INTO the unreadable state still compares different, so one
- * sweep runs; mutations during a persistent outage are caught when the root
- * becomes readable again (the real epoch differs from the unreadable token).
- */
-export function areMutationEpochTokensEquivalent(
-  a: string | undefined,
-  b: string | undefined
-): boolean {
-  if (a === b) {
-    return true;
-  }
-  return (
-    a !== undefined &&
-    b !== undefined &&
-    a.startsWith(MUTATION_EPOCH_UNREADABLE_PREFIX) &&
-    b.startsWith(MUTATION_EPOCH_UNREADABLE_PREFIX)
-  );
+export function isMutationEpochUnreadable(token: string | undefined): boolean {
+  return token === MUTATION_EPOCH_UNREADABLE_TOKEN;
 }
 
 export const PROMOTION_JOURNAL_PREFIX = "promotion-";
@@ -110,19 +88,21 @@ export interface ContainerMutationState {
   hasJournals: boolean;
   /**
    * Epoch token; `undefined` when the epoch file has never been written (a
-   * stable state). An unreadable epoch file yields a UNIQUE token so it can
-   * never compare equal across two reads (fail toward suppression).
+   * stable state). An unreadable epoch file yields the stable
+   * MUTATION_EPOCH_UNREADABLE_TOKEN; discovery suppresses that state
+   * explicitly rather than relying on manufactured token changes.
    */
   epoch: string | undefined;
 }
 
 /**
  * Read the current mutation epoch token; `undefined` when never written. An
- * unreadable file yields a UNIQUE token so it can never compare equal across
- * two reads (fail toward invalidation/suppression). Also consumed by
- * MCPServerManager as its cross-process plugin invalidation signal: a sibling
- * process's install/update/uninstall bumps this token, telling every manager
- * to retire cached plugin server instances before serving them again.
+ * unreadable file yields a stable failure sentinel: discovery and MCP serving
+ * suppress plugin content explicitly while unrelated MCP servers remain
+ * usable. Also consumed by MCPServerManager as its cross-process plugin
+ * invalidation signal: a sibling process's install/update/uninstall bumps
+ * this token, telling every manager to retire cached plugin server instances
+ * before serving them again.
  */
 export async function readMutationEpochToken(stagingRoot: string): Promise<string | undefined> {
   try {
@@ -130,11 +110,9 @@ export async function readMutationEpochToken(stagingRoot: string): Promise<strin
   } catch (error) {
     // hasErrorCode, not `instanceof Error`: under babel-jest's vm sandbox,
     // fs errors come from another realm and fail instanceof — every missing
-    // epoch file would then read as a FRESH unreadable token, which consumers
-    // treat as a constant stream of plugin mutations.
-    return hasErrorCode(error, "ENOENT")
-      ? undefined
-      : `${MUTATION_EPOCH_UNREADABLE_PREFIX}${randomUUID()}`;
+    // epoch file would otherwise be misclassified as unreadable, suppressing
+    // plugin content even though no epoch file was ever written.
+    return hasErrorCode(error, "ENOENT") ? undefined : MUTATION_EPOCH_UNREADABLE_TOKEN;
   }
 }
 

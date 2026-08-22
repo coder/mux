@@ -9,6 +9,7 @@ import {
   MCP_PROMPT_MAX_TEXT_BYTES,
   MCP_PROMPT_TRUNCATION_MARKER,
 } from "@/common/constants/toolLimits";
+import { MUTATION_EPOCH_UNREADABLE_TOKEN } from "@/node/services/agentPlugins/journals";
 import * as mcpSdk from "@/node/services/mcpClient";
 import {
   MCPServerManager,
@@ -240,11 +241,13 @@ describe("MCPServerManager", () => {
     expect(close2).toHaveBeenCalledTimes(0);
     expect(starts).toBe(2);
     expect(Object.keys(result.tools)).toHaveLength(1);
-    // The sweep dropped the cross-process-stale override cache.
+    // With no disk reader wired, the sweep scrubs plugin keys from the
+    // cross-process-stale cache while preserving unrelated override state.
     expect(
-      (access as unknown as { latestWorkspaceOverrides: Map<string, unknown> })
-        .latestWorkspaceOverrides.size
-    ).toBe(0);
+      (
+        access as unknown as { latestWorkspaceOverrides: Map<string, unknown> }
+      ).latestWorkspaceOverrides.get(workspaceId)
+    ).toEqual({ enabledServers: [] });
   });
 
   test("concurrent serves await an in-flight cross-process sweep before returning", async () => {
@@ -354,20 +357,113 @@ describe("MCPServerManager", () => {
     expect(Object.keys(result.tools)).toHaveLength(1);
   });
 
-  test("an unreadable mutation epoch sweeps once, then serves normally", async () => {
-    // readMutationEpochToken returns a FRESH synthetic token per read when
-    // the staging root is unreadable (non-ENOENT). Treating each read as a
-    // new mutation would sweep on every serve: prompt refresh loops (bumped
-    // mutation counters) would never stabilize and the serve bracket loop
-    // would exhaust its attempts. Consecutive unreadable tokens must compare
-    // equivalent — one sweep on the transition, normal serving after.
+  test("prompt listing retries when a plugin mutation lands during startup", async () => {
     manager.dispose();
-    let reads = 0;
-    let unreadable = false;
+    let token = "epoch-1";
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: { keyPrefix: "plugin:", readToken: () => Promise.resolve(token) },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-prompt-list-token-race";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    access.startServers = () => Promise.resolve(startResult([]));
+    await manager.getToolsForWorkspace(workspaceRequest("ws-prompt-token-seed"));
+
+    const staleClose = mock(() => Promise.resolve(undefined));
+    const freshClose = mock(() => Promise.resolve(undefined));
+    let starts = 0;
+    access.startServers = () => {
+      starts += 1;
+      if (starts === 1) {
+        token = "epoch-2";
+      }
+      return Promise.resolve(
+        startResult([
+          [
+            pluginKey,
+            {
+              prompts: [{ name: "review", description: starts === 1 ? "stale" : "fresh" }],
+              close: starts === 1 ? staleClose : freshClose,
+            },
+          ],
+        ])
+      );
+    };
+
+    const prompts = await manager.getPromptsForWorkspace(workspaceRequest(workspaceId));
+    expect(starts).toBe(2);
+    expect(staleClose).toHaveBeenCalledTimes(1);
+    expect(freshClose).toHaveBeenCalledTimes(0);
+    const review = prompts.find((prompt) => prompt.promptName === "review");
+    expect(review?.description).toBe("fresh");
+  });
+
+  test("prompt invocation retries when a plugin mutation lands during prompts/get", async () => {
+    manager.dispose();
+    let token = "epoch-1";
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: { keyPrefix: "plugin:", readToken: () => Promise.resolve(token) },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-prompt-get-token-race";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    const staleClose = mock(() => Promise.resolve(undefined));
+    const freshClose = mock(() => Promise.resolve(undefined));
+    const staleGetPrompt = mock(() => {
+      token = "epoch-2";
+      return Promise.resolve({
+        messages: [{ role: "user" as const, content: { type: "text" as const, text: "stale" } }],
+      });
+    });
+    const freshGetPrompt = mock(() =>
+      Promise.resolve({
+        messages: [{ role: "user" as const, content: { type: "text" as const, text: "fresh" } }],
+      })
+    );
+    let starts = 0;
+    access.startServers = () => {
+      starts += 1;
+      return Promise.resolve(
+        startResult([
+          [
+            pluginKey,
+            {
+              getPrompt: starts === 1 ? staleGetPrompt : freshGetPrompt,
+              close: starts === 1 ? staleClose : freshClose,
+            },
+          ],
+        ])
+      );
+    };
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    const prompt = await manager.getPrompt(workspaceId, pluginKey, "review", {});
+    expect(prompt.text).toBe("fresh");
+    expect(staleGetPrompt).toHaveBeenCalledTimes(1);
+    expect(staleClose).toHaveBeenCalledTimes(1);
+    expect(freshGetPrompt).toHaveBeenCalledTimes(1);
+    expect(freshClose).toHaveBeenCalledTimes(0);
+  });
+
+  test("an unreadable mutation epoch fails closed only for plugin servers", async () => {
+    // Unreadability is a STABLE state: transition into it sweeps once and
+    // suppresses plugin configs, while unrelated MCP servers remain usable.
+    // Repeated serves cannot exhaust the mutation bracket, and transition
+    // back to a readable epoch enables plugins again.
+    manager.dispose();
+    let token = "epoch-1";
     manager = new MCPServerManager(configService as unknown as MCPConfigService, {
       pluginInvalidation: {
         keyPrefix: "plugin:",
-        readToken: () => Promise.resolve(unreadable ? `unreadable-${++reads}` : "epoch-1"),
+        readToken: () => Promise.resolve(token),
       },
     });
     access = manager as unknown as MCPServerManagerTestAccess;
@@ -375,27 +471,51 @@ describe("MCPServerManager", () => {
     const workspaceId = "ws-unreadable-epoch";
     const pluginKey = "plugin:abc123:echo";
     configService.listServers.mockImplementation(() =>
-      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+      Promise.resolve({
+        [pluginKey]: {
+          ...stdioConfig("node plugin.js"),
+          plugin: {
+            pluginName: "demo",
+            serverName: "echo",
+            sourceScope: "global" as const,
+            sourceLocation: ".xum/plugins/demo",
+          },
+        },
+        regular: stdioConfig("node regular.js"),
+      })
     );
-    const close = mock(() => Promise.resolve(undefined));
-    access.startServers = () =>
-      Promise.resolve(startResult([[pluginKey, { tools: { echo: testTool() }, close }]]));
+    const pluginClose = mock(() => Promise.resolve(undefined));
+    access.startServers = (...args: unknown[]) => {
+      const servers = args[0] as Record<string, unknown>;
+      return Promise.resolve(
+        startResult(
+          Object.keys(servers).map((name) => [
+            name,
+            {
+              tools: { echo: testTool() },
+              close: name === pluginKey ? pluginClose : mock(() => Promise.resolve(undefined)),
+            },
+          ])
+        )
+      );
+    };
 
     const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    expect(Object.keys(first.tools)).toHaveLength(1);
+    expect(Object.keys(first.tools)).toHaveLength(2);
 
-    // The staging root becomes unreadable: the token transition sweeps once.
-    unreadable = true;
+    token = MUTATION_EPOCH_UNREADABLE_TOKEN;
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(pluginClose).toHaveBeenCalledTimes(1);
     expect(Object.keys(second.tools)).toHaveLength(1);
 
-    // Still unreadable: fresh synthetic tokens are equivalent — no further
-    // sweeps, the cached instance is served untouched.
-    const closesBefore = close.mock.calls.length;
+    // Stable unreadability: no repeated sweep or retry exhaustion.
     const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    expect(close.mock.calls.length).toBe(closesBefore);
+    expect(pluginClose).toHaveBeenCalledTimes(1);
     expect(Object.keys(third.tools)).toHaveLength(1);
+
+    token = "epoch-2";
+    const recovered = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(Object.keys(recovered.tools)).toHaveLength(2);
   });
 
   test("cross-process sweep refreshes cached override snapshots from disk", async () => {

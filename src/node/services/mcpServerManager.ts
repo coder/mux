@@ -28,7 +28,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import type { AgentPluginsMcpContext } from "@/node/services/agentPlugins/mcpConfig";
-import { areMutationEpochTokensEquivalent } from "@/node/services/agentPlugins/journals";
+import { isMutationEpochUnreadable } from "@/node/services/agentPlugins/journals";
 import type { PolicyService } from "@/node/services/policyService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import {
@@ -1175,10 +1175,7 @@ export class MCPServerManager {
         this.lastPluginInvalidationToken = token;
         return;
       }
-      // Equivalence, not equality: a persistently unreadable staging root
-      // yields a fresh synthetic token per read, and sweeping on every serve
-      // would livelock prompt refresh loops and the serve bracket loop.
-      if (areMutationEpochTokensEquivalent(token, this.lastPluginInvalidationToken)) {
+      if (token === this.lastPluginInvalidationToken) {
         return;
       }
       log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
@@ -1199,15 +1196,44 @@ export class MCPServerManager {
     return next;
   }
 
+  /** Remove only Agent Plugin keys when disk-authoritative overrides cannot be read. */
+  private scrubPluginOverrideKeys(
+    overrides: WorkspaceMCPOverrides | undefined
+  ): WorkspaceMCPOverrides | undefined {
+    if (overrides === undefined) {
+      return undefined;
+    }
+    const prefix = this.pluginInvalidation?.keyPrefix;
+    if (prefix === undefined) {
+      return overrides;
+    }
+    return {
+      ...overrides,
+      ...(overrides.enabledServers !== undefined
+        ? { enabledServers: overrides.enabledServers.filter((key) => !key.startsWith(prefix)) }
+        : {}),
+      ...(overrides.disabledServers !== undefined
+        ? { disabledServers: overrides.disabledServers.filter((key) => !key.startsWith(prefix)) }
+        : {}),
+      ...(overrides.toolAllowlist !== undefined
+        ? {
+            toolAllowlist: Object.fromEntries(
+              Object.entries(overrides.toolAllowlist).filter(([key]) => !key.startsWith(prefix))
+            ),
+          }
+        : {}),
+    };
+  }
+
   /**
    * Reload cached workspace override snapshots from disk after a sibling
-   * process's plugin mutation. Workspaces whose disk state cannot be read
-   * (no reader wired, read failure) get their cached state DROPPED instead
-   * so nothing stale survives — callers then supply fresh snapshots on their
-   * next serve, and prompt refreshes for such workspaces stay disabled until
-   * then. Off-host workspaces (SSH/devcontainer) are skipped: plugin servers
-   * are never offered there, so a stale plugin enable is inert, and reading
-   * their override files would exec remotely inside the serialized sweep.
+   * process's plugin mutation. When disk state cannot be read (no reader
+   * wired, read failure), scrub only plugin keys from both caches instead of
+   * deleting recorded request options: getPrompt's local fallback must not
+   * resurrect a stale plugin enable, while unrelated MCP settings remain
+   * usable. Off-host workspaces (SSH/devcontainer) are skipped: plugin servers
+   * are never offered there, and reading their override files would exec
+   * remotely inside the serialized sweep.
    */
   private async refreshCachedOverridesFromDisk(): Promise<void> {
     const readOverrides = this.pluginInvalidation?.readWorkspaceOverrides;
@@ -1231,21 +1257,20 @@ export class MCPServerManager {
           });
         }
       }
-      if (readFailed) {
-        this.latestWorkspaceOverrides.delete(workspaceId);
-        this.lastWorkspaceRequestOptions.delete(workspaceId);
-      } else {
-        this.latestWorkspaceOverrides.set(workspaceId, fresh);
-        this.lastWorkspaceRequestOptions.set(workspaceId, { ...recorded, overrides: fresh });
-      }
+      const authoritative = readFailed ? this.scrubPluginOverrideKeys(recorded.overrides) : fresh;
+      this.latestWorkspaceOverrides.set(workspaceId, authoritative);
+      this.lastWorkspaceRequestOptions.set(workspaceId, {
+        ...recorded,
+        overrides: authoritative,
+      });
       // In-flight prompt refresh loops must re-run against the new state.
       this.bumpWorkspaceOptionsMutationCount(workspaceId);
     }
-    // Entries without recorded options carry no runtime/identity to refresh
-    // from; drop them so callers' fresh disk snapshots pass through.
-    for (const workspaceId of [...this.latestWorkspaceOverrides.keys()]) {
+    // Entries without recorded options carry no runtime/identity to reload;
+    // scrub their plugin keys in place so stale caller snapshots cannot win.
+    for (const [workspaceId, overrides] of [...this.latestWorkspaceOverrides]) {
       if (!this.lastWorkspaceRequestOptions.has(workspaceId)) {
-        this.latestWorkspaceOverrides.delete(workspaceId);
+        this.latestWorkspaceOverrides.set(workspaceId, this.scrubPluginOverrideKeys(overrides));
         this.bumpWorkspaceOptionsMutationCount(workspaceId);
       }
     }
@@ -1621,29 +1646,24 @@ export class MCPServerManager {
     return filtered;
   }
 
-  async getToolsForWorkspace(
-    options: MCPWorkspaceRequestOptions
-  ): Promise<MCPToolsForWorkspaceResult> {
-    // Post-publication token recheck: a sibling mutation that BEGAN after
-    // the preflight read (retireCrossProcessPluginInstances inside
-    // ensureWorkspaceServers) is invisible to the in-process invalidation
-    // epoch, and the installer's discovery bracket cannot flag a mutation
-    // that starts after its scan completed — this serve could otherwise
-    // return instances from the replaced tree and use them indefinitely.
-    // The instances are published now, so the sweep can retire them; loop
-    // until a serve is BRACKETED by an unchanged token — a single rebuild
-    // could itself race a second mutation that starts after its preflight
-    // and publish a stale instance. Each extra iteration requires a real
-    // sibling mutation to have advanced the on-disk epoch mid-serve, so the
-    // loop terminates in practice; the cap turns a pathological mutation
-    // storm into an explicit error instead of serving stale instances.
+  /**
+   * Run a server operation only when the plugin mutation epoch is stable
+   * across its complete publication/query window. The preflight retires any
+   * instances invalidated by a sibling process before the operation starts;
+   * the post-read catches a mutation that began after that preflight. Every
+   * server-starting path (tools, prompt listing, prompt invocation) uses this
+   * same bracket so none can publish or query a stale plugin instance through
+   * a direct ensureWorkspaceServers call.
+   */
+  private async runWithStablePluginEpoch<T>(operation: () => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
-      const result = await this.ensureWorkspaceServers(options, true);
+      await this.retireCrossProcessPluginInstances();
+      const result = await operation();
       if (this.pluginInvalidation === undefined || !this.pluginInvalidationTokenSeen) {
         return result;
       }
       const token = await this.pluginInvalidation.readToken();
-      if (areMutationEpochTokensEquivalent(token, this.lastPluginInvalidationToken)) {
+      if (token === this.lastPluginInvalidationToken) {
         return result;
       }
       if (attempt >= 5) {
@@ -1655,6 +1675,12 @@ export class MCPServerManager {
     }
   }
 
+  async getToolsForWorkspace(
+    options: MCPWorkspaceRequestOptions
+  ): Promise<MCPToolsForWorkspaceResult> {
+    return this.runWithStablePluginEpoch(() => this.ensureWorkspaceServers(options, true));
+  }
+
   /**
    * Skips tools/list refreshes on cached instances so an unrelated server's
    * 60-second SDK timeout cannot block prompt paths.
@@ -1663,13 +1689,9 @@ export class MCPServerManager {
     requestOptions: MCPWorkspaceRequestOptions,
     refreshToolCatalogs: boolean
   ): Promise<MCPToolsForWorkspaceResult> {
-    // A sibling process's plugin mutation must retire cached plugin
-    // instances BEFORE this serve returns them (and before the epoch
-    // snapshot below, so the recycle is visible to this startup). It must
-    // also run BEFORE the overlay below captures this call's overrides: the
-    // sweep refreshes the cached override snapshots from disk, and options
-    // captured earlier would pass pre-mutation enables into startup.
-    await this.retireCrossProcessPluginInstances();
+    // runWithStablePluginEpoch performs the sibling-mutation preflight BEFORE
+    // entering this method, so refreshed disk overrides are visible to the
+    // overlay below and every caller gets the same post-publication bracket.
 
     // Cold workspaces have no recorded state for applyWorkspaceOverrides to repair.
     // Overlay the newest overrides over a caller snapshot that may predate the mutation.
@@ -1721,9 +1743,15 @@ export class MCPServerManager {
     // container even though it extends LocalBaseRuntime.
     const fullServerInfo: Record<string, MCPServerInfo> = {};
     const execsOffHost = runtime instanceof RemoteRuntime || runtime instanceof DevcontainerRuntime;
+    const pluginEpochUnreadable = isMutationEpochUnreadable(this.lastPluginInvalidationToken);
     for (const [name, info] of Object.entries(allServers)) {
-      if (info.plugin !== undefined && execsOffHost) {
-        log.debug("[MCP] Skipping Agent Plugin server on off-host runtime", { workspaceId, name });
+      if (info.plugin !== undefined && (execsOffHost || pluginEpochUnreadable)) {
+        log.debug(
+          execsOffHost
+            ? "[MCP] Skipping Agent Plugin server on off-host runtime"
+            : "[MCP] Skipping Agent Plugin server while mutation epoch is unreadable",
+          { workspaceId, name }
+        );
         continue;
       }
       fullServerInfo[name] = info;
@@ -2311,12 +2339,26 @@ export class MCPServerManager {
         currentOptions.projectPath
       );
       const refreshed = await raceWithAbortAndTimeout(
-        this.ensureWorkspaceServers(
-          secretsUsed !== undefined
-            ? { ...currentOptions, projectSecrets: secretsUsed }
-            : currentOptions,
-          false
-        ),
+        this.runWithStablePluginEpoch(async () => {
+          await this.ensureWorkspaceServers(
+            secretsUsed !== undefined
+              ? { ...currentOptions, projectSecrets: secretsUsed }
+              : currentOptions,
+            false
+          );
+          const entry = this.workspaceServers.get(workspaceId);
+          if (entry === undefined) {
+            return undefined;
+          }
+          // Include the prompt catalog query inside the epoch bracket: a
+          // sibling swap that lands after startup but before prompts/list
+          // must retire the stale instance and retry the whole operation.
+          await this.refreshInstancePrompts(
+            this.promptEligibleInstances(entry),
+            callOptions?.signal
+          );
+          return entry;
+        }),
         {
           ...(callOptions?.signal !== undefined ? { signal: callOptions.signal } : {}),
         }
@@ -2324,11 +2366,13 @@ export class MCPServerManager {
       if (refreshed.kind === "aborted") {
         throw new Error("MCP prompt discovery was aborted");
       }
-      const entry = this.workspaceServers.get(workspaceId);
-      if (!entry) return [];
-
-      latestEntry = entry;
-      await this.refreshInstancePrompts(this.promptEligibleInstances(entry), callOptions?.signal);
+      if (refreshed.kind === "timeout") {
+        throw new Error("MCP prompt discovery timed out");
+      }
+      if (refreshed.value === undefined) {
+        return [];
+      }
+      latestEntry = refreshed.value;
       const secretsNow = await this.resolveSecretsForRefresh(
         workspaceId,
         currentOptions.projectPath
@@ -2627,24 +2671,13 @@ export class MCPServerManager {
     args: Record<string, string>,
     options?: { signal?: AbortSignal }
   ): Promise<{ text: string; description?: string }> {
-    // Refresh cached state because it can outlive configuration changes. Race
-    // startup with cancellation, but let a losing startup finish into the cache
-    // so idle cleanup can close it.
     const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
-    if (lastOptions) {
-      const refresh = async (projectSecrets: Record<string, string> | undefined): Promise<void> => {
-        // Re-read after the resolver await: a settings mutation recorded while
-        // secrets resolved must not be clobbered by a pre-await options snapshot.
-        const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? lastOptions;
-        await this.ensureWorkspaceServers(
-          projectSecrets !== undefined ? { ...currentOptions, projectSecrets } : currentOptions,
-          false
-        );
-      };
-      // Refresh until both mutation counters and resolved secrets remain stable
-      // so neither a settings mutation nor a secret rotation completing during
-      // the refresh leaves this dispatch on pre-mutation state. Later mutations
-      // race with the in-flight request and cannot be prevented here.
+    let stableSecrets: Record<string, string> | undefined;
+    if (lastOptions !== undefined) {
+      // First stabilize cached startup state against settings/trust/secret
+      // mutations. Prompt materialization happens only AFTER this loop, so a
+      // cold-start config edit repairs and retries instead of surfacing the
+      // transient stalePrompt marker to the user.
       for (;;) {
         const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
         const generationBefore = this.configService.configGeneration;
@@ -2652,11 +2685,26 @@ export class MCPServerManager {
           workspaceId,
           lastOptions.projectPath
         );
-        const refreshed = await raceWithAbortAndTimeout(refresh(secretsUsed), {
-          ...(options?.signal !== undefined ? { signal: options.signal } : {}),
-        });
+        const refreshed = await raceWithAbortAndTimeout(
+          this.runWithStablePluginEpoch(async () => {
+            // Re-read after the resolver await: a settings mutation recorded
+            // while secrets resolved must not be clobbered by a pre-await
+            // options snapshot.
+            const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? lastOptions;
+            await this.ensureWorkspaceServers(
+              secretsUsed !== undefined
+                ? { ...currentOptions, projectSecrets: secretsUsed }
+                : currentOptions,
+              false
+            );
+          }),
+          { ...(options?.signal !== undefined ? { signal: options.signal } : {}) }
+        );
         if (refreshed.kind === "aborted") {
           throw new Error(`MCP prompt request for '${serverName}/${promptName}' was aborted`);
+        }
+        if (refreshed.kind === "timeout") {
+          throw new Error(`MCP prompt request for '${serverName}/${promptName}' timed out`);
         }
         const secretsNow = await this.resolveSecretsForRefresh(
           workspaceId,
@@ -2667,36 +2715,65 @@ export class MCPServerManager {
           this.configService.configGeneration === generationBefore &&
           secretRecordsEqual(secretsUsed, secretsNow)
         ) {
+          stableSecrets = secretsNow;
           break;
         }
       }
     }
-    const entry = this.workspaceServers.get(workspaceId);
-    if (entry && !entry.enabledServerNames.has(serverName)) {
-      throw new Error(`MCP server '${serverName}' is disabled`);
+
+    const invoked = await raceWithAbortAndTimeout(
+      this.runWithStablePluginEpoch(async () => {
+        // Re-run startup inside the SAME bracket as prompts/get: a sibling
+        // mutation detected by the preflight may have retired the instance
+        // stabilized above, and the operation must rebuild before querying.
+        if (lastOptions !== undefined) {
+          const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? lastOptions;
+          await this.ensureWorkspaceServers(
+            stableSecrets !== undefined
+              ? { ...currentOptions, projectSecrets: stableSecrets }
+              : currentOptions,
+            false
+          );
+        }
+        const entry = this.workspaceServers.get(workspaceId);
+        if (entry && !entry.enabledServerNames.has(serverName)) {
+          throw new Error(`MCP server '${serverName}' is disabled`);
+        }
+        if (entry?.stalePromptServerNames?.has(serverName)) {
+          throw new Error(
+            `MCP server '${serverName}' was reconfigured while this request was being prepared; retry`
+          );
+        }
+        const instance = entry?.instances.get(serverName);
+        if (!instance || instance.isClosed) {
+          throw new Error(`MCP server '${serverName}' is not connected`);
+        }
+        this.markActivity(workspaceId);
+        // Include prompts/get itself inside the mutation-epoch bracket. A
+        // sibling update that lands after startup but before materialization
+        // retires the stale instance and retries this read-only operation.
+        const result = await instance.getPrompt(promptName, args, options);
+        const text = flattenMcpPrompt(result);
+        if (text.trim().length === 0) {
+          // Providers can reject empty user content, so fail expansion up
+          // front rather than persisting an empty synthetic user message.
+          throw new Error(`MCP prompt '${serverName}/${promptName}' returned no text content`);
+        }
+        return {
+          // Cap here because both composer expansion and mcp_prompt_get use this path.
+          text: truncateUtf8Bytes(text, MCP_PROMPT_MAX_TEXT_BYTES, MCP_PROMPT_TRUNCATION_MARKER),
+          ...(result.description !== undefined ? { description: result.description } : {}),
+        };
+      }),
+      { ...(options?.signal !== undefined ? { signal: options.signal } : {}) }
+    );
+    if (invoked.kind === "aborted") {
+      throw new Error(`MCP prompt request for '${serverName}/${promptName}' was aborted`);
     }
-    if (entry?.stalePromptServerNames?.has(serverName)) {
-      throw new Error(
-        `MCP server '${serverName}' was reconfigured while this request was being prepared; retry`
-      );
+    if (invoked.kind === "timeout") {
+      throw new Error(`MCP prompt request for '${serverName}/${promptName}' timed out`);
     }
-    const instance = entry?.instances.get(serverName);
-    if (!instance || instance.isClosed) {
-      throw new Error(`MCP server '${serverName}' is not connected`);
-    }
-    this.markActivity(workspaceId);
-    const result = await instance.getPrompt(promptName, args, options);
-    const text = flattenMcpPrompt(result);
-    if (text.trim().length === 0) {
-      // Providers can reject empty user content, so fail expansion up front
-      // rather than persisting an empty synthetic user message.
-      throw new Error(`MCP prompt '${serverName}/${promptName}' returned no text content`);
-    }
-    return {
-      // Cap here because both composer expansion and mcp_prompt_get use this path.
-      text: truncateUtf8Bytes(text, MCP_PROMPT_MAX_TEXT_BYTES, MCP_PROMPT_TRUNCATION_MARKER),
-      ...(result.description !== undefined ? { description: result.description } : {}),
-    };
+    return invoked.value;
   }
 
   /**

@@ -9,7 +9,7 @@ import {
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
-import { readContainerMutationState } from "./journals";
+import { isMutationEpochUnreadable, readContainerMutationState } from "./journals";
 import {
   isValidAgentPluginName,
   validatePluginManifest,
@@ -420,12 +420,20 @@ export async function journalDerivedDiscoveryGate(
     )
   );
   return {
-    suppressed: containerPaths.filter((containerPath) => pre.get(containerPath)?.hasJournals),
+    suppressed: containerPaths.filter((containerPath) => {
+      const state = pre.get(containerPath);
+      return state?.hasJournals === true || isMutationEpochUnreadable(state?.epoch);
+    }),
     confirm: async () => {
       const flagged = await Promise.all(
         containerPaths.map(async (containerPath) => {
           const post = await readContainerMutationState(containerPath);
-          const changed = post.hasJournals || post.epoch !== pre.get(containerPath)?.epoch;
+          const preEpoch = pre.get(containerPath)?.epoch;
+          const changed =
+            post.hasJournals ||
+            isMutationEpochUnreadable(preEpoch) ||
+            isMutationEpochUnreadable(post.epoch) ||
+            post.epoch !== preEpoch;
           return changed ? [containerPath] : [];
         })
       );
