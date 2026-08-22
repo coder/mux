@@ -233,8 +233,9 @@ function coerceReadFilePaths(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  // mergeReadFilePaths already trims, dedupes, and caps; merging against an
-  // empty list reuses that sanitization for persisted rows.
+  // mergeReadFilePaths already dedupes and caps (without trimming, since
+  // whitespace is part of a path's identity); merging against an empty list
+  // reuses that sanitization for persisted rows.
   return mergeReadFilePaths(
     [],
     value.filter((item): item is string => typeof item === "string")

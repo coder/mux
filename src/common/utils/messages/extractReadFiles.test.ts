@@ -189,6 +189,15 @@ describe("mergeReadFilePaths", () => {
     ]);
   });
 
+  it("preserves whitespace in paths and keeps whitespace-distinct files separate", () => {
+    // " report.txt" and "report.txt" are different files; trimming during the
+    // merge would collapse them and advertise the wrong already-read path.
+    expect(mergeReadFilePaths(["report.txt"], [" report.txt"])).toEqual([
+      " report.txt",
+      "report.txt",
+    ]);
+  });
+
   it("caps the merged list, evicting the oldest entries", () => {
     const existing = Array.from({ length: MAX_POST_COMPACTION_READ_FILES }, (_, i) => `/old-${i}`);
     const incoming = ["/new-1", "/new-2"];

@@ -132,10 +132,13 @@ export function mergeReadFilePaths(
 
   for (const path of [...incoming, ...existing]) {
     if (typeof path !== "string") continue;
-    const trimmed = path.trim();
-    if (trimmed.length === 0 || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    merged.push(trimmed);
+    // Do NOT trim: extractReadFilePaths deliberately preserves leading/trailing
+    // whitespace as part of the file's identity (see its `add` helper).
+    // Trimming here would advertise a different file post-compaction and
+    // could collapse two distinct filenames into one. Reject only empties.
+    if (path.length === 0 || seen.has(path)) continue;
+    seen.add(path);
+    merged.push(path);
     if (merged.length >= MAX_POST_COMPACTION_READ_FILES) {
       break;
     }
