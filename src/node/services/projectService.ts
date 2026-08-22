@@ -523,6 +523,21 @@ export class ProjectService {
       if (existingStat == null) {
         try {
           await fsPromises.mkdir(path.dirname(normalizedPath), { recursive: true });
+        } catch (error) {
+          const err = error as NodeJS.ErrnoException;
+          // Recursive mkdir never rejects an existing directory, so EEXIST here means a
+          // path component exists as a file: report it like ENOTDIR ("not a folder").
+          const friendly = friendlyFsError(
+            err.code === "EEXIST" ? { ...err, code: "ENOTDIR" } : error,
+            "create folder",
+            normalizedPath
+          );
+          if (friendly) {
+            return Err(friendly);
+          }
+          throw error;
+        }
+        try {
           await fsPromises.mkdir(normalizedPath);
           createdDirectory = true;
         } catch (error) {
@@ -580,14 +595,18 @@ export class ProjectService {
       }
 
       const parentProjectPath = findDeepestTopLevelParentProject(normalizedPath, config.projects);
+      // Initializing a nested repository would flip the new directory's git root after
+      // the same-repository validation below, persisting a sub-project from a different
+      // repository (mirrors the clone-into-project-tree rejection). Check the canonical
+      // path too so a symlinked alias into a registered checkout cannot bypass this.
+      if (
+        options?.initGit &&
+        (parentProjectPath ?? findDeepestTopLevelParentProject(canonicalPath, config.projects))
+      ) {
+        await cleanupCreatedDirectory();
+        return Err("Cannot create a new git repository inside an existing project");
+      }
       if (parentProjectPath) {
-        // Initializing a nested repository here would flip the new directory's git root
-        // after the same-repository validation below, persisting a sub-project from a
-        // different repository (mirrors the clone-into-project-tree rejection).
-        if (options?.initGit) {
-          await cleanupCreatedDirectory();
-          return Err("Cannot create a new git repository inside an existing project");
-        }
         const [parentGitRoot, subProjectGitRoot] = await Promise.all([
           readGitTopLevel(parentProjectPath),
           readGitTopLevel(normalizedPath),

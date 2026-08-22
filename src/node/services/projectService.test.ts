@@ -226,6 +226,30 @@ describe("ProjectService", () => {
       expect(config.loadConfigOrDefault().projects.has(nestedPath)).toBe(false);
     });
 
+    it("rejects initGit reached through a symlink into a registered project tree", async () => {
+      if (process.platform === "win32") return;
+
+      // Canonicalize the temp root (macOS /var is itself a symlink) so the registered
+      // parent path matches what realpath resolves the alias to.
+      const realTempDir = await fs.realpath(tempDir);
+      const parentPath = await createLocalGitRepository(realTempDir, "symlink-parent-repo");
+      const parentResult = await service.create(parentPath);
+      expect(parentResult.success).toBe(true);
+
+      const aliasPath = path.join(realTempDir, "parent-alias");
+      await fs.symlink(parentPath, aliasPath);
+      const nestedAliasPath = path.join(aliasPath, "nested-new-repo");
+
+      const result = await service.create(nestedAliasPath, { initGit: true });
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain(
+        "Cannot create a new git repository inside an existing project"
+      );
+      expect(fs.stat(path.join(parentPath, "nested-new-repo"))).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(nestedAliasPath)).toBe(false);
+    });
+
     it("rolls back git init in a pre-existing directory when the initial commit fails", async () => {
       if (process.platform === "win32") return;
 
