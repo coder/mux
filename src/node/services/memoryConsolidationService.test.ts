@@ -1453,4 +1453,45 @@ describe("MemoryConsolidationService", () => {
     });
     expect(resolveDreamModelString(fixture.config, "ws-dream")).toBe("anthropic:claude-test-dream");
   });
+
+  it("keeps the dream fallback on the workspace's selected route (r31 security)", async () => {
+    using fixture = await createFixture();
+    // The workspace's CURRENT model lives in the selected agent's per-agent
+    // bucket; legacy aiSettings is stale (updateAgentAISettings never rewrites
+    // it). Without a dream override the fallback must follow the selected
+    // route, not the stale legacy model or the built-in default.
+    await fixture.config.editConfig((cfg) => {
+      cfg.agentAiDefaults = {};
+      for (const project of cfg.projects.values()) {
+        const workspace = project.workspaces.find((entry) => entry.id === "ws-dream");
+        if (workspace) {
+          workspace.agentId = "exec";
+          workspace.aiSettingsByAgent = {
+            exec: { model: "coder:private-gw/claude-sonnet", thinkingLevel: "off" },
+          };
+          workspace.aiSettings = { model: "anthropic:stale-legacy", thinkingLevel: "off" };
+        }
+      }
+      return cfg;
+    });
+    expect(resolveDreamModelString(fixture.config, "ws-dream")).toBe(
+      "coder:private-gw/claude-sonnet"
+    );
+
+    // An explicit per-workspace dream override remains higher-precedence
+    // consent for a different route.
+    await fixture.config.editConfig((cfg) => {
+      for (const project of cfg.projects.values()) {
+        const workspace = project.workspaces.find((entry) => entry.id === "ws-dream");
+        if (workspace?.aiSettingsByAgent) {
+          workspace.aiSettingsByAgent.dream = {
+            model: "anthropic:explicit-dream",
+            thinkingLevel: "off",
+          };
+        }
+      }
+      return cfg;
+    });
+    expect(resolveDreamModelString(fixture.config, "ws-dream")).toBe("anthropic:explicit-dream");
+  });
 });
