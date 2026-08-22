@@ -8755,6 +8755,36 @@ describe("WorkspaceService registration-time plugin override sanitization", () =
     expect(pruned).toEqual(["ws-new:plugin:"]);
   });
 
+  test("refuses to prune when the persistent sibling config is unreadable", async () => {
+    // The lenient loadConfigOrDefault swallows a malformed ~/.xum/config.json
+    // into an EMPTY project map — which reads as "no live sibling" and would
+    // prune enables a live desktop workspace still owns. The persistent
+    // source must be read in throwing mode and sanitization must fail closed
+    // (abort the registration, leave the override file untouched).
+    const service = makeService([{ id: "ws-new", path: "/tmp/proj" }]);
+    const pruned: string[] = [];
+    service.setWorkspaceMcpOverridesService({
+      prunePluginOverrideKeys: (workspaceId, keyPrefix) => {
+        pruned.push(`${workspaceId}:${keyPrefix}`);
+        return Promise.resolve();
+      },
+    });
+    const broken = {
+      loadConfigOrDefault: (options?: { throwOnError?: boolean }) => {
+        if (options?.throwOnError) {
+          throw new Error("config.json is malformed");
+        }
+        // A lenient read would hide the corruption behind an empty map.
+        return { projects: new Map() };
+      },
+    } as unknown as Pick<Config, "loadConfigOrDefault">;
+    const error = await (
+      service as unknown as SanitizeAccess
+    ).sanitizeStalePluginOverridesForNewWorkspace("ws-new", "/tmp/proj", broken);
+    expect(error).toContain("unreadable");
+    expect(pruned).toEqual([]);
+  });
+
   test("skips sanitization while a live sibling resolves to the same path", async () => {
     // Conversation forks of a local workspace share the checkout: the
     // sibling's consent context is alive, so its enables must survive.

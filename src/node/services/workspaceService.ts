@@ -2879,12 +2879,28 @@ export class WorkspaceService extends EventEmitter {
     //   recognized, or pruning would strip a live workspace's enables.
     //   Failures fall back to spelling so an unresolvable path errs toward
     //   skipping (leaving keys) rather than pruning live consent.
+    // Bounded canonicalization: realpath against a stalled filesystem (e.g. a
+    // dead NFS mount backing an UNRELATED persistent workspace record) must
+    // not hang CLI registration indefinitely. Timeouts join ordinary realpath
+    // failures in the spelling fallback below.
+    const CANONICALIZE_TIMEOUT_MS = 2_000;
     const canonicalize = async (candidate: string): Promise<string> => {
       const stripped = stripTrailingSlashes(candidate);
+      let timer: NodeJS.Timeout | undefined;
       try {
-        return await fsPromises.realpath(stripped);
+        return await Promise.race([
+          fsPromises.realpath(stripped),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("realpath timed out")),
+              CANONICALIZE_TIMEOUT_MS
+            );
+          }),
+        ]);
       } catch {
         return stripped;
+      } finally {
+        clearTimeout(timer);
       }
     };
     const isHostLocalConfig = (runtimeConfig: RuntimeConfig | undefined): boolean =>
@@ -2896,12 +2912,24 @@ export class WorkspaceService extends EventEmitter {
     // Scan the service's own config AND (when provided) the persistent one:
     // ephemeral CLI configs carry no workspace records, so a desktop
     // workspace live on the same checkout is only visible in the latter.
-    const configSources = [
-      this.config,
-      ...(persistentSiblingConfig ? [persistentSiblingConfig] : []),
-    ];
-    for (const configSource of configSources) {
-      const config = configSource.loadConfigOrDefault();
+    // The persistent source reads in THROWING mode: the lenient read swallows
+    // a malformed/unreadable config into an empty project map, which reads as
+    // "no live sibling" and would prune enables a live desktop workspace
+    // still owns. A missing file still yields the default (genuinely no
+    // siblings). this.config keeps the lenient read — it is the service's own
+    // store, whose desktop/task registration paths already depend on it.
+    let configSnapshots: ProjectsConfig[];
+    try {
+      configSnapshots = [
+        this.config.loadConfigOrDefault(),
+        ...(persistentSiblingConfig
+          ? [persistentSiblingConfig.loadConfigOrDefault({ throwOnError: true })]
+          : []),
+      ];
+    } catch (error) {
+      return `Cannot verify live sibling workspaces for plugin override sanitization (the persistent config is unreadable: ${getErrorMessage(error)}). Refusing to prune; fix the config and retry.`;
+    }
+    for (const config of configSnapshots) {
       for (const project of config.projects.values()) {
         for (const workspace of project.workspaces) {
           if (
