@@ -273,6 +273,29 @@ describe("Config", () => {
       errorSpy.mockRestore();
     });
 
+    it("re-creates a deleted sidecar before an edit may overwrite the corrupt config", async () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      config.loadConfigOrDefault();
+      const [firstBackup] = corruptBackups();
+      fs.rmSync(firstBackup);
+
+      await config.setUpdateChannel("nightly");
+
+      // The edit-time load must have re-verified against disk and restored preservation.
+      const backups = corruptBackups();
+      expect(backups).toHaveLength(1);
+      expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+      const rewritten = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(rewritten.updateChannel).toBe("nightly");
+      errorSpy.mockRestore();
+    });
+
     it("logs a corrupt config once across Config instances on the same path", () => {
       const corruptData = '{ "projects": ';
       fs.writeFileSync(configFilePath(), corruptData);

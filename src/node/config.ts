@@ -823,7 +823,10 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
 interface ConfigLoadFailureState {
   /** Signature (content + error) of the last logged load failure, for log dedupe. */
   failureSignature: string | null;
-  /** Content hash of corrupt config bytes whose sidecar backup has been confirmed on disk. */
+  /**
+   * Content hash of corrupt config bytes whose sidecar backup was verified on disk during
+   * the most recent failed load (re-checked every failed load, never trusted across loads).
+   */
   backupSignature: string | null;
 }
 
@@ -975,18 +978,14 @@ export class Config {
     // sidecar regardless of which error message they produced.
     const contentSignature =
       rawBytes !== undefined ? crypto.createHash("sha256").update(rawBytes).digest("hex") : null;
-    // A confirmed backup only protects its own bytes. When the current content differs (or
-    // cannot be read), drop the stale confirmation so the edit gate blocks writes until the
-    // new bytes have their own confirmed sidecar.
-    if (state.backupSignature !== null && state.backupSignature !== contentSignature) {
-      state.backupSignature = null;
-    }
-    if (alreadyLogged && (rawBytes === undefined || contentSignature === state.backupSignature)) {
-      return;
-    }
+    const wasConfirmed =
+      state.backupSignature !== null && state.backupSignature === contentSignature;
 
+    // Re-verify preservation against the disk on every failed load rather than trusting a
+    // cached confirmation: a sidecar deleted or truncated since the last load must re-block
+    // the edit gate (and be re-created) or a defaults write would destroy the only copy.
     let backupStatus = "No backup was created because the file contents could not be read.";
-    let backupJustConfirmed = false;
+    let backupConfirmed = false;
     if (rawBytes !== undefined) {
       try {
         const configDir = path.dirname(this.configFile);
@@ -1021,20 +1020,20 @@ export class Config {
           }
           backupStatus = `The original bytes were backed up to ${backupPath}.`;
         }
-        state.backupSignature = contentSignature;
-        backupJustConfirmed = true;
+        backupConfirmed = true;
       } catch (backupError) {
-        // Leave backupSignature unset so the next load retries the backup; until a sidecar
-        // is confirmed, enqueueConfigEdit refuses to overwrite the corrupt source.
         const backupErrorMessage =
           backupError instanceof Error ? backupError.message : String(backupError);
         backupStatus = `Backup failed (${backupErrorMessage}); it will be retried on the next load, and settings changes will not overwrite config.json until a backup succeeds.`;
       }
     }
+    // Until a sidecar is confirmed for these exact bytes, enqueueConfigEdit refuses to
+    // overwrite the corrupt source.
+    state.backupSignature = backupConfirmed ? contentSignature : null;
 
-    // Log on a new failure, and once more when a previously failed backup finally lands so
-    // the sidecar path becomes visible; silent otherwise to avoid per-load spam.
-    if (alreadyLogged && !backupJustConfirmed) {
+    // Log on a new failure, and once more when preservation transitions from unconfirmed to
+    // confirmed so the sidecar path becomes visible; silent otherwise to avoid per-load spam.
+    if (alreadyLogged && !(backupConfirmed && !wasConfirmed)) {
       return;
     }
     state.failureSignature = failureSignature;
