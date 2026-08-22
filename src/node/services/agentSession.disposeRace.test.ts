@@ -192,7 +192,12 @@ describe("AgentSession disposal race conditions", () => {
         await modelGate;
         return Err({ type: "api_key_not_found" as const, provider: "anthropic" });
       },
-      getWorkspaceMetadata: () => Promise.resolve(Err("no metadata in this test")),
+      // Side-channel candidates are confined to workspace-configured
+      // providers; metadata must resolve with a model or the writer settles
+      // null before createModelWithPinnedMetadata — the gate above would
+      // never park the send.
+      getWorkspaceMetadata: () =>
+        Promise.resolve(Ok({ aiSettings: { model: "anthropic:claude-sonnet-4-5" } })),
     } as unknown as BranchSummaryAiService;
     // Large enough to clear the tiny-segment threshold (chars/4 heuristic).
     const filler = "investigated the dispose race and traced the write path ".repeat(200);
