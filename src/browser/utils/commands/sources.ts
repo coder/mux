@@ -29,6 +29,7 @@ import {
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
+import { publishAgentPluginsMutated } from "@/browser/utils/agentPluginMutations";
 import { publishPluginsSectionIntent } from "@/browser/features/Settings/Sections/pluginsSectionIntents";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -1758,6 +1759,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 // branch update applied: the fresh check may have discovered
                 // moved tags or per-plugin errors the section should show.
                 publishPluginsSectionIntent({ type: "refresh" });
+                if (updatedNames.length > 0) {
+                  // Mounted composers cache contributed slash-command/skill
+                  // descriptors; an update can change them without a remount.
+                  publishAgentPluginsMutated();
+                }
 
                 const summary: string[] = [];
                 if (updatedNames.length > 0) {
@@ -1842,6 +1848,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   // A mounted section keeps its own stale updateChecks map;
                   // tell it to re-query so badges match the toast.
                   publishPluginsSectionIntent({ type: "refresh" });
+                  if (result.success) {
+                    // Mounted composers cache contributed slash-command/skill
+                    // descriptors; an update can change them without a remount.
+                    publishAgentPluginsMutated();
+                  }
                   showCommandFeedbackToast(
                     result.success
                       ? { type: "success", message: `Updated ${values.pluginName}.` }

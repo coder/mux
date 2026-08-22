@@ -2,6 +2,7 @@ import { TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS } from "@/constants/termination
 import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { EventEmitter } from "events";
 import * as path from "path";
+import { acquireCrossProcessLock } from "@/node/utils/main/crossProcessLock";
 import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
 import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
@@ -2761,6 +2762,29 @@ export class WorkspaceService extends EventEmitter {
   private readonly pendingPluginSanitizations = new Set<string>();
 
   /**
+   * Serializes persist + sanitize of a new host-local registration across
+   * PROCESSES sharing this config root. pendingPluginSanitizations only
+   * covers this process: two processes registering the same preserved
+   * checkout could otherwise each persist an entry and then each read the
+   * other's unsanitized entry as a live sibling — both skipping the prune,
+   * letting a stale canonical enable activate a same-name reinstall's
+   * default-disabled server. Under the lock the second registrant scans only
+   * after the first's prune committed, so it correctly sees a completed live
+   * sibling.
+   */
+  private acquireRegistrationSanitizeLock(): Promise<() => Promise<void>> {
+    return acquireCrossProcessLock({
+      lockPath: path.join(this.config.rootDir, "workspace-registration.lock"),
+      // Persist + sibling scan + one override-file prune; canonicalization is
+      // bounded per entry, so a minute outlasts any legitimate holder.
+      acquireTimeoutMs: 60_000,
+      staleMs: 5 * 60_000,
+      timeoutMessage:
+        "Another Mux process is currently registering a workspace. Wait for it to finish and try again.",
+    });
+  }
+
+  /**
    * TaskService entry point: task worktrees are REGISTERED before their
    * checkout exists (queued/reserved launches persist the entry with a future
    * path), so creation-time sanitization cannot cover them and an uninstall's
@@ -4608,7 +4632,14 @@ export class WorkspaceService extends EventEmitter {
       if (isHostLocalCheckout) {
         this.pendingPluginSanitizations.add(workspaceId);
       }
+      let releaseRegistrationLock: (() => Promise<void>) | undefined;
       try {
+        if (isHostLocalCheckout) {
+          // Cross-process: persist + sanitize must not interleave with a
+          // sibling process registering the same checkout (see
+          // acquireRegistrationSanitizeLock).
+          releaseRegistrationLock = await this.acquireRegistrationSanitizeLock();
+        }
         await this.config.editConfig((config) => {
           let projectConfig = config.projects.get(owningProjectPath);
           if (!projectConfig) {
@@ -4706,6 +4737,7 @@ export class WorkspaceService extends EventEmitter {
           }
         }
       } finally {
+        await releaseRegistrationLock?.();
         this.pendingPluginSanitizations.delete(workspaceId);
       }
       assert(
@@ -8736,7 +8768,14 @@ export class WorkspaceService extends EventEmitter {
       if (forkIsHostLocalCheckout) {
         this.pendingPluginSanitizations.add(newWorkspaceId);
       }
+      let releaseRegistrationLock: (() => Promise<void>) | undefined;
       try {
+        if (forkIsHostLocalCheckout) {
+          // Cross-process: persist + sanitize must not interleave with a
+          // sibling process registering the same checkout (see
+          // acquireRegistrationSanitizeLock).
+          releaseRegistrationLock = await this.acquireRegistrationSanitizeLock();
+        }
         await this.config.addWorkspace(foundProjectPath, metadata);
         if (forkIsHostLocalCheckout) {
           const sanitizeError = await this.sanitizeStalePluginOverridesForNewWorkspace(
@@ -8784,6 +8823,7 @@ export class WorkspaceService extends EventEmitter {
           }
         }
       } finally {
+        await releaseRegistrationLock?.();
         this.pendingPluginSanitizations.delete(newWorkspaceId);
       }
       await this.workspaceGoalService?.inheritFromFork(sourceWorkspaceId, newWorkspaceId);

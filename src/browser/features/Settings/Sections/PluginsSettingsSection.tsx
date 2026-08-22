@@ -20,6 +20,7 @@ import type {
   AgentPluginUpdateCheck,
 } from "@/common/orpc/schemas/agentPlugins";
 import { getErrorMessage } from "@/common/utils/errors";
+import { publishAgentPluginsMutated } from "@/browser/utils/agentPluginMutations";
 import {
   consumePendingPluginsSectionIntent,
   subscribePluginsSectionIntents,
@@ -108,6 +109,9 @@ const AddPluginPanel: React.FC<{
         expectedSha: preview.lockedSha,
       });
       if (result.success) {
+        // Mounted composers cache contributed slash-command/skill
+        // descriptors; an install adds them without a remount.
+        publishAgentPluginsMutated();
         props.onInstalled();
       } else {
         setError(result.error);
@@ -524,6 +528,11 @@ export const PluginsSettingsSection: React.FC = () => {
     setError(null);
     try {
       const result = await api.agentPlugins.update({ name });
+      if (result.success) {
+        // Mounted composers cache contributed slash-command/skill
+        // descriptors; an update can change them without a remount.
+        publishAgentPluginsMutated();
+      }
       // Refresh regardless of outcome (the swap may be partially visible),
       // but re-assert the mutation error AFTER the refresh: refresh's
       // success path clears the error state, which would silently swallow
@@ -547,6 +556,9 @@ export const PluginsSettingsSection: React.FC = () => {
     try {
       const result = await api.agentPlugins.uninstall({ name, deletePluginData });
       if (result.success) {
+        // Mounted composers cache contributed slash-command/skill
+        // descriptors; an uninstall removes them without a remount.
+        publishAgentPluginsMutated();
         setUninstallTarget(null);
         await refresh();
       } else {
