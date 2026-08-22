@@ -656,6 +656,54 @@ describe("maybeAppendAbandonedBranchSummary", () => {
     }
   });
 
+  test("clearPendingBranchSummary drains a usage write that outlived the deadline race", async () => {
+    const { historyService, cleanup } = await createTestHistoryService();
+    try {
+      // The summary resolves while a slow recordHeadlessUsage write is still
+      // in flight (the deadline race abandons it). Removal treats
+      // clearPendingBranchSummary as a FULL drain before rolling up usage and
+      // deleting the session directory, so it must block until that write
+      // settles — a write landing later would be omitted from the child
+      // rollup and recreate the just-deleted directory.
+      let releaseWrite: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      let writeSettled = false;
+      const appended = await maybeAppendAbandonedBranchSummary({
+        historyService,
+        aiService: fakeAiService(summaryModel("Summary lands; the usage write lags behind.")),
+        workspaceId: "ws-usage-drain",
+        abandonedMessages: meatyExchange("usage-drain"),
+        experiments: RLM_ON,
+        timeoutMs: 500,
+        sessionUsageService: {
+          recordHeadlessUsage: async () => {
+            await gate;
+            writeSettled = true;
+            return undefined;
+          },
+        },
+      });
+      // The summary raced away from the write: row appended, write pending.
+      expect(appended).not.toBeNull();
+      expect(writeSettled).toBe(false);
+
+      let drained = false;
+      const clearPromise = clearPendingBranchSummary("ws-usage-drain").then(() => {
+        drained = true;
+      });
+      // The drain must not resolve while the write is in flight.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(drained).toBe(false);
+      releaseWrite();
+      await clearPromise;
+      expect(writeSettled).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("preserved-tail copies and compaction rows are excluded from the summarizer input", async () => {
     const { historyService, cleanup } = await createTestHistoryService();
     try {

@@ -9964,6 +9964,25 @@ export class WorkspaceService extends EventEmitter {
             `be re-injected after a restart; retry once the session storage is writable.`
         );
       }
+      // The persistent RLM sandbox holds context DERIVED from the cleared
+      // transcript (vars populated by code execution), and its latest durable
+      // snapshot would restore it after a restart — later turns could read
+      // data from the supposedly cleared context through the kernel. Same
+      // durable invalidation + partial-failure posture as resetContext.
+      try {
+        await sandboxHostService.discardScope(workspaceId, this.config.getSessionDir(workspaceId));
+      } catch (error) {
+        log.error(
+          `Failed to durably invalidate sandbox state for ${workspaceId} after history clear; ` +
+            `the sandbox kernel stays unavailable until invalidation succeeds`,
+          error
+        );
+        return Err(
+          `History was cleared, but the sandbox kernel state could not be durably invalidated ` +
+            `(${getErrorMessage(error)}). The sandbox stays unavailable and cleared variables ` +
+            `may reappear after a restart; retry once the session storage is writable.`
+        );
+      }
     }
 
     return Ok(undefined);
@@ -10193,6 +10212,29 @@ export class WorkspaceService extends EventEmitter {
               `History was cleared, but the persisted post-compaction carryover could not be ` +
                 `durably discarded (${getErrorMessage(error)}). Pre-boundary read/skill context ` +
                 `may be re-injected after a restart; retry once the session storage is writable.`
+            );
+          }
+          // Same boundary as the full-clear path above: a destructive
+          // non-compaction replace discards the transcript, so kernel vars
+          // derived from it must not stay readable (or restorable from the
+          // durable snapshot) afterwards. Compaction replaces instead KEEP
+          // sandbox state — surviving compaction is the kernel's purpose.
+          try {
+            await sandboxHostService.discardScope(
+              workspaceId,
+              this.config.getSessionDir(workspaceId)
+            );
+          } catch (error) {
+            log.error(
+              `Failed to durably invalidate sandbox state for ${workspaceId} after destructive ` +
+                `history replace; the sandbox kernel stays unavailable until invalidation succeeds`,
+              error
+            );
+            return Err(
+              `History was replaced, but the sandbox kernel state could not be durably ` +
+                `invalidated (${getErrorMessage(error)}). The sandbox stays unavailable and ` +
+                `cleared variables may reappear after a restart; retry once the session storage ` +
+                `is writable.`
             );
           }
         }

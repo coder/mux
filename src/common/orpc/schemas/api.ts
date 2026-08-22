@@ -1147,6 +1147,12 @@ export const RefineRecordSchema = z.object({
    * applied via refinements.apply.
    */
   staged: z.array(z.object({ description: z.string() })).optional(),
+  /**
+   * Approved staged edits that failed to apply (tool unavailable, input
+   * rejected by the tool schema, tool failure). Surfaced instead of folding
+   * an all-failed apply into a successful no-op.
+   */
+  failed: z.array(z.object({ description: z.string(), reason: z.string() })).optional(),
   usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }).optional(),
 });
 

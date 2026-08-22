@@ -440,6 +440,109 @@ describe("RefineService", () => {
     }
   });
 
+  it("reports failed staged edits instead of classifying them as a successful no-op (r33)", async () => {
+    // The approved edit fails at execution: the environment changed between
+    // staging and apply (a directory now occupies the memory file's physical
+    // path, so the create cannot write). succeeded and applied are both zero
+    // — but "nothing was applied" must not stand in for "everything failed":
+    // the failure is reported on the record and in the durable audit row.
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-exec-fail-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "A lesson that will fail to write at apply time.\n",
+              },
+            },
+          ],
+          "An edit that will fail at apply time."
+        ),
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    // Workspace-scope memories live under <sessionDir>/memory; a directory at
+    // the file path makes the staged create fail at execution only.
+    await fsPromises.mkdir(path.join(fixture.sessionDir, "memory", "refine-lessons.md"), {
+      recursive: true,
+    });
+
+    const result = await fixture.service.apply(WORKSPACE_ID);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.noOp).toBe(false);
+    expect(result.data.applied).toHaveLength(0);
+    expect(result.data.failed).toHaveLength(1);
+    expect(result.data.failed?.[0]?.description.length).toBeGreaterThan(0);
+    // The audit row durably records the dropped approved edit.
+    const auditText = fixture.emittedMessages[1]?.parts.find((part) => part.type === "text");
+    expect(auditText?.type === "text" && auditText.text).toContain("FAILED:");
+    // Executed edits are attempted and never replay (side effects may be
+    // partially observable), so the staged set was consumed — not retained.
+    const second = await fixture.service.apply(WORKSPACE_ID);
+    expect(second.success).toBe(false);
+    if (!second.success) expect(second.error).toContain("no staged refine edits");
+  });
+
+  it("fails the apply and retains the staged set when the audit append fails (r33)", async () => {
+    // The mutation and its journal row are durable but the audit summary row
+    // (the only durable record of the rollback IDs) cannot be appended.
+    // Swallowing that append failure would clear the resumable staged set and
+    // report success with the rollback IDs lost — the apply must fail and
+    // keep the staged set so a retry can reproduce the audit row with zero
+    // re-mutation.
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-audit-retry-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "Lesson whose audit row fails to append once.\n",
+              },
+            },
+          ],
+          "one lesson staged"
+        ),
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    const stagedPath = path.join(fixture.sessionDir, "refine-staged.json");
+    const appendSpy = spyOn(fixture.historyService, "appendToHistory").mockImplementationOnce(() =>
+      Promise.resolve(Err("history unavailable"))
+    );
+    try {
+      const failedApply = await fixture.service.apply(WORKSPACE_ID);
+      expect(failedApply.success).toBe(false);
+      if (!failedApply.success) expect(failedApply.error).toContain("audit summary row");
+      // Retained: the retry below is only possible while the staged set (with
+      // its persisted attempted progress) survives the failed append.
+      expect(await pathExists(stagedPath)).toBe(true);
+    } finally {
+      appendSpy.mockRestore();
+    }
+
+    const retry = await fixture.service.apply(WORKSPACE_ID);
+    expect(retry.success).toBe(true);
+    if (!retry.success) return;
+    // Zero re-mutation: the edit was attempted, so the retry only reproduces
+    // the audit row from the persisted baseline + journal.
+    expect(retry.data.applied).toHaveLength(1);
+    expect(retry.data.failed).toBeUndefined();
+    expect(await listRefinements(fixture.sessionDir)).toHaveLength(1);
+    // Consumed after the audit row actually landed.
+    expect(await pathExists(stagedPath)).toBe(false);
+  });
+
   it("records completed-step usage when a later step errors", async () => {
     // Step 1 completes (tool call + finish with real usage); step 2 errors.
     // The completed step billed real tokens — the error must not make that

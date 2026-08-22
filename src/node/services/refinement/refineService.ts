@@ -205,6 +205,11 @@ export function createRefineSummaryMessage(
         `- ${record.untrackedApplied} applied edit(s) could not be journaled; rollback is unavailable for them.`
       );
     }
+    if (record.failed !== undefined && record.failed.length > 0) {
+      // Approved edits that failed to apply: the audit row must say so — a
+      // no-op-shaped summary would silently drop approved work.
+      lines.push(...record.failed.map((edit) => `- FAILED: ${edit.description} — ${edit.reason}`));
+    }
   }
   if (record.summary.length > 0) {
     lines.push("", record.summary);
@@ -483,34 +488,52 @@ export class RefineService {
     }
 
     let succeeded = 0;
+    // Failed approved edits are REPORTED, never folded into a successful
+    // no-op: "nothing was applied" must not stand in for "everything failed"
+    // (the staged set would be consumed with no record that approved edits
+    // were dropped).
+    const failed: Array<{ description: string; reason: string }> = [];
+    // Never-executed skips (tool unavailable / schema-rejected input) have no
+    // side effects, so they stay OUT of the attempted set and the staged set
+    // is retained below: a later /refine apply may retry them safely once the
+    // cause is fixed. Executed edits are marked attempted and never replay.
+    let retryableSkips = 0;
     for (const edit of staged.edits) {
       // Applied (or at least attempted) before a crash: never replay.
       if (attempted.has(edit.toolCallId)) continue;
+      const tool = edit.tool === "memory" ? memoryTool : skillWriteTool;
+      if (tool === undefined || typeof tool.execute !== "function") {
+        log.warn("[Refine] staged edit skipped: tool unavailable at apply time", {
+          workspaceId,
+          tool: edit.tool,
+        });
+        failed.push({ description: edit.description, reason: "tool unavailable at apply time" });
+        retryableSkips += 1;
+        continue;
+      }
+      // The staged file is on-disk state: validate the input against the
+      // tool's own schema before executing (defense against tampering and
+      // schema drift across upgrades).
+      const schema =
+        edit.tool === "memory"
+          ? TOOL_DEFINITIONS.memory.schema
+          : TOOL_DEFINITIONS.agent_skill_write.schema;
+      const parsedInput = schema.safeParse(edit.input);
+      if (!parsedInput.success) {
+        log.warn("[Refine] staged edit skipped: input failed schema validation", {
+          workspaceId,
+          tool: edit.tool,
+          error: parsedInput.error.message,
+        });
+        failed.push({
+          description: edit.description,
+          // Zod messages can run long; the audit row needs the gist only.
+          reason: `input failed schema validation: ${parsedInput.error.message.slice(0, 200)}`,
+        });
+        retryableSkips += 1;
+        continue;
+      }
       try {
-        const tool = edit.tool === "memory" ? memoryTool : skillWriteTool;
-        if (tool === undefined || typeof tool.execute !== "function") {
-          log.warn("[Refine] staged edit skipped: tool unavailable at apply time", {
-            workspaceId,
-            tool: edit.tool,
-          });
-          continue;
-        }
-        // The staged file is on-disk state: validate the input against the
-        // tool's own schema before executing (defense against tampering and
-        // schema drift across upgrades).
-        const schema =
-          edit.tool === "memory"
-            ? TOOL_DEFINITIONS.memory.schema
-            : TOOL_DEFINITIONS.agent_skill_write.schema;
-        const parsedInput = schema.safeParse(edit.input);
-        if (!parsedInput.success) {
-          log.warn("[Refine] staged edit skipped: input failed schema validation", {
-            workspaceId,
-            tool: edit.tool,
-            error: parsedInput.error.message,
-          });
-          continue;
-        }
         const result: unknown = await tool.execute(parsedInput.data, {
           toolCallId: edit.toolCallId,
           messages: [],
@@ -524,12 +547,28 @@ export class RefineService {
           (result as { success?: unknown }).success === true
         ) {
           succeeded += 1;
+        } else {
+          const toolError =
+            typeof result === "object" && result !== null
+              ? (result as { error?: unknown }).error
+              : undefined;
+          failed.push({
+            description: edit.description,
+            reason:
+              typeof toolError === "string" && toolError.length > 0
+                ? toolError.slice(0, 200)
+                : "tool reported failure",
+          });
         }
       } catch (error) {
         log.warn("[Refine] staged edit failed to apply", {
           workspaceId,
           tool: edit.tool,
           error: getErrorMessage(error),
+        });
+        failed.push({
+          description: edit.description,
+          reason: getErrorMessage(error).slice(0, 200),
         });
       } finally {
         // Durable per-edit journal entry AFTER the execution settled
@@ -569,8 +608,11 @@ export class RefineService {
     const record: RefineRecord = {
       applied,
       summary: staged.summary,
-      noOp: applied.length === 0 && untrackedApplied === 0,
+      // Failures keep the apply out of no-op classification: approved edits
+      // that failed must reach the audit row and the invoking UI.
+      noOp: applied.length === 0 && untrackedApplied === 0 && failed.length === 0,
       ...(untrackedApplied > 0 ? { untrackedApplied } : {}),
+      ...(failed.length > 0 ? { failed } : {}),
     };
 
     log.debug("[Refine] apply complete", {
@@ -578,6 +620,7 @@ export class RefineService {
       staged: staged.edits.length,
       applied: applied.length,
       untrackedApplied,
+      failed: failed.length,
     });
 
     // No cancellation gate here (unlike runLocked): an admitted apply's
@@ -585,21 +628,40 @@ export class RefineService {
     // even when removal is racing. Removal awaits this promise before
     // deleting the session directory, so the append still precedes teardown.
     if (!record.noOp) {
-      await this.appendSummaryMessage(workspaceId, record, { mode: "applied" });
+      const auditDurable = await this.appendSummaryMessage(workspaceId, record, {
+        mode: "applied",
+      });
+      // The staged set is the only state that can regenerate the audit row
+      // (persisted baseline + attempted IDs reproduce it with zero
+      // re-mutation). A swallowed append failure here would consume that
+      // state below and report success with the rollback IDs lost — same loss
+      // as the crash window, so it must fail the apply, not just log.
+      if (!auditDurable) {
+        return Err(
+          "refine apply finished, but the audit summary row (the durable record of the " +
+            "rollback IDs) could not be appended to chat; the staged set is retained — run " +
+            "/refine apply again to retry the audit record (attempted edits are never re-applied)"
+        );
+      }
     }
-    // Consume the staged set only AFTER the audit summary append: clearing
-    // first opened a crash window where every mutation + journal row was
-    // durable but the resumable staged state was gone — the next apply
+    // Consume the staged set only AFTER the audit summary append succeeded:
+    // clearing first opened a crash window where every mutation + journal row
+    // was durable but the resumable staged state was gone — the next apply
     // refused ("no staged refine edits") and the audit row holding the
     // rollback IDs could never be reconstructed. A crash after the append
     // but before this clear instead resumes as a fully-attempted set: zero
     // re-mutation (attempted IDs + journal-first recovery above), at worst a
     // duplicate audit row — a far better failure than lost rollback
     // addresses. Re-runs still can never double-apply (per-edit attempted
-    // progress is persisted before this point); failures were reported above
-    // and a fresh /refine can restage. The append itself is best-effort by
-    // design, so this ordering guards the crash window, not logged append
-    // failures.
+    // progress is persisted before this point).
+    if (retryableSkips > 0) {
+      // Some edits never executed (no side effects, not in the attempted
+      // set): keep the staged set so /refine apply can retry them once the
+      // cause is fixed. The proposal row stays the newest hashed refine-
+      // summary row (the audit row above carries no stagedSetHash), so the
+      // retry still verifies approval against the same rendered bytes.
+      return Ok(record);
+    }
     await clearStagedRefineSet(sessionDir);
     return Ok(record);
   }
@@ -767,11 +829,20 @@ export class RefineService {
       // The row renders the exact staged payloads and carries their hash so
       // apply can bind approval to these bytes.
       if (!record.noOp) {
-        await this.appendSummaryMessage(workspaceId, record, {
+        const proposalDurable = await this.appendSummaryMessage(workspaceId, record, {
           mode: "staged",
           edits: result.stagedEdits,
           stagedSetHash: hashStagedRefineSet(result.stagedEdits),
         });
+        // Approval is hash-bound to this rendered row; without it apply fails
+        // closed ("no staged refine proposal found"). Reporting staged
+        // success here would leave the user a dead end.
+        if (!proposalDurable) {
+          return Err(
+            "edits were staged, but the proposal row could not be recorded in chat for " +
+              "approval; run /refine again to restage"
+          );
+        }
       }
       return Ok(record);
     } finally {
@@ -912,12 +983,19 @@ export class RefineService {
     }
   }
 
-  /** Best-effort: append + emit the summary row; failures log and continue. */
+  /**
+   * Append + emit the summary row. Returns true only when the row is durably
+   * appended (renderer emission stays best-effort): both callers depend on
+   * the row's existence — the applied-mode audit row is the sole durable
+   * record of the rollback IDs, and the staged-mode proposal row is the
+   * hash-bound approval affordance apply verifies against — so a swallowed
+   * append failure must be distinguishable from success.
+   */
   private async appendSummaryMessage(
     workspaceId: string,
     record: RefineRecord,
     mode: Parameters<typeof createRefineSummaryMessage>[1]
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const message = createRefineSummaryMessage(record, mode);
       const appendResult = await this.historyService.appendToHistory(workspaceId, message);
@@ -926,14 +1004,25 @@ export class RefineService {
           workspaceId,
           error: appendResult.error,
         });
-        return;
+        return false;
       }
-      this.options.emitChatMessage?.(workspaceId, message);
+      try {
+        this.options.emitChatMessage?.(workspaceId, message);
+      } catch (error) {
+        // The row is durable; a renderer-emission failure only delays its
+        // visibility until reload and must not fail the operation.
+        log.warn("[Refine] summary emission failed", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+      return true;
     } catch (error) {
       log.warn("[Refine] summary emission failed", {
         workspaceId,
         error: getErrorMessage(error),
       });
+      return false;
     }
   }
 }

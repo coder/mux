@@ -275,6 +275,38 @@ export function trimSummaryToBoundary(text: string): string {
   return trimmed.slice(0, lastBoundary).trim();
 }
 
+/**
+ * In-flight usage-write promises per workspace. recordUsage is raced against
+ * the caller's remaining deadline below (a wedged sink must not stall the
+ * synchronous edit-resend past BRANCH_SUMMARY_TIMEOUT_MS), but the write
+ * itself is an OBSERVABLE filesystem effect: workspace removal treats
+ * clearPendingBranchSummary as a full drain before rolling up usage and
+ * deleting the session directory, so a write the race abandoned must stay
+ * trackable — otherwise it is omitted from the child rollup and its
+ * SessionUsageService.writeFile() recreates the just-deleted directory.
+ */
+const pendingUsageWrites = new Map<string, Set<Promise<void>>>();
+
+/** Register a usage write for drain; the returned promise never rejects. */
+function trackPendingUsageWrite(workspaceId: string, write: Promise<void>): Promise<void> {
+  let writes = pendingUsageWrites.get(workspaceId);
+  if (writes === undefined) {
+    writes = new Set();
+    pendingUsageWrites.set(workspaceId, writes);
+  }
+  const target = writes;
+  const tracked: Promise<void> = write
+    .catch(() => undefined)
+    .finally(() => {
+      target.delete(tracked);
+      if (target.size === 0 && pendingUsageWrites.get(workspaceId) === target) {
+        pendingUsageWrites.delete(workspaceId);
+      }
+    });
+  target.add(tracked);
+  return tracked;
+}
+
 async function generateAbandonedBranchSummaryText(input: {
   aiService: BranchSummaryAiService;
   /**
@@ -469,16 +501,24 @@ async function generateAbandonedBranchSummaryText(input: {
             if (settled !== undefined && recordBudgetMs > 0) {
               const [usage, providerMetadata] = settled;
               // Swallowed + raced: a rejecting or wedged sink must neither
-              // fail the summary nor hold the caller past the deadline (the
-              // write itself may still finish in the background).
-              await Promise.race([
+              // fail the summary nor hold the caller past the deadline. The
+              // write itself may still finish in the background, so it is
+              // TRACKED (pendingUsageWrites) for clearPendingBranchSummary to
+              // drain — racing away from an observable filesystem write would
+              // otherwise let it land after workspace removal's usage rollup
+              // and session-directory deletion.
+              const usageWrite = trackPendingUsageWrite(
+                input.workspaceId,
                 input
                   .recordUsage(modelString, usage, {
                     costsIncluded: modelCostsIncluded(modelResult.data.model),
                     ...(providerMetadata !== undefined ? { providerMetadata } : {}),
                     metadataModel: modelResult.data.metadataModel,
                   })
-                  .catch(() => undefined),
+                  .catch(() => undefined)
+              );
+              await Promise.race([
+                usageWrite,
                 new Promise<void>((resolve) => setTimeout(resolve, recordBudgetMs)),
               ]);
             }
@@ -862,9 +902,24 @@ export async function awaitPendingBranchSummary(workspaceId: string): Promise<Mu
 export async function clearPendingBranchSummary(workspaceId: string): Promise<void> {
   const entry = pendingBranchSummaries.get(workspaceId);
   pendingBranchSummaries.delete(workspaceId);
-  if (!entry) {
-    return;
+  if (entry) {
+    entry.controller.abort();
+    await entry.promise;
   }
-  entry.controller.abort();
-  await entry.promise;
+  // Drain usage writes that outlived their summary's deadline race: the
+  // summary promise can resolve while recordUsage is still writing, and a
+  // write landing after this drain would be missing from removal's usage
+  // rollup and recreate the deleted session directory. Reached even without
+  // a registration — the edit-resend path awaits its summary synchronously
+  // (no pending entry) but its usage write may still be in flight. Looped:
+  // a write registered while an earlier one settles must not escape; the
+  // abort above stops generation, so the producer is finite. Tracked
+  // promises never reject.
+  for (;;) {
+    const writes = pendingUsageWrites.get(workspaceId);
+    if (writes === undefined || writes.size === 0) {
+      return;
+    }
+    await Promise.all([...writes]);
+  }
 }

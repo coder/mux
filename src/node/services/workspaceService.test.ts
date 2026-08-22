@@ -4539,6 +4539,60 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("full history clear durably discards sandbox kernel state", async () => {
+    // A full /clear removes the transcript; kernel vars DERIVED from it (and
+    // restorable from the latest durable snapshot after a restart) must not
+    // stay readable through the sandbox — same invalidation boundary as
+    // resetContext. Partial truncation keeps context, so it must NOT discard.
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "full-clear-sandbox-discard";
+    try {
+      await config.addWorkspace("/tmp/full-clear-sandbox-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "full-clear-sandbox-project",
+        projectPath: "/tmp/full-clear-sandbox-project",
+        runtimeConfig: { type: "local" },
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-clear-user", "user", "before clear", {})
+      );
+      const discardSpy = spyOn(sandboxHostService, "discardScope").mockImplementation(() =>
+        Promise.resolve()
+      );
+      try {
+        expect(await workspaceService.truncateHistory(workspaceId, 0.5)).toEqual({
+          success: true,
+          data: undefined,
+        });
+        expect(discardSpy).not.toHaveBeenCalled();
+
+        expect(await workspaceService.truncateHistory(workspaceId)).toEqual({
+          success: true,
+          data: undefined,
+        });
+        expect(discardSpy).toHaveBeenCalledTimes(1);
+
+        // Same partial-failure posture as resetContext: history IS cleared,
+        // but a non-durable invalidation must fail the operation (a restart
+        // could otherwise resurrect the cleared vars from the snapshot).
+        await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage("pre-clear-user-2", "user", "before second clear", {})
+        );
+        discardSpy.mockImplementationOnce(() => Promise.reject(new Error("journal write failed")));
+        const failed = await workspaceService.truncateHistory(workspaceId);
+        expect(failed.success).toBe(false);
+        expect(failed.success ? "" : failed.error).toContain("durably invalidated");
+      } finally {
+        discardSpy.mockRestore();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset surfaces active-context history read failures", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "context-reset-history-read-fails";

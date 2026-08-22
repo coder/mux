@@ -859,7 +859,13 @@ export async function processSlashCommand(
                       : refineApply
                         ? // untrackedApplied: edits that succeeded but could not
                           // be journaled (no rollback id) — still real, so counted.
-                          `Refine: ${result.data.applied.length + (result.data.untrackedApplied ?? 0)} edit(s) applied (see chat summary)`
+                          // Failed edits are surfaced too: an all-failed apply
+                          // must not read like a success.
+                          `Refine: ${result.data.applied.length + (result.data.untrackedApplied ?? 0)} edit(s) applied${
+                            result.data.failed !== undefined && result.data.failed.length > 0
+                              ? `, ${result.data.failed.length} failed`
+                              : ""
+                          } (see chat summary)`
                         : `Refine: ${result.data.staged?.length ?? 0} edit(s) staged — approve with /refine apply`,
                   }
                 : {
