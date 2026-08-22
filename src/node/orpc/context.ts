@@ -27,6 +27,7 @@ import type { MemoryConsolidationService } from "@/node/services/memoryConsolida
 import type { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
+import type { AgentPluginInstallService } from "@/node/services/agentPlugins/installService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { TimelineService } from "@/node/services/timelineService";
@@ -74,6 +75,7 @@ export interface ORPCContext {
   mcpOauthService: McpOauthService;
   workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   mcpServerManager: MCPServerManager;
+  agentPluginInstallService: AgentPluginInstallService;
   sessionTimingService: SessionTimingService;
   timelineService: TimelineService;
   telemetryService: TelemetryService;
