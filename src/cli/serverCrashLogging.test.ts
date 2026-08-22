@@ -56,8 +56,8 @@ describe("serverCrashLogging", () => {
   });
 
   test("falls back when crash entry construction throws", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-server-crash-log-fallback-"));
-    const logFilePath = path.join(tempDir, "logs", "mux.log");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "xum-server-crash-log-fallback-"));
+    const logFilePath = path.join(tempDir, "logs", "xum.log");
     const cwdSpy = spyOn(process, "cwd").mockImplementation(() => {
       throw new Error("cwd missing");
     });
@@ -82,8 +82,8 @@ describe("serverCrashLogging", () => {
   });
 
   test("appends crash entries to disk synchronously", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-server-crash-log-"));
-    const logFilePath = path.join(tempDir, "logs", "mux.log");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "xum-server-crash-log-"));
+    const logFilePath = path.join(tempDir, "logs", "xum.log");
 
     try {
       appendServerCrashLogSync({

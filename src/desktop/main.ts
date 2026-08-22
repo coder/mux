@@ -1122,7 +1122,7 @@ function createWindow() {
   });
 
   // Forward renderer console errors to the log service so they reach the log
-  // file (~/.xum/logs/mux.log) and Output Tab even when the UI is white/blank.
+  // file (~/.xum/logs/xum.log) and Output Tab even when the UI is white/blank.
   // The renderer's global error handlers (window.addEventListener("error")) log
   // to console.error, but that stays in renderer memory only — the main process
   // never sees it without this hook.

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+log() {
+  printf '[xum-setup] %s\n' "$1"
+}
+
+ensure_tool() {
+  if command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    printf 'Required tool "%s" missing and apt-get unavailable\n' "$1" >&2
+    return 1
+  fi
+
+  log "installing missing dependency: $1"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y "$1"
+}
+
+ensure_tool curl
+ensure_tool git
+ensure_tool unzip
+ensure_tool python3
+export BUN_INSTALL="${BUN_INSTALL:-/root/.bun}"
+export PATH="${BUN_INSTALL}/bin:${PATH}"
+
+# Preserve benchmark configurations created before the environment rename.
+for suffix in AGENT_GIT_URL BUN_INSTALL_URL APP_ROOT CONFIG_ROOT; do
+  canonical_name="XUM_${suffix}"
+  legacy_name="MUX_${suffix}"
+  if [[ ! -v "${canonical_name}" && -v "${legacy_name}" ]]; then
+    printf -v "${canonical_name}" '%s' "${!legacy_name}"
+    export "${canonical_name}"
+  fi
+done
+
+if ! command -v bun >/dev/null 2>&1; then
+  log "installing bun"
+  curl -fsSL "${XUM_BUN_INSTALL_URL:-https://bun.sh/install}" | bash
+fi
+
+XUM_APP_ROOT="${XUM_APP_ROOT:-/opt/xum-app}"
+XUM_CONFIG_ROOT="${XUM_CONFIG_ROOT:-/root/.xum}"
+XUM_AGENT_VERSION="{{ version if version is not none else '' }}"
+
+rm -rf "${XUM_APP_ROOT}"
+if [[ -n "${XUM_AGENT_VERSION}" ]]; then
+  : "${XUM_AGENT_GIT_URL:?XUM_AGENT_GIT_URL required when version is set}"
+  log "cloning Xum from ${XUM_AGENT_GIT_URL} @ ${XUM_AGENT_VERSION}"
+  git clone --depth 1 --branch "${XUM_AGENT_VERSION}" "${XUM_AGENT_GIT_URL}" "${XUM_APP_ROOT}"
+else
+  log "extracting Xum archive"
+  mkdir -p "${XUM_APP_ROOT}"
+  tar -xzf "/installed-agent/xum-app.tar.gz" -C "${XUM_APP_ROOT}"
+fi
+
+cd "${XUM_APP_ROOT}"
+
+# Use --production to skip devDependencies (electron-builder, storybook, etc.)
+# which cuts install size from 1.9GB → 728MB and avoids OOM in memory-constrained
+# Daytona sandboxes (2GB). The headless CLI only needs production deps.
+if [[ -d "node_modules" ]]; then
+  log "node_modules already present, skipping bun install"
+else
+  log "installing xum production dependencies via bun"
+  XUM_HEADLESS=1 bun install --production --frozen-lockfile
+fi
+
+mkdir -p "${XUM_CONFIG_ROOT}"
+
+chmod +x /installed-agent/xum-run.sh
+
+log "setup complete"

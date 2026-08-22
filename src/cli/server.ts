@@ -21,7 +21,7 @@ import { appendServerCrashLogSync } from "./serverCrashLogging";
 import { shouldExposeLaunchProject } from "./launchProject";
 
 // Server-mode crashes can terminate the process before the async logger flushes,
-// so these top-level hooks mirror fatal details into mux.log synchronously.
+// so these top-level hooks mirror fatal details into xum.log synchronously.
 process.on("warning", (warning) => {
   log.warn("Server process warning", warning);
 });
@@ -30,7 +30,7 @@ process.on("uncaughtExceptionMonitor", (error, origin) => {
   // Use the monitor hook instead of adding our own unhandledRejection listener.
   // In Node, installing an unhandledRejection handler changes fatal promise
   // rejections into non-fatal events; the monitor preserves the default crash
-  // while still giving server-mode users a synchronous breadcrumb in mux.log.
+  // while still giving server-mode users a synchronous breadcrumb in xum.log.
   appendServerCrashLogSync({
     event: "Fatal process error",
     detail: error,

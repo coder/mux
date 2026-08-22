@@ -289,8 +289,8 @@ export function getXumSessionsDir(rootDir?: string): string {
 }
 
 /**
- * Get the directory where mux backend logs are stored.
- * Example: ~/.xum/logs/mux.log
+ * Get the directory where Xum backend logs are stored.
+ * Example: ~/.xum/logs/xum.log
  *
  * @param rootDir - Optional root directory (defaults to getXumHome())
  */

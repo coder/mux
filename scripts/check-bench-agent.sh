@@ -2,24 +2,24 @@
 set -euo pipefail
 
 # This script verifies that the terminal-bench agent entry point
-# referenced in mux-run.sh is valid and can be executed (imports resolve).
+# referenced in xum-run.sh is valid and can be executed (imports resolve).
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MUX_RUN_SH="$REPO_ROOT/benchmarks/terminal_bench/mux-run.sh"
+XUM_RUN_SH="$REPO_ROOT/benchmarks/terminal_bench/xum-run.sh"
 
 echo "Checking terminal-bench agent configuration..."
 
-if [[ ! -f "$MUX_RUN_SH" ]]; then
-  echo "❌ Error: $MUX_RUN_SH not found"
+if [[ ! -f "$XUM_RUN_SH" ]]; then
+  echo "❌ Error: $XUM_RUN_SH not found"
   exit 1
 fi
 
-# Extract the agent CLI path from mux-run.sh
+# Extract the agent CLI path from xum-run.sh
 # Looks for line like: cmd=(bun src/cli/run.ts
-CLI_PATH_MATCH=$(grep -o "bun src/.*\.ts" "$MUX_RUN_SH" | head -1 | cut -d' ' -f2)
+CLI_PATH_MATCH=$(grep -o "bun src/.*\.ts" "$XUM_RUN_SH" | head -1 | cut -d' ' -f2)
 
 if [[ -z "$CLI_PATH_MATCH" ]]; then
-  echo "❌ Error: Could not find agent CLI path in $MUX_RUN_SH"
+  echo "❌ Error: Could not find agent CLI path in $XUM_RUN_SH"
   exit 1
 fi
 
@@ -86,7 +86,7 @@ fi
 # Verify that CLI subcommands boot WITHOUT a lockfile using bun's resolver.
 # npm and bun resolve pre-release caret ranges differently — bun includes the
 # stable release (e.g. ^0.1.0-main.28 → 0.1.0) while npm does not. Since users
-# run `bun x mux@latest`, we must test with bun to catch resolution mismatches.
+# run `bun x xum@latest`, we must test with bun to catch resolution mismatches.
 echo ""
 echo "Checking CLI subcommand imports (bun, lockfile-free)..."
 
@@ -115,7 +115,7 @@ CLI_SUBCMDS=(run server)
 for subcmd in "${CLI_SUBCMDS[@]}"; do
   if ! output=$(node "$CHECK_DIR/dist/cli/index.js" "$subcmd" --help 2>&1); then
     if echo "$output" | grep -qE "Cannot find module|MODULE_NOT_FOUND|not defined by \"exports\""; then
-      echo "❌ Error: 'mux $subcmd --help' failed (bun lockfile-free resolution):"
+      echo "❌ Error: 'xum $subcmd --help' failed (bun lockfile-free resolution):"
       echo "$output"
       echo ""
       echo "A dependency likely resolved to a version missing a required export."

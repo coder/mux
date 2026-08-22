@@ -18,8 +18,13 @@ on:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      xum_run_as_goal:
+        description: "Run nightly smoke/matrix tasks as strict Xum CLI Goal Runs"
+        required: false
+        default: false
+        type: boolean
       mux_run_as_goal:
-        description: "Run nightly smoke/matrix tasks as strict mux CLI Goal Runs"
+        description: "Deprecated alias for xum_run_as_goal"
         required: false
         default: false
         type: boolean
@@ -32,13 +37,13 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      mux_run_args: "--thinking high"
+      xum_run_args: "--thinking high"
       dataset: "terminal-bench@2.0"
       concurrency: "1"
       env: "daytona"
       task_names: "chess-best-move"
       experiments: ${{ inputs.experiments }}
-      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      xum_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && (inputs.xum_run_as_goal || inputs.mux_run_as_goal) || false }}
     # Keep least-privilege secret scope for reusable workflow calls.
     secrets:
       TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
@@ -48,23 +53,23 @@ jobs:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
   # Smoke tests for Harbor SWE-style datasets (single task each).
-  # These validate that mux can run inside the dataset's repo checkout (--runtime local)
-  # and that we target the verifier's expected working directory (MUX_PROJECT_PATH).
+  # These validate that Xum can run inside the dataset's repo checkout (--runtime local)
+  # and that we target the verifier's expected working directory (XUM_PROJECT_PATH).
   swebench-verified-smoke-test:
     name: "Smoke test (swebench-verified: django__django-10097)"
     needs: smoke-test
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      mux_run_args: "--thinking high --runtime local"
+      xum_run_args: "--thinking high --runtime local"
       dataset: "swebench-verified@1.0"
       concurrency: "1"
       env: "daytona"
       task_names: "django__django-10097"
-      mux_project_path: "/testbed"
+      xum_project_path: "/testbed"
       timeout: "3000"
       experiments: ${{ inputs.experiments }}
-      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      xum_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && (inputs.xum_run_as_goal || inputs.mux_run_as_goal) || false }}
     secrets:
       TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -78,15 +83,15 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      mux_run_args: "--thinking high --runtime local"
+      xum_run_args: "--thinking high --runtime local"
       dataset: "swe-gen-js@1.0"
       concurrency: "1"
       env: "daytona"
       task_names: "biomejs__biome-7314"
-      mux_project_path: "/app/src"
+      xum_project_path: "/app/src"
       timeout: "600"
       experiments: ${{ inputs.experiments }}
-      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      xum_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && (inputs.xum_run_as_goal || inputs.mux_run_as_goal) || false }}
     secrets:
       TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -100,15 +105,15 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: "anthropic/claude-sonnet-4-5"
-      mux_run_args: "--thinking high --runtime local"
+      xum_run_args: "--thinking high --runtime local"
       dataset: "aider-polyglot@1.0"
       concurrency: "1"
       env: "daytona"
       task_names: "polyglot_cpp_all-your-base"
-      mux_project_path: "/app"
+      xum_project_path: "/app"
       timeout: "1800"
       experiments: ${{ inputs.experiments }}
-      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      xum_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && (inputs.xum_run_as_goal || inputs.mux_run_as_goal) || false }}
     secrets:
       TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -147,12 +152,12 @@ jobs:
     uses: ./.github/workflows/terminal-bench.yml
     with:
       model_name: ${{ matrix.model }}
-      mux_run_args: "--thinking high"
+      xum_run_args: "--thinking high"
       dataset: "terminal-bench@2.0"
       concurrency: "48"
       env: "daytona"
       experiments: ${{ inputs.experiments }}
-      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      xum_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && (inputs.xum_run_as_goal || inputs.mux_run_as_goal) || false }}
       allow_transient_agent_errors: true
     secrets:
       TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}

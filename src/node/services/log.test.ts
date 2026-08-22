@@ -13,16 +13,16 @@ import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { __resetFileSinkForTests, clearLogFiles, closeLogFile, log } from "./log";
+import { __resetFileSinkForTests, clearLogFiles, closeLogFile, getLogFilePath, log } from "./log";
 
 describe("log file sink state machine", () => {
-  let tempMuxRoot: string;
-  let originalMuxRoot: string | undefined;
+  let tempXumRoot: string;
+  let originalXumRoot: string | undefined;
 
   beforeAll(async () => {
-    originalMuxRoot = process.env.MUX_ROOT;
-    tempMuxRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-log-test-"));
-    process.env.MUX_ROOT = tempMuxRoot;
+    originalXumRoot = process.env.XUM_ROOT;
+    tempXumRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "xum-log-test-"));
+    process.env.XUM_ROOT = tempXumRoot;
   });
 
   beforeEach(() => {
@@ -36,13 +36,30 @@ describe("log file sink state machine", () => {
   afterAll(async () => {
     closeLogFile();
 
-    if (originalMuxRoot === undefined) {
-      delete process.env.MUX_ROOT;
+    if (originalXumRoot === undefined) {
+      delete process.env.XUM_ROOT;
     } else {
-      process.env.MUX_ROOT = originalMuxRoot;
+      process.env.XUM_ROOT = originalXumRoot;
     }
 
-    await fsPromises.rm(tempMuxRoot, { recursive: true, force: true });
+    await fsPromises.rm(tempXumRoot, { recursive: true, force: true });
+  });
+
+  test("writes only the canonical Xum log file", () => {
+    const originalCreateWriteStream = fs.createWriteStream;
+    const createWriteStreamSpy = spyOn(fs, "createWriteStream").mockImplementation((...args) =>
+      originalCreateWriteStream(...args)
+    );
+
+    log.error("canonical log path");
+
+    const canonicalPath = path.join(tempXumRoot, "logs", "xum.log");
+    expect(getLogFilePath()).toBe(canonicalPath);
+    expect(createWriteStreamSpy).toHaveBeenCalledWith(canonicalPath, { flags: "a" });
+    expect(createWriteStreamSpy).not.toHaveBeenCalledWith(
+      path.join(tempXumRoot, "logs", "mux.log"),
+      { flags: "a" }
+    );
   });
 
   test("transitions to degraded after stream error and suppresses immediate retries", async () => {

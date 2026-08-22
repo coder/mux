@@ -26,7 +26,7 @@ Usage:
 
 Prerequisites:
     - GitHub CLI (gh) installed and authenticated
-    - Access to coder/mux repository
+    - Access to coder/xum repository
 
 Output structure:
     .run_logs/<run-id>/

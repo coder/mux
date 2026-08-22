@@ -2,11 +2,11 @@
 """
 Analyze Terminal-Bench failure rates to identify optimization opportunities.
 
-Pulls Mux results from BigQuery and other agents from HuggingFace leaderboard.
+Pulls Xum results from BigQuery and other agents from HuggingFace leaderboard.
 Computes:
-  M/O ratio = Mux failure rate / Average failure rate of top 10 agents
+  M/O ratio = Xum failure rate / Average failure rate of top 10 agents
 
-Tasks with high M/O ratio are where Mux underperforms relative to competitors,
+Tasks with high M/O ratio are where Xum underperforms relative to competitors,
 representing the best optimization opportunities.
 
 Usage:
@@ -16,15 +16,15 @@ Usage:
     # Show more results
     python benchmarks/terminal_bench/analyze_failure_rates.py --top 50
 
-    # Filter to specific Mux model
-    python benchmarks/terminal_bench/analyze_failure_rates.py --mux-model "claude-sonnet"
+    # Filter to specific Xum model
+    python benchmarks/terminal_bench/analyze_failure_rates.py --xum-model "claude-sonnet"
 
     # Force re-download of data
     python benchmarks/terminal_bench/analyze_failure_rates.py --refresh
 
 Requirements:
     git (for cloning from HuggingFace)
-    bq CLI (for querying Mux results from BigQuery)
+    bq CLI (for querying Xum results from BigQuery)
 """
 
 import argparse
@@ -129,12 +129,12 @@ def download_leaderboard_data(refresh: bool = False) -> Path:
         raise
 
 
-def query_mux_results_from_bq() -> list[TaskResult]:
+def query_xum_results_from_bq() -> list[TaskResult]:
     """
-    Query Mux results from BigQuery.
+    Query Xum results from BigQuery.
 
     Uses the bq CLI to query mux-benchmarks.benchmarks.tbench_results.
-    Returns TaskResult objects for all Mux benchmark runs.
+    Returns TaskResult objects for all Xum benchmark runs.
     """
     import csv
     import subprocess
@@ -149,7 +149,7 @@ def query_mux_results_from_bq() -> list[TaskResult]:
     WHERE dataset = 'terminal-bench@2.0'
     """
 
-    print("Querying Mux results from BigQuery...", file=sys.stderr)
+    print("Querying Xum results from BigQuery...", file=sys.stderr)
     try:
         result = subprocess.run(
             [
@@ -178,7 +178,7 @@ def query_mux_results_from_bq() -> list[TaskResult]:
     results: list[TaskResult] = []
     lines = result.stdout.strip().split("\n")
     if len(lines) < 2:
-        print("No Mux results found in BigQuery", file=sys.stderr)
+        print("No Xum results found in BigQuery", file=sys.stderr)
         return results
 
     reader = csv.DictReader(lines)
@@ -202,19 +202,19 @@ def query_mux_results_from_bq() -> list[TaskResult]:
             TaskResult(
                 task_id=task_id,
                 passed=passed_str == "true",
-                agent_name="Mux",
+                agent_name="Xum",
                 model_name=f"{model}@{thinking}",
             )
         )
 
-    print(f"Found {len(results)} Mux results from BigQuery", file=sys.stderr)
+    print(f"Found {len(results)} Xum results from BigQuery", file=sys.stderr)
     if skipped:
         print(f"  (skipped {skipped} incomplete runs)", file=sys.stderr)
     return results
 
 
 def parse_leaderboard_results(
-    repo_path: Path, exclude_mux: bool = True
+    repo_path: Path, exclude_xum: bool = True
 ) -> list[TaskResult]:
     """
     Parse all agent results from the leaderboard repo structure.
@@ -227,7 +227,7 @@ def parse_leaderboard_results(
                     result.json  # contains "passed" or "score"
 
     Args:
-        exclude_mux: If True, skip Mux agents (we get those from BigQuery)
+        exclude_xum: If True, skip Xum agents (we get those from BigQuery)
     """
     results: list[TaskResult] = []
     submissions_dir = repo_path / "submissions" / "terminal-bench" / DATASET_VERSION
@@ -240,13 +240,14 @@ def parse_leaderboard_results(
         if not agent_dir.is_dir():
             continue
 
-        # Parse agent name and model from folder name (e.g., "Mux__Claude-Sonnet-4.5")
+        # Parse agent name and model from folder name (e.g., "Xum__Claude-Sonnet-4.5")
         parts = agent_dir.name.split("__", 1)
         agent_name = parts[0]
         model_name = parts[1] if len(parts) > 1 else "unknown"
 
-        # Skip Mux agents if requested (we get those from BigQuery)
-        if exclude_mux and agent_name.lower() == "mux":
+        # Skip Xum agents if requested (we get those from BigQuery)
+        # Keep historical Mux submissions grouped with canonical Xum results.
+        if exclude_xum and agent_name.lower() in {"xum", "mux"}:
             continue
 
         # Find all result.json files in trial folders
@@ -306,9 +307,9 @@ def compute_agent_stats(results: list[TaskResult]) -> dict[str, AgentStats]:
 
 
 def get_top_agents(stats: dict[str, AgentStats], n: int = 10) -> list[str]:
-    """Get the top N agents by pass rate (excluding Mux)."""
+    """Get the top N agents by pass rate (excluding Xum)."""
     sorted_agents = sorted(
-        [(k, v) for k, v in stats.items() if not k.startswith("Mux__")],
+        [(k, v) for k, v in stats.items() if not k.startswith("Xum__")],
         key=lambda x: x[1].pass_rate,
         reverse=True,
     )
@@ -346,44 +347,44 @@ def compute_task_failure_rates(
 
 @dataclass
 class OptimizationOpportunity:
-    """A task where Mux underperforms relative to competitors."""
+    """A task where Xum underperforms relative to competitors."""
 
     task_id: str
-    mux_fail_rate: float
+    xum_fail_rate: float
     avg_other_fail_rate: float
     ratio: float  # M/O ratio
-    mux_agent: str
+    xum_agent: str
     n_other_agents: int
 
 
 def find_optimization_opportunities(
     results: list[TaskResult],
-    mux_filter: str | None = None,
+    xum_filter: str | None = None,
     top_n_agents: int = 10,
 ) -> list[OptimizationOpportunity]:
     """
-    Find tasks where Mux has high failure rate relative to top agents.
+    Find tasks where Xum has high failure rate relative to top agents.
 
     Returns opportunities sorted by M/O ratio (descending).
     """
     stats = compute_agent_stats(results)
 
-    # Find Mux agents
-    xum_agents = [k for k in stats.keys() if k.startswith("Mux__")]
-    if mux_filter:
-        xum_agents = [k for k in xum_agents if mux_filter.lower() in k.lower()]
+    # Find Xum agents
+    xum_agents = [k for k in stats.keys() if k.startswith("Xum__")]
+    if xum_filter:
+        xum_agents = [k for k in xum_agents if xum_filter.lower() in k.lower()]
 
     if not xum_agents:
-        print("Warning: No Mux agents found in results", file=sys.stderr)
+        print("Warning: No Xum agents found in results", file=sys.stderr)
         return []
 
-    # Get top N non-Mux agents
+    # Get top N non-Xum agents
     top_agents = get_top_agents(stats, top_n_agents)
     if not top_agents:
-        print("Warning: No non-Mux agents found", file=sys.stderr)
+        print("Warning: No non-Xum agents found", file=sys.stderr)
         return []
 
-    print(f"\nAnalyzing Mux agents: {', '.join(xum_agents)}", file=sys.stderr)
+    print(f"\nAnalyzing Xum agents: {', '.join(xum_agents)}", file=sys.stderr)
     print(f"Comparing against top {len(top_agents)} agents:", file=sys.stderr)
     for agent in top_agents[:5]:
         s = stats[agent]
@@ -398,15 +399,15 @@ def find_optimization_opportunities(
     all_relevant_agents = set(xum_agents) | set(top_agents)
     task_rates = compute_task_failure_rates(results, all_relevant_agents)
 
-    # Find opportunities for each Mux agent
+    # Find opportunities for each Xum agent
     opportunities: list[OptimizationOpportunity] = []
 
-    for mux_agent in xum_agents:
+    for xum_agent in xum_agents:
         for task_id, agent_rates in task_rates.items():
-            if mux_agent not in agent_rates:
+            if xum_agent not in agent_rates:
                 continue
 
-            mux_fail_rate = agent_rates[mux_agent]
+            xum_fail_rate = agent_rates[xum_agent]
 
             # Compute average failure rate of top agents on this task
             other_rates = [
@@ -419,17 +420,17 @@ def find_optimization_opportunities(
 
             # Compute M/O ratio (add small epsilon to avoid div by zero)
             epsilon = 0.01
-            ratio = mux_fail_rate / (avg_other_fail_rate + epsilon)
+            ratio = xum_fail_rate / (avg_other_fail_rate + epsilon)
 
-            # Only include if Mux actually fails sometimes
-            if mux_fail_rate > 0:
+            # Only include if Xum actually fails sometimes
+            if xum_fail_rate > 0:
                 opportunities.append(
                     OptimizationOpportunity(
                         task_id=task_id,
-                        mux_fail_rate=mux_fail_rate,
+                        xum_fail_rate=xum_fail_rate,
                         avg_other_fail_rate=avg_other_fail_rate,
                         ratio=ratio,
-                        mux_agent=mux_agent,
+                        xum_agent=xum_agent,
                         n_other_agents=len(other_rates),
                     )
                 )
@@ -447,17 +448,17 @@ def print_opportunities(
     print("OPTIMIZATION OPPORTUNITIES (sorted by M/O ratio)")
     print(f"{'=' * 80}")
     print(
-        f"{'Task ID':<40} {'Mux Fail%':>10} {'Avg Other%':>11} {'M/O Ratio':>10} {'Agent':<20}"
+        f"{'Task ID':<40} {'Xum Fail%':>10} {'Avg Other%':>11} {'M/O Ratio':>10} {'Agent':<20}"
     )
     print("-" * 80)
 
     for opp in opportunities[:top_n]:
         print(
             f"{opp.task_id:<40} "
-            f"{opp.mux_fail_rate * 100:>9.1f}% "
+            f"{opp.xum_fail_rate * 100:>9.1f}% "
             f"{opp.avg_other_fail_rate * 100:>10.1f}% "
             f"{opp.ratio:>10.2f} "
-            f"{opp.mux_agent:<20}"
+            f"{opp.xum_agent:<20}"
         )
 
     if len(opportunities) > top_n:
@@ -471,7 +472,7 @@ def print_opportunities(
         total_tasks = len(opportunities)
         high_ratio = sum(1 for o in opportunities if o.ratio > 2.0)
         medium_ratio = sum(1 for o in opportunities if 1.0 < o.ratio <= 2.0)
-        print(f"Total tasks with Mux failures: {total_tasks}")
+        print(f"Total tasks with Xum failures: {total_tasks}")
         print(f"  High priority (M/O > 2.0):   {high_ratio}")
         print(f"  Medium priority (1.0 < M/O ≤ 2.0): {medium_ratio}")
 
@@ -487,10 +488,12 @@ def main() -> None:
         help="Number of top opportunities to show (default: 20)",
     )
     parser.add_argument(
+        "--xum-model",
         "--mux-model",
+        dest="xum_model",
         type=str,
         default=None,
-        help="Filter to specific Mux model (substring match)",
+        help="Filter to specific Xum model (substring match)",
     )
     parser.add_argument(
         "--top-agents",
@@ -510,22 +513,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Get Mux results from BigQuery
-    mux_results = query_mux_results_from_bq()
-    if not mux_results:
+    # Get Xum results from BigQuery
+    xum_results = query_xum_results_from_bq()
+    if not xum_results:
         print(
-            "Warning: No Mux results from BigQuery. Ensure bq CLI is configured.",
+            "Warning: No Xum results from BigQuery. Ensure bq CLI is configured.",
             file=sys.stderr,
         )
 
     # Download/load other agents from HuggingFace leaderboard
     repo_path = download_leaderboard_data(refresh=args.refresh)
-    print("Parsing leaderboard results (excluding Mux)...", file=sys.stderr)
-    other_results = parse_leaderboard_results(repo_path, exclude_mux=True)
+    print("Parsing leaderboard results (excluding Xum)...", file=sys.stderr)
+    other_results = parse_leaderboard_results(repo_path, exclude_xum=True)
     print(f"Found {len(other_results)} results from other agents", file=sys.stderr)
 
     # Merge results
-    results = mux_results + other_results
+    results = xum_results + other_results
     if not results:
         print("No results to analyze.", file=sys.stderr)
         sys.exit(1)
@@ -533,7 +536,7 @@ def main() -> None:
     # Find opportunities
     opportunities = find_optimization_opportunities(
         results,
-        mux_filter=args.mux_model,
+        xum_filter=args.xum_model,
         top_n_agents=args.top_agents,
     )
 
@@ -541,10 +544,10 @@ def main() -> None:
         output = [
             {
                 "task_id": o.task_id,
-                "mux_fail_rate": o.mux_fail_rate,
+                "xum_fail_rate": o.xum_fail_rate,
                 "avg_other_fail_rate": o.avg_other_fail_rate,
                 "ratio": o.ratio,
-                "mux_agent": o.mux_agent,
+                "xum_agent": o.xum_agent,
             }
             for o in opportunities[: args.top]
         ]

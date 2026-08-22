@@ -44,18 +44,34 @@ on:
         required: false
         type: string
         default: ""
-      mux_project_path:
+      xum_project_path:
         description: "Project path inside the task container (e.g., /testbed, /app/src)"
         required: false
         type: string
         default: ""
+      xum_run_args:
+        description: "Additional CLI flags passed to Xum run (e.g., --thinking high --use-1m --budget 5.00; with goal mode, add --goal-turns/--goal-budget)"
+        required: false
+        type: string
+        default: ""
+      xum_run_as_goal:
+        description: "Run each task instruction as a Xum CLI Goal Run"
+        required: false
+        type: boolean
+        default: false
+      # Compatibility inputs for reusable-workflow callers created before the rename.
+      mux_project_path:
+        description: "Deprecated alias for xum_project_path"
+        required: false
+        type: string
+        default: ""
       mux_run_args:
-        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00; with goal mode, add --goal-turns/--goal-budget)"
+        description: "Deprecated alias for xum_run_args"
         required: false
         type: string
         default: ""
       mux_run_as_goal:
-        description: "Run each task instruction as a mux CLI Goal Run"
+        description: "Deprecated alias for xum_run_as_goal"
         required: false
         type: boolean
         default: false
@@ -101,12 +117,14 @@ on:
         description: "Model to use (e.g., anthropic/claude-opus-5, openai/gpt-5.6-sol)"
         required: false
         type: string
+      # GitHub caps workflow_dispatch at ten inputs. Keep these established
+      # external names while reusable workflow calls use canonical xum_* inputs.
       mux_run_args:
-        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m; with goal mode, add --goal-turns/--goal-budget)"
+        description: "Additional CLI flags passed to Xum run (legacy input name)"
         required: false
         type: string
       mux_run_as_goal:
-        description: "Run each task instruction as a mux CLI Goal Run"
+        description: "Run each task instruction as a Xum CLI Goal Run (legacy input name)"
         required: false
         default: false
         type: boolean
@@ -192,15 +210,15 @@ jobs:
           TB_ENV: ${{ inputs.env }}
           TB_TASK_NAMES: ${{ inputs.task_names }}
           TB_MODEL: ${{ inputs.model_name }}
-          MUX_MODEL: ${{ inputs.model_name }}
+          XUM_MODEL: ${{ inputs.model_name }}
           TB_TIMEOUT: ${{ inputs.timeout }}
-          MUX_PROJECT_PATH: ${{ inputs.mux_project_path }}
+          XUM_PROJECT_PATH: ${{ inputs.xum_project_path || inputs.mux_project_path }}
           TB_ARGS: >-
             ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
             ${{ inputs.extra_args || '' }}
-          MUX_EXPERIMENTS: ${{ inputs.experiments }}
-          MUX_RUN_ARGS: ${{ inputs.mux_run_args }}
-          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
+          XUM_EXPERIMENTS: ${{ inputs.experiments }}
+          XUM_RUN_ARGS: ${{ inputs.xum_run_args || inputs.mux_run_args }}
+          XUM_RUN_AS_GOAL: ${{ (inputs.xum_run_as_goal || inputs.mux_run_as_goal) && '1' || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -280,13 +298,13 @@ jobs:
           echo "Artifact name: $ARTIFACT_NAME"
 
       - name: Upload Terminal-Bench results to BigQuery
-        if: always() && github.repository == 'coder/mux' && startsWith(inputs.dataset, 'terminal-bench@')
+        if: always() && github.repository == 'coder/xum' && startsWith(inputs.dataset, 'terminal-bench@')
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GCP_PROJECT_ID: mux-benchmarks
           BQ_DATASET: benchmarks
-          MUX_EXPERIMENTS: ${{ inputs.experiments }}
-          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
+          XUM_EXPERIMENTS: ${{ inputs.experiments }}
+          XUM_RUN_AS_GOAL: ${{ inputs.xum_run_as_goal && '1' || '' }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
             echo "GCP_SA_KEY not set, skipping BigQuery upload"
@@ -299,13 +317,13 @@ jobs:
           rm -f /tmp/gcp-sa.json
 
       - name: Upload Harbor results to BigQuery
-        if: always() && github.repository == 'coder/mux' && !startsWith(inputs.dataset, 'terminal-bench@')
+        if: always() && github.repository == 'coder/xum' && !startsWith(inputs.dataset, 'terminal-bench@')
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GCP_PROJECT_ID: mux-benchmarks
           BQ_DATASET: benchmarks
-          MUX_EXPERIMENTS: ${{ inputs.experiments }}
-          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
+          XUM_EXPERIMENTS: ${{ inputs.experiments }}
+          XUM_RUN_AS_GOAL: ${{ inputs.xum_run_as_goal && '1' || '' }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
             echo "GCP_SA_KEY not set, skipping BigQuery upload"

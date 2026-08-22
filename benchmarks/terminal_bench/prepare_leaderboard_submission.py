@@ -28,10 +28,10 @@ Usage:
     # Then submit with hf CLI:
     hf upload alexgshaw/terminal-bench-2-leaderboard \\
         ./leaderboard_submission/submissions submissions \\
-        --repo-type dataset --create-pr --commit-message "Mux submission"
+        --repo-type dataset --create-pr --commit-message "Xum submission"
 
 Output structure (per leaderboard requirements):
-    submissions/terminal-bench/2.0/Mux__<Model>/
+    submissions/terminal-bench/2.0/Xum__<Model>/
         metadata.yaml
         <job-folder-1>/             # From run 1 (e.g., 2026-02-01__00-15-05)
             config.json
@@ -71,15 +71,15 @@ except ImportError:
 LEADERBOARD_REPO = "alexgshaw/terminal-bench-2-leaderboard"
 
 
-# Agent metadata for Mux
-MUX_METADATA = {
-    "agent_url": "https://github.com/coder/mux",
-    "agent_display_name": "Mux",
+# Agent metadata for Xum
+XUM_METADATA = {
+    "agent_url": "https://github.com/coder/xum",
+    "agent_display_name": "Xum",
     "agent_org_display_name": "Coder",
 }
 
 # Model metadata lookup
-# folder_name: Used in submission folder path (e.g., Mux__Claude-Opus-4.5)
+# folder_name: Used in submission folder path (e.g., Xum__Claude-Opus-4.5)
 MODEL_METADATA = {
     "anthropic/claude-sonnet-4-5": {
         "model_name": "claude-sonnet-4-5",
@@ -193,9 +193,9 @@ def create_metadata_yaml(model: str) -> str:
         }
 
     lines = [
-        f'agent_url: "{MUX_METADATA["agent_url"]}"',
-        f'agent_display_name: "{MUX_METADATA["agent_display_name"]}"',
-        f'agent_org_display_name: "{MUX_METADATA["agent_org_display_name"]}"',
+        f'agent_url: "{XUM_METADATA["agent_url"]}"',
+        f'agent_display_name: "{XUM_METADATA["agent_display_name"]}"',
+        f'agent_org_display_name: "{XUM_METADATA["agent_org_display_name"]}"',
         "",
         "models:",
         f'  - model_name: "{model_info["model_name"]}"',
@@ -334,10 +334,10 @@ def prepare_submission(
 
     # Create submissions for each model
     for model, trials in model_trials.items():
-        # Create submission directory: Mux__<Model>
+        # Create submission directory: Xum__<Model>
         model_info = MODEL_METADATA.get(model, {})
         model_folder_name = model_info.get("folder_name", model.split("/")[-1].title())
-        submission_name = f"Mux__{model_folder_name}"
+        submission_name = f"Xum__{model_folder_name}"
 
         submission_dir = (
             output_dir / "submissions" / "terminal-bench" / "2.0" / submission_name
@@ -379,8 +379,8 @@ def prepare_submission(
                     trial_src,
                     dest_trial_dir,
                     ignore=shutil.ignore_patterns(
-                        "mux-app.tar.gz",  # Large agent binary (~5MB each)
-                        "mux-tokens.json",  # Token usage (not needed for leaderboard)
+                        "xum-app.tar.gz",  # Large agent binary (~5MB each)
+                        "xum-tokens.json",  # Token usage (not needed for leaderboard)
                         "*.log",  # Log files trigger HF LFS and cause upload timeouts
                     ),
                 )
@@ -562,7 +562,7 @@ def main():
     print(f"  hf upload {LEADERBOARD_REPO} \\")
     print(f"    {args.output_dir}/submissions submissions \\")
     print("    --repo-type dataset --create-pr \\")
-    print(f'    --commit-message "Mux submission ({run_date})"')
+    print(f'    --commit-message "Xum submission ({run_date})"')
 
     # Clean up temp directories if we created any
     if temp_dirs:

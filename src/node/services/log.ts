@@ -191,7 +191,7 @@ function ensureSinkOpen(): void {
 
   try {
     const logsDir = getXumLogsDir();
-    const activeLogPath = path.join(logsDir, "mux.log");
+    const activeLogPath = path.join(logsDir, "xum.log");
 
     fs.mkdirSync(logsDir, { recursive: true });
 
@@ -225,10 +225,10 @@ function rotateSink(): void {
 
     const logsDir = path.dirname(openSink.path);
 
-    // Shift: mux.3.log → deleted, mux.2.log → mux.3.log, etc.
+    // Shift: xum.3.log → deleted, xum.2.log → xum.3.log, etc.
     for (let i = MAX_LOG_FILES; i >= 1; i--) {
-      const from = path.join(logsDir, i === 1 ? "mux.log" : `mux.${i - 1}.log`);
-      const to = path.join(logsDir, `mux.${i}.log`);
+      const from = path.join(logsDir, i === 1 ? "xum.log" : `xum.${i - 1}.log`);
+      const to = path.join(logsDir, `xum.${i}.log`);
       try {
         fs.renameSync(from, to);
       } catch {
@@ -275,12 +275,12 @@ function writeSink(cleanLineWithNewline: string): void {
 }
 
 export function getLogFilePath(): string {
-  return path.join(getXumLogsDir(), "mux.log");
+  return path.join(getXumLogsDir(), "xum.log");
 }
 
 function clearSink(): Promise<void> {
   const logsDir = getXumLogsDir();
-  const activeLogPath = path.join(logsDir, "mux.log");
+  const activeLogPath = path.join(logsDir, "xum.log");
 
   const openSink = fileSinkState.status === "open" ? fileSinkState : null;
   const transitionEpoch = sinkLifecycleEpoch;
@@ -302,7 +302,7 @@ function clearSink(): Promise<void> {
 
     // Remove rotated files — missing files are fine.
     for (let i = 1; i <= MAX_LOG_FILES; i++) {
-      const rotatedPath = path.join(logsDir, `mux.${i}.log`);
+      const rotatedPath = path.join(logsDir, `xum.${i}.log`);
       try {
         fs.unlinkSync(rotatedPath);
       } catch {
@@ -749,8 +749,8 @@ function createLogger(boundFields?: LogFields): Logger {
  * Default levels:
  * - CLI mode: error (quiet by default)
  * - Desktop mode: info
- * - MUX_DEBUG=1: debug
- * - MUX_LOG_LEVEL=<level>: explicit override
+ * - XUM_DEBUG=1: debug (legacy MUX_DEBUG is accepted)
+ * - XUM_LOG_LEVEL=<level>: explicit override (legacy MUX_LOG_LEVEL is accepted)
  *
  * Use log.withFields({ workspaceId }) to create a sub-logger that
  * automatically includes fields in every log entry.

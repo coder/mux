@@ -19,7 +19,7 @@ make benchmark-terminal
 make benchmark-terminal TB_TASK_NAMES="hello-world chess-best-move"
 
 # Run with specific model and xhigh thinking
-MUX_RUN_ARGS="--thinking xhigh" make benchmark-terminal TB_ARGS="--agent-kwarg model_name=anthropic/claude-opus-5"
+XUM_RUN_ARGS="--thinking xhigh" make benchmark-terminal TB_ARGS="--agent-kwarg model_name=anthropic/claude-opus-5"
 
 # Run on Daytona cloud (high parallelism)
 TB_ENV=daytona TB_CONCURRENCY=48 make benchmark-terminal
@@ -58,8 +58,8 @@ make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-be
 - `TB_ENV`: Environment to run in (`local` or `daytona`)
 - `TB_TASK_NAMES`: Space-separated task names to run (default: all tasks)
 - `TB_ARGS`: Additional arguments passed to harbor
-- `MUX_RUN_ARGS`: CLI flags passed directly to `mux run` inside the container (e.g., `--thinking high --use-1m --budget 5.00`). This is the primary mechanism for all `mux run` flags — avoids per-flag plumbing.
-- `MUX_RUN_AS_GOAL`: When set to `1`, runs each task instruction as a strict `mux run --goal` objective while still piping the instruction to stdin. Use `MUX_RUN_ARGS` for goal limits such as `--goal-turns` and `--goal-budget`. Incomplete strict-goal exits are left scoreable so Harbor can verify the workspace.
+- `XUM_RUN_ARGS`: CLI flags passed directly to `xum run` inside the container (e.g., `--thinking high --use-1m --budget 5.00`). This is the primary mechanism for all `xum run` flags — avoids per-flag plumbing.
+- `XUM_RUN_AS_GOAL`: When set to `1`, runs each task instruction as a strict `xum run --goal` objective while still piping the instruction to stdin. Use `XUM_RUN_ARGS` for goal limits such as `--goal-turns` and `--goal-budget`. Incomplete strict-goal exits are left scoreable so Harbor can verify the workspace.
 
 ### Timeout Handling
 
@@ -94,7 +94,7 @@ The agent adapter accepts a few Harbor kwargs (passed via `--agent-kwarg`):
 - `model_name`: Model to use (e.g., `anthropic/claude-opus-5`, `openai/gpt-5.6-sol`)
 - `experiments`: Experiments to enable, comma-separated (e.g., `programmatic-tool-calling`)
 
-All other `mux run` CLI flags (thinking level, mode, runtime, budget, etc.) are passed via `MUX_RUN_ARGS` — no per-flag plumbing needed.
+All other `xum run` CLI flags (thinking level, mode, runtime, budget, etc.) are passed via `XUM_RUN_ARGS` — no per-flag plumbing needed.
 
 **CI dispatch (primary method):**
 
@@ -114,8 +114,8 @@ gh workflow run terminal-bench.yml \
 
 ```bash
 # Run a single task as a strict CLI Goal Run
-MUX_RUN_AS_GOAL=1 \
-MUX_RUN_ARGS="--thinking high --goal-turns 30 --goal-budget 10.00" \
+XUM_RUN_AS_GOAL=1 \
+XUM_RUN_ARGS="--thinking high --goal-turns 30 --goal-budget 10.00" \
 make benchmark-terminal TB_TASK_NAMES="chess-best-move"
 
 # CI dispatch
@@ -129,11 +129,11 @@ gh workflow run terminal-bench.yml \
 **Local runs:**
 
 ```bash
-# Pass flags via MUX_RUN_ARGS env var
-MUX_RUN_ARGS="--thinking high --use-1m" make benchmark-terminal
+# Pass flags via XUM_RUN_ARGS env var
+XUM_RUN_ARGS="--thinking high --use-1m" make benchmark-terminal
 
 # Model and experiments via TB_ARGS
-MUX_RUN_ARGS="--thinking high" make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5.6-sol --agent-kwarg experiments=programmatic-tool-calling"
+XUM_RUN_ARGS="--thinking high" make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5.6-sol --agent-kwarg experiments=programmatic-tool-calling"
 ```
 
 ## Monitoring local benchmark output
@@ -172,7 +172,7 @@ Results are saved to `runs/YYYY-MM-DD__HH-MM-SS/`:
 
 ## Querying Results from BigQuery
 
-Mux Terminal-Bench results are uploaded to BigQuery after CI runs. Query via `bq` CLI after authenticating with `gcloud auth login` and setting project to `mux-benchmarks`.
+Xum Terminal-Bench results are uploaded to BigQuery after CI runs. Query via `bq` CLI after authenticating with `gcloud auth login` and setting project to `mux-benchmarks`.
 
 **Table:** `mux-benchmarks.benchmarks.tbench_results`
 
@@ -211,7 +211,7 @@ python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --n-runs 5 -
 This creates a properly structured submission folder at `leaderboard_submission/` containing:
 
 ```
-submissions/terminal-bench/2.0/Mux__<model>/
+submissions/terminal-bench/2.0/Xum__<model>/
   metadata.yaml       # Agent and model info
   <job-folder-1>/     # Results from run 1
     config.json
@@ -271,10 +271,10 @@ The PR will be automatically validated by the leaderboard bot. Once merged, resu
 
 ## Files
 
-- `mux_agent.py`: Main agent adapter implementing Harbor's `BaseInstalledAgent` interface
-- `mux-run.sh`: Shell script that sets up environment and invokes xum CLI
-- `mux_payload.py`: Helper to package xum app for containerized execution
-- `mux_setup.sh.j2`: Jinja2 template for agent installation script
+- `xum_agent.py`: Main agent adapter implementing Harbor's `BaseInstalledAgent` interface
+- `xum-run.sh`: Shell script that sets up environment and invokes xum CLI
+- `xum_payload.py`: Helper to package xum app for containerized execution
+- `xum_setup.sh.j2`: Jinja2 template for agent installation script
 - `prepare_leaderboard_submission.py`: Script to prepare results for leaderboard submission
 - `analyze_failure_rates.py`: Analyze failure rates to find optimization opportunities
 - `download_run_logs.py`: Download and inspect raw agent logs from nightly runs
@@ -357,7 +357,7 @@ python benchmarks/terminal_bench/analyze_failure_rates.py
 python benchmarks/terminal_bench/analyze_failure_rates.py --top 50
 
 # Filter to specific Xum model
-python benchmarks/terminal_bench/analyze_failure_rates.py --mux-model sonnet
+python benchmarks/terminal_bench/analyze_failure_rates.py --xum-model sonnet
 
 # Force refresh of cached data
 python benchmarks/terminal_bench/analyze_failure_rates.py --refresh
@@ -382,8 +382,8 @@ OPTIMIZATION OPPORTUNITIES (sorted by M/O ratio)
 ================================================================================
 Task ID                                   Xum Fail%  Avg Other%  M/O Ratio Agent
 --------------------------------------------------------------------------------
-some-difficult-task                         100.0%       10.0%       9.09 Mux__Claude-Sonnet-4.5
-another-task                                 80.0%       20.0%       3.64 Mux__Claude-Sonnet-4.5
+some-difficult-task                         100.0%       10.0%       9.09 Xum__Claude-Sonnet-4.5
+another-task                                 80.0%       20.0%       3.64 Xum__Claude-Sonnet-4.5
 ...
 
 ================================================================================
