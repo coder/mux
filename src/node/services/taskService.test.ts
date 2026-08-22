@@ -5679,6 +5679,228 @@ describe("TaskService", () => {
     expect(JSON.stringify(history)).toContain("Nested work completed.");
   });
 
+  test("failed terminal continuation enqueue re-evaluates a correlated stream-end", async () => {
+    let releaseTerminalSend!: () => void;
+    const terminalSendGate = new Promise<void>((resolve) => {
+      releaseTerminalSend = resolve;
+    });
+    let markTerminalSendStarted!: () => void;
+    const terminalSendStarted = new Promise<void>((resolve) => {
+      markTerminalSendStarted = resolve;
+    });
+    const sendMessage = mock(
+      async (...args: unknown[]): Promise<Result<void, SendMessageError>> => {
+        const internal = args[3] as { queueDedupeKey?: string };
+        if (internal?.queueDedupeKey?.startsWith("agent-terminal-report:") === true) {
+          markTerminalSendStarted();
+          await terminalSendGate;
+          return Err({ type: "unknown", raw: "Terminal enqueue failed" });
+        }
+        return Ok(undefined);
+      }
+    );
+    const { config, parentId, taskService } = await startWorkspaceTurnForTest({ sendMessage });
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(rootDir, "repo", "nested-correlated-enqueue-failure"),
+        id: "nested-correlated-enqueue-failure",
+        name: "nested-correlated-enqueue-failure",
+        createdAt: "2026-08-21T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        agentType: "explore",
+      });
+      return cfg;
+    });
+
+    const completion = handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: "nested-correlated-enqueue-failure",
+      messageId: "assistant-nested-correlated-enqueue-failure",
+      metadata: { model: "anthropic:claude-opus-4-6", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "nested-report-call",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Nested work completed." },
+          state: "output-available",
+          output: {
+            success: true,
+            report: { reportMarkdown: "Nested work completed." },
+          },
+        },
+        { type: "text", text: "Nested work completed." },
+      ],
+    });
+
+    await terminalSendStarted;
+    const internal = taskService as unknown as {
+      finalizeWorkspaceTurnFromStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
+      workspaceTurnContinuationReservationsByWorkspaceId: Map<
+        string,
+        Set<{ released: Promise<boolean> }>
+      >;
+    };
+    const reservation = Array.from(
+      internal.workspaceTurnContinuationReservationsByWorkspaceId.get("childworkspace") ?? []
+    )[0];
+    assert(reservation, "terminal continuation reservation must be published");
+
+    let correlatedEndSettled = false;
+    const correlatedEnd = internal
+      .finalizeWorkspaceTurnFromStreamEnd({
+        type: "stream-end",
+        workspaceId: "childworkspace",
+        messageId: "outer-correlated-end-before-failed-terminal-send",
+        metadata: {
+          model: "anthropic:claude-opus-4-6",
+          agentId: "exec",
+          finishReason: "tool-calls",
+          muxMetadata: {
+            type: "workspace-turn-task",
+            taskHandleId: "wst_handle",
+            ownerWorkspaceId: parentId,
+            turnId: "turn",
+          },
+        },
+        parts: [{ type: "text", text: "Outer stream ended during terminal handoff." }],
+      })
+      .then((handled) => {
+        correlatedEndSettled = true;
+        return handled;
+      });
+    await Promise.resolve();
+    expect(correlatedEndSettled).toBe(false);
+
+    releaseTerminalSend();
+    await Promise.all([completion, correlatedEnd]);
+
+    expect(await reservation.released).toBe(false);
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      messageId: "outer-correlated-end-before-failed-terminal-send",
+    });
+  });
+
+  test("correlated settlement rechecks a reservation created after the first continuation check", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      finalizeWorkspaceTurnFromStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
+      getReservedWorkspaceTurnContinuation: (
+        workspaceId: string,
+        correlation: TestWorkspaceTurnMuxMetadata
+      ) =>
+        | {
+            released: Promise<boolean>;
+            markContinuationInstalled: () => void;
+            [Symbol.dispose]: () => void;
+          }
+        | undefined;
+      hasSameTurnContinuation: (
+        event: StreamEndEvent,
+        correlation: TestWorkspaceTurnMuxMetadata
+      ) => Promise<boolean>;
+      reserveActiveWorkspaceTurnContinuation: (workspaceId: string) => Promise<
+        | {
+            markContinuationInstalled: () => void;
+            [Symbol.dispose]: () => void;
+          }
+        | undefined
+      >;
+    };
+    const originalHasSameTurnContinuation = internal.hasSameTurnContinuation.bind(taskService);
+    let releaseInitialCheck!: () => void;
+    const initialCheckGate = new Promise<void>((resolve) => {
+      releaseInitialCheck = resolve;
+    });
+    let markInitialCheckComplete!: () => void;
+    const initialCheckComplete = new Promise<void>((resolve) => {
+      markInitialCheckComplete = resolve;
+    });
+    const hasSameTurnContinuation = spyOn(internal, "hasSameTurnContinuation").mockImplementation(
+      async (event, correlation) => {
+        const result = await originalHasSameTurnContinuation(event, correlation);
+        if (!result) {
+          markInitialCheckComplete();
+          await initialCheckGate;
+        }
+        return result;
+      }
+    );
+
+    const event: StreamEndEvent = {
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "outer-correlated-end-before-late-reservation",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "tool-calls",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Outer stream ended before a late handoff." }],
+    };
+
+    try {
+      let finalizationSettled = false;
+      const finalization = internal.finalizeWorkspaceTurnFromStreamEnd(event).then((handled) => {
+        finalizationSettled = true;
+        return handled;
+      });
+      await initialCheckComplete;
+      const reservation = await internal.reserveActiveWorkspaceTurnContinuation("childworkspace");
+      assert(reservation, "late workspace-turn continuation reservation must exist");
+      let markReservationObserved!: () => void;
+      const reservationObserved = new Promise<void>((resolve) => {
+        markReservationObserved = resolve;
+      });
+      const originalGetReservedWorkspaceTurnContinuation =
+        internal.getReservedWorkspaceTurnContinuation.bind(taskService);
+      const getReservedWorkspaceTurnContinuation = spyOn(
+        internal,
+        "getReservedWorkspaceTurnContinuation"
+      ).mockImplementation((workspaceId, correlation) => {
+        const current = originalGetReservedWorkspaceTurnContinuation(workspaceId, correlation);
+        if (current === reservation) {
+          markReservationObserved();
+        }
+        return current;
+      });
+
+      try {
+        releaseInitialCheck();
+        await reservationObserved;
+        expect(finalizationSettled).toBe(false);
+        expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+          status: "running",
+        });
+
+        reservation.markContinuationInstalled();
+        reservation[Symbol.dispose]();
+        expect(await finalization).toBe(true);
+        expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+          status: "running",
+          deferredMessageIds: [event.messageId],
+        });
+      } finally {
+        reservation[Symbol.dispose]();
+        getReservedWorkspaceTurnContinuation.mockRestore();
+      }
+    } finally {
+      releaseInitialCheck();
+      hasSameTurnContinuation.mockRestore();
+    }
+  });
+
   test("terminal nested agent report queues a correlated workspace turn continuation", async () => {
     const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest();
     await config.editConfig((cfg) => {

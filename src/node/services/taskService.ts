@@ -10802,14 +10802,29 @@ export class TaskService {
    * Whether a continuation of this exact delegated turn is pending or streaming.
    * Pending entries must carry the same correlation metadata as the ended stream.
    */
-  private hasSameTurnContinuation(
+  private async hasSameTurnContinuation(
     event: StreamEndEvent,
     correlation: { taskHandleId: string; ownerWorkspaceId: string; turnId: string }
-  ): boolean {
-    return (
-      this.hasReservedWorkspaceTurnContinuation(event.workspaceId, correlation) ||
-      this.hasConcreteSameTurnContinuation(event, correlation)
-    );
+  ): Promise<boolean> {
+    while (true) {
+      if (this.hasConcreteSameTurnContinuation(event, correlation)) {
+        return true;
+      }
+      const reservation = this.getReservedWorkspaceTurnContinuation(event.workspaceId, correlation);
+      if (reservation == null) {
+        return false;
+      }
+
+      log.debug("Waiting for a reserved correlated workspace turn continuation handoff", {
+        workspaceId: event.workspaceId,
+        taskHandleId: correlation.taskHandleId,
+        streamEndMessageId: event.messageId,
+      });
+      if (await reservation.released) {
+        return true;
+      }
+      // A failed handoff does not prove that no other concurrent reservation can continue the turn.
+    }
   }
 
   private hasConcreteSameTurnContinuation(
@@ -10870,60 +10885,80 @@ export class TaskService {
       }
       return await this.interruptWorkspaceTurnFromUncorrelatedStreamEnd(event);
     }
-    const record = await this.taskHandleStore.getWorkspaceTurn(
-      metadata.ownerWorkspaceId,
-      metadata.taskHandleId
-    );
-    if (record == null) {
-      log.warn("Ignoring missing workspace turn stream-end handle", {
-        workspaceId: event.workspaceId,
-        taskHandleId: metadata.taskHandleId,
-      });
-      return true;
-    }
-    if (record.workspaceId !== event.workspaceId || record.turnId !== metadata.turnId) {
-      log.warn("Ignoring out-of-scope workspace turn stream-end", {
-        workspaceId: event.workspaceId,
-        taskHandleId: metadata.taskHandleId,
-      });
-      return true;
-    }
-    if (this.isDeferredWorkspaceTurnMessage(record, event.messageId)) {
-      return true;
-    }
+    while (true) {
+      const record = await this.taskHandleStore.getWorkspaceTurn(
+        metadata.ownerWorkspaceId,
+        metadata.taskHandleId
+      );
+      if (record == null) {
+        log.warn("Ignoring missing workspace turn stream-end handle", {
+          workspaceId: event.workspaceId,
+          taskHandleId: metadata.taskHandleId,
+        });
+        return true;
+      }
+      if (record.workspaceId !== event.workspaceId || record.turnId !== metadata.turnId) {
+        log.warn("Ignoring out-of-scope workspace turn stream-end", {
+          workspaceId: event.workspaceId,
+          taskHandleId: metadata.taskHandleId,
+        });
+        return true;
+      }
+      if (this.isDeferredWorkspaceTurnMessage(record, event.messageId)) {
+        return true;
+      }
 
-    // A queued continuation can stop the in-flight stream at a tool boundary with
-    // finishReason "tool-calls" and continue the same delegated turn. Report
-    // wake-ups carry the exact correlation explicitly; bash-monitor wakes inherit
-    // it from history. Defer settlement until the continuation's terminal
-    // stream-end instead of reporting a false completion failure to the owner.
-    // Any other queued input (manual message, /compact) supersedes the turn and
-    // must settle the old outcome here.
-    if (
-      event.metadata.finishReason === "tool-calls" &&
-      this.hasSameTurnContinuation(event, metadata)
-    ) {
-      await this.markWorkspaceTurnStreamEndDeferred(event);
-      return true;
-    }
+      const isToolBoundary = event.metadata.finishReason === "tool-calls";
+      // A queued continuation can stop the in-flight stream at a tool boundary and
+      // continue the same delegated turn. Wait for any in-progress handoff before
+      // deciding whether this stream-end is terminal.
+      if (isToolBoundary && (await this.hasSameTurnContinuation(event, metadata))) {
+        await this.markWorkspaceTurnStreamEndDeferred(event);
+        return true;
+      }
 
-    const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
-      queueCutSupersedeEvidence: this.hasLiveQueueCutSupersedeEvidence(event),
-    });
-    await this.settleWorkspaceTurn({
-      record,
-      next,
-      waiterSettlement:
-        next.status === "completed"
-          ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(next) }
-          : { status: "error", error: new Error(next.error ?? "Workspace turn failed") },
-      // This stream-end is strictly correlated (workspaceId + turnId), so it proves the
-      // delegated turn's real outcome. A handle that settled interrupted/error from a
-      // transient failure (provider error, restart) may have self-healed via auto-retry
-      // of the same turn; let this settlement correct that stale record.
-      allowTerminalResettle: true,
-    });
-    return true;
+      const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
+        queueCutSupersedeEvidence: this.hasLiveQueueCutSupersedeEvidence(event),
+      });
+      let concreteContinuationInstalled = false;
+      let reservedContinuation: WorkspaceTurnContinuationReservation | undefined;
+      await this.settleWorkspaceTurn({
+        record,
+        next,
+        waiterSettlement:
+          next.status === "completed"
+            ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(next) }
+            : { status: "error", error: new Error(next.error ?? "Workspace turn failed") },
+        // This stream-end is strictly correlated (workspaceId + turnId), so it proves the
+        // delegated turn's real outcome. A handle that settled interrupted/error from a
+        // transient failure (provider error, restart) may have self-healed via auto-retry
+        // of the same turn; let this settlement correct that stale record.
+        allowTerminalResettle: true,
+        shouldSettleCurrent: isToolBoundary
+          ? (current) => {
+              const currentCorrelation = this.buildWorkspaceTurnMuxMetadata(current);
+              if (this.hasConcreteSameTurnContinuation(event, currentCorrelation)) {
+                concreteContinuationInstalled = true;
+                return false;
+              }
+              reservedContinuation = this.getReservedWorkspaceTurnContinuation(
+                event.workspaceId,
+                currentCorrelation
+              );
+              return reservedContinuation == null;
+            }
+          : undefined,
+      });
+      if (!isToolBoundary || (reservedContinuation == null && !concreteContinuationInstalled)) {
+        return true;
+      }
+      if (concreteContinuationInstalled || (await reservedContinuation?.released) === true) {
+        await this.markWorkspaceTurnStreamEndDeferred(event);
+        return true;
+      }
+      // A reservation appeared after the first check and then failed. Re-evaluate the
+      // original correlated stream-end while the caller still owns the workspace event lock.
+    }
   }
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
@@ -11439,13 +11474,6 @@ export class TaskService {
         reservation.muxMetadata.turnId === correlation.turnId
       );
     });
-  }
-
-  private hasReservedWorkspaceTurnContinuation(
-    workspaceId: string,
-    correlation: Pick<WorkspaceTurnMuxMetadata, "taskHandleId" | "ownerWorkspaceId" | "turnId">
-  ): boolean {
-    return this.getReservedWorkspaceTurnContinuation(workspaceId, correlation) != null;
   }
 
   private async reserveActiveWorkspaceTurnContinuation(
