@@ -152,7 +152,13 @@ class XumAgent(BaseInstalledAgent):
         for suffix in self._CONFIG_ENV_SUFFIXES:
             canonical_key = f"XUM_{suffix}"
             legacy_key = f"MUX_{suffix}"
-            value = os.environ.get(canonical_key) or os.environ.get(legacy_key)
+            # Presence, not truthiness, determines precedence: an explicit empty
+            # canonical value must clear a legacy variable left in the developer shell.
+            value = (
+                os.environ[canonical_key]
+                if canonical_key in os.environ
+                else os.environ.get(legacy_key)
+            )
             if value:
                 env[canonical_key] = value
 

@@ -379,8 +379,12 @@ def prepare_submission(
                     trial_src,
                     dest_trial_dir,
                     ignore=shutil.ignore_patterns(
-                        "xum-app.tar.gz",  # Large agent binary (~5MB each)
-                        "xum-tokens.json",  # Token usage (not needed for leaderboard)
+                        # Exclude both generations because submissions may combine new
+                        # trials with artifacts downloaded from pre-rename runs.
+                        "xum-app.tar.gz",
+                        "mux-app.tar.gz",
+                        "xum-tokens.json",
+                        "mux-tokens.json",
                         "*.log",  # Log files trigger HF LFS and cause upload timeouts
                     ),
                 )

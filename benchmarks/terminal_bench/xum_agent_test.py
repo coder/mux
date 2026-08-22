@@ -174,6 +174,21 @@ def test_canonical_environment_wins_over_legacy_alias(
     assert env["XUM_MODEL"] == "anthropic:claude-sonnet-4-5"
 
 
+def test_empty_canonical_environment_clears_legacy_alias(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XUM_AGENT_REPO_ROOT", str(_repo_root()))
+    monkeypatch.setenv("XUM_RUN_ARGS", "")
+    monkeypatch.setenv("MUX_RUN_ARGS", "--goal keep-this-from-leaking")
+    monkeypatch.setenv("XUM_RUN_AS_GOAL", "")
+    monkeypatch.setenv("MUX_RUN_AS_GOAL", "1")
+
+    env = XumAgent(logs_dir=tmp_path)._env
+
+    assert "XUM_RUN_ARGS" not in env
+    assert "XUM_RUN_AS_GOAL" not in env
+
+
 def test_goal_mode_env_is_forwarded(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
