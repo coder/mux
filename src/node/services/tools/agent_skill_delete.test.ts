@@ -975,6 +975,79 @@ describe("refinement journal", () => {
     expect(await fs.readFile(referencePath, "utf-8")).toBe(original);
   });
 
+  it("restores BOTH manifests when rolling back a canonical SKILL.md delete", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-refinement-legacy-manifest");
+
+    // Deleting the canonical SKILL.md also rm's the legacy .mux manifest, so
+    // the inverse must capture BOTH: restoring only the canonical file would
+    // leave the legacy manifest missing after rollback (upgrade↔downgrade).
+    const projectRoot = path.join(tempDir.path, "project");
+    await writeSkill(path.join(projectRoot, ".xum", "skills"), "demo-skill", {
+      body: "Canonical body",
+    });
+    await writeSkill(path.join(projectRoot, ".mux", "skills"), "demo-skill", {
+      body: "Legacy body",
+    });
+    const canonicalManifest = path.join(
+      projectRoot,
+      ".xum",
+      "skills",
+      "demo-skill",
+      SKILL_FILENAME
+    );
+    const legacyManifest = path.join(projectRoot, ".mux", "skills", "demo-skill", SKILL_FILENAME);
+    const originalCanonical = await fs.readFile(canonicalManifest, "utf-8");
+    const originalLegacy = await fs.readFile(legacyManifest, "utf-8");
+
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: SKILL_FILENAME, confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+    expect(result).toMatchObject({ success: true, deleted: "file" });
+    expect(fs.stat(canonicalManifest)).rejects.toThrow();
+    expect(fs.stat(legacyManifest)).rejects.toThrow();
+
+    const events = await readRefinementEvents(sessionDirOf(tempDir.path));
+    expect(events).toHaveLength(1);
+    await applyRefinementInverse(sessionDirOf(tempDir.path), events[0].data.inverse);
+    expect(await fs.readFile(canonicalManifest, "utf-8")).toBe(originalCanonical);
+    expect(await fs.readFile(legacyManifest, "utf-8")).toBe(originalLegacy);
+  });
+
+  it("skips journaling a SKILL.md delete when the legacy manifest cannot be captured", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-refinement-legacy-binary");
+
+    // A binary legacy manifest cannot enter a lossless text inverse; a
+    // canonical-only inverse would be PARTIAL (rollback would resurrect the
+    // canonical file but not the legacy manifest), so journaling is skipped
+    // entirely while the delete still removes both files.
+    const projectRoot = path.join(tempDir.path, "project");
+    await writeSkill(path.join(projectRoot, ".xum", "skills"), "demo-skill");
+    const legacyManifest = path.join(projectRoot, ".mux", "skills", "demo-skill", SKILL_FILENAME);
+    await fs.mkdir(path.dirname(legacyManifest), { recursive: true });
+    await fs.writeFile(legacyManifest, BINARY_BYTES);
+
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: SKILL_FILENAME, confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+    expect(result).toMatchObject({ success: true, deleted: "file" });
+    expect(fs.stat(legacyManifest)).rejects.toThrow();
+    expect(await readRefinementEvents(sessionDirOf(tempDir.path))).toHaveLength(0);
+  });
+
   it("journals a whole-skill delete with an inverse restoring every file", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-refinement-skill");
 

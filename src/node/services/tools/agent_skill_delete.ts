@@ -665,36 +665,68 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             }
 
             // Prior content must be captured before removal (refinement inverse).
-            // Null capture (e.g. unreadable or over-budget file) skips journaling,
-            // never the delete. lstat size is checked before reading so an
-            // attacker-sized file is never buffered.
-            let localFileCapture: RefinementFileCapture | null = null;
-            if (targetStat.size > REFINEMENT_CAPTURE_MAX_FILE_BYTES) {
-              log.debug(
-                "[agent_skill_delete] skipping refinement inverse: capture budget exceeded",
-                {
-                  targetPath,
-                  size: targetStat.size,
-                }
-              );
-            } else {
+            // Null capture (e.g. unreadable, binary, or over-budget files) skips
+            // journaling, never the delete. lstat size is checked before reading
+            // so an attacker-sized file is never buffered. Deleting the canonical
+            // SKILL.md also removes the legacy-dir manifest (below), so that
+            // manifest must enter the SAME inverse under the shared budget:
+            // restoring only the canonical file on rollback would leave the
+            // legacy manifest missing, breaking upgrade↔downgrade. A partial
+            // inverse is never journaled.
+            const captureTotals: CaptureTotals = { fileCount: 0, totalBytes: 0 };
+            const captureOne = async (
+              capturePath: string,
+              size: number
+            ): Promise<RefinementFileCapture | null> => {
               try {
-                localFileCapture = {
-                  path: targetPath,
-                  content: assertLosslessUtf8(targetPath, await fsPromises.readFile(targetPath)),
+                assertCaptureBudget(captureTotals, size);
+                return {
+                  path: capturePath,
+                  content: assertLosslessUtf8(capturePath, await fsPromises.readFile(capturePath)),
                 };
               } catch (error) {
                 if (error instanceof CaptureSkippedError) {
                   log.debug("[agent_skill_delete] skipping refinement inverse", {
-                    targetPath,
+                    capturePath,
                     reason: error.message,
                   });
                 } else {
                   log.debug("[agent_skill_delete] failed to capture file for refinement inverse", {
-                    targetPath,
+                    capturePath,
                     error,
                   });
                 }
+                return null;
+              }
+            };
+            const targetCapture = await captureOne(targetPath, targetStat.size);
+            let fileCaptures: RefinementFileCapture[] | null =
+              targetCapture === null ? null : [targetCapture];
+            if (fileCaptures !== null && legacyManifestPath != null) {
+              try {
+                const legacyStat = await fsPromises.lstat(legacyManifestPath);
+                if (!legacyStat.isFile()) {
+                  // Symlink/dir: unrepresentable in a files-only inverse.
+                  log.debug("[agent_skill_delete] skipping refinement inverse", {
+                    legacyManifestPath,
+                    reason: "legacy manifest is not a regular file",
+                  });
+                  fileCaptures = null;
+                } else {
+                  const legacyCapture = await captureOne(legacyManifestPath, legacyStat.size);
+                  fileCaptures = legacyCapture === null ? null : [...fileCaptures, legacyCapture];
+                }
+              } catch (error) {
+                if (!hasErrorCode(error, "ENOENT")) {
+                  // Unknown legacy state: the rm below may remove content the
+                  // inverse does not cover — skip journaling entirely.
+                  log.debug("[agent_skill_delete] failed to stat legacy manifest for inverse", {
+                    legacyManifestPath,
+                    error,
+                  });
+                  fileCaptures = null;
+                }
+                // ENOENT: no legacy manifest to remove, nothing extra to capture.
               }
             }
 
@@ -706,11 +738,11 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             }
             await fsPromises.unlink(targetPath);
 
-            if (localFileCapture !== null) {
+            if (fileCaptures !== null) {
               await appendRefinementEventFromTool(config, {
                 kind: "skill",
                 action: { op: "delete-file", skillName: parsedName.data, filePath },
-                inverse: { op: "restore-files", files: [localFileCapture] },
+                inverse: { op: "restore-files", files: fileCaptures },
                 evidence: { toolName: "agent_skill_delete", toolCallId },
               });
             }
