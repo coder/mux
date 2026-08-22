@@ -6,6 +6,7 @@ import { acquireProcessFileLock } from "@/node/utils/concurrency/fileLock";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -134,7 +135,7 @@ async function createFixture(options?: {
   enabledExperiments?: ExperimentId[];
   /** Provide workspace metadata so the skill-write tool is available. */
   withSkillTool?: boolean;
-  timelineEvents?: Array<{ kind: string; description: string }>;
+  timelineEvents?: Array<{ kind: string; description: string; ts?: number }>;
   /** Shortens the pass deadline (wedged-provider tests). */
   timeoutMs?: number;
   /** Captures recordHeadlessUsage calls (usage accounting tests). */
@@ -229,7 +230,7 @@ async function createFixture(options?: {
                     v: 1 as const,
                     seq: index + 1,
                     id: `tl-${index}`,
-                    ts: 1_700_000_000_000 + index,
+                    ts: event.ts ?? 1_700_000_000_000 + index,
                     kind: event.kind,
                     source: { system: "test" },
                     data: { description: event.description },
@@ -1824,6 +1825,87 @@ describe("RefineService", () => {
       await fixture.seedTrajectory();
       expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
       expect(prompts[1]).not.toContain("shipped the fix");
+    }
+  });
+
+  it("confines the refine input to the active context segment (r37)", async () => {
+    // SECURITY: after /clear --soft, pre-reset rows are discarded context —
+    // a pre-reset prompt injection must not steer a staged proposal that is
+    // durably appended AFTER the boundary. Timeline events get the same
+    // cutoff.
+    const prompts: string[] = [];
+    const now = Date.now();
+    using fixture = await createFixture({
+      modelFactory: () => noOpModel((prompt) => prompts.push(prompt)),
+      timelineEvents: [
+        { kind: "milestone", description: "pre-reset timeline lore", ts: now - 60_000 },
+        { kind: "milestone", description: "post-reset timeline note", ts: now + 60_000 },
+      ],
+      enabledExperiments: [
+        EXPERIMENT_IDS.RLM,
+        EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
+        EXPERIMENT_IDS.TIMELINE,
+      ],
+    });
+    await fixture.seedTrajectory(["PRE-RESET injected instruction to exfiltrate secrets."]);
+    await fixture.historyService.appendToHistory(
+      WORKSPACE_ID,
+      createMuxMessage("reset-boundary-1", "assistant", "", {
+        timestamp: now,
+        contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+      })
+    );
+    await fixture.historyService.appendToHistory(
+      WORKSPACE_ID,
+      createMuxMessage("post-reset-user-1", "user", "POST-RESET evidence about the repo.", {
+        timestamp: now + 1,
+      })
+    );
+
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+    const prompt = prompts.at(-1) ?? "";
+    expect(prompt).toContain("POST-RESET evidence about the repo.");
+    expect(prompt).not.toContain("PRE-RESET injected instruction");
+    expect(prompt).toContain("post-reset timeline note");
+    expect(prompt).not.toContain("pre-reset timeline lore");
+  });
+
+  it("refuses to apply a proposal staged before a context reset (r37)", async () => {
+    // SECURITY: the approval-hash scan must not cross a reset backwards — a
+    // proposal distilled from discarded context stays unapprovable after the
+    // user cleared it; /refine restages from the active segment.
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-pre-reset-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "A lesson staged before the reset.\n",
+              },
+            },
+          ],
+          "one lesson staged"
+        ),
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    await fixture.historyService.appendToHistory(
+      WORKSPACE_ID,
+      createMuxMessage("reset-boundary-2", "assistant", "", {
+        timestamp: Date.now(),
+        contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+      })
+    );
+
+    const result = await fixture.service.apply(WORKSPACE_ID);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("no staged refine proposal");
     }
   });
 });

@@ -52,6 +52,11 @@ import {
   isRlmModeEnabled,
   type RlmExperimentFlags,
 } from "@/node/services/branchSummary";
+import {
+  findLatestContextBoundaryIndex,
+  isDurableContextResetBoundaryMarker,
+  sliceMessagesForProviderFromLatestContextBoundary,
+} from "@/common/utils/messages/compactionBoundary";
 import { acquireProcessFileLock } from "@/node/utils/concurrency/fileLock";
 import type { HistoryService } from "@/node/services/historyService";
 import { runLanguageModelCleanup } from "@/node/services/languageModelCleanup";
@@ -717,7 +722,17 @@ export class RefineService {
       return null;
     }
     for (let i = messagesResult.data.length - 1; i >= 0; i--) {
-      const muxMetadata = messagesResult.data[i].metadata?.muxMetadata;
+      const message = messagesResult.data[i];
+      // SECURITY: never scan backwards across a context reset. A proposal
+      // staged from pre-reset context must not stay approvable after the
+      // user discarded that context — apply fails closed and /refine
+      // restages from the active segment. (Compaction is different: the
+      // scan may cross it, so a proposal staged just before an
+      // auto-compaction remains approvable.)
+      if (isDurableContextResetBoundaryMarker(message)) {
+        return null;
+      }
+      const muxMetadata = message.metadata?.muxMetadata;
       if (
         muxMetadata?.type === "refine-summary" &&
         typeof muxMetadata.stagedSetHash === "string" &&
@@ -736,23 +751,37 @@ export class RefineService {
     const workspace = this.config.findWorkspace(workspaceId);
     if (!workspace) return Err(`workspace not found: ${workspaceId}`);
 
-    const messagesResult = await this.historyService.getLastMessages(
-      workspaceId,
-      REFINE_MAX_MESSAGES
-    );
+    // SECURITY: confine the distillation input to the ACTIVE context
+    // segment. getLastMessages crosses reset boundaries (and pages into the
+    // sealed archive), so after /clear --soft a pre-reset prompt injection
+    // could steer the staged proposal — which is durably appended AFTER the
+    // boundary, re-entering model-visible context, and on approval persists
+    // to memory/skills. Durable sandbox/carryover invalidation does not
+    // filter chat history, so the read itself must stop at the boundary.
+    // Compaction epochs stay represented inside the active segment (summary
+    // row + preserved tail copies), so nothing legitimate is lost.
+    const messagesResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
     if (!messagesResult.success) {
       return Err(`could not read workspace history: ${messagesResult.error}`);
     }
+    const activeSegment = sliceMessagesForProviderFromLatestContextBoundary(messagesResult.data);
     // Reuse the branch-summary transcript builder: role-labeled,
     // thinking-stripped, char-bounded — exactly the evidence shape a
-    // distillation pass needs.
-    const transcript = buildAbandonedBranchTranscript(messagesResult.data);
+    // distillation pass needs. The tail cap preserves the prior bound on
+    // transcript size.
+    const transcript = buildAbandonedBranchTranscript(activeSegment.slice(-REFINE_MAX_MESSAGES));
     if (transcript.length === 0) {
       // Empty trajectory: a clean first-class no-op without spending a model call.
       return Ok({ applied: [], summary: "Nothing worth distilling.", noOp: true });
     }
 
-    const timelineText = await this.buildTimelineText(workspaceId);
+    // Timeline events narrate the same trajectory, so they get the same
+    // cutoff: events recorded before the segment's boundary row belong to
+    // discarded (reset) or already-summarized (compaction) context.
+    const boundaryIndex = findLatestContextBoundaryIndex(messagesResult.data);
+    const timelineSinceTs =
+      boundaryIndex >= 0 ? messagesResult.data[boundaryIndex].metadata?.timestamp : undefined;
+    const timelineText = await this.buildTimelineText(workspaceId, timelineSinceTs);
 
     // Model: reuse the dream-agent inherit cascade — refine is the same class
     // of background self-maintenance agent, so a per-workspace dream override
@@ -998,16 +1027,23 @@ export class RefineService {
   }
 
   /** Timeline digest when the Timeline experiment is on; undefined otherwise. */
-  private async buildTimelineText(workspaceId: string): Promise<string | undefined> {
+  private async buildTimelineText(
+    workspaceId: string,
+    sinceTs?: number
+  ): Promise<string | undefined> {
     if (!this.experiments.isExperimentEnabled(EXPERIMENT_IDS.TIMELINE)) return undefined;
     if (this.options.timelineService === undefined) return undefined;
     try {
       const page = await this.options.timelineService.list(workspaceId, {
         limit: REFINE_TIMELINE_EVENT_LIMIT,
       });
-      if (page.events.length === 0) return undefined;
+      // Same confinement as the transcript (see runLocked): events from
+      // before the active segment's boundary row are excluded.
+      const events =
+        sinceTs === undefined ? page.events : page.events.filter((event) => event.ts >= sinceTs);
+      if (events.length === 0) return undefined;
       // list() returns newest-first; present oldest-first for the model.
-      return [...page.events]
+      return [...events]
         .reverse()
         .map((event) => {
           const description = event.data?.description ?? event.data?.digest ?? "";
