@@ -1738,15 +1738,26 @@ export class MCPServerManager {
 
     // Cold workspaces have no recorded state for applyWorkspaceOverrides to repair.
     // Overlay the newest overrides over a caller snapshot that may predate the mutation.
-    let options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
-      ? {
-          ...requestOptions,
-          overrides: this.latestWorkspaceOverrides.get(requestOptions.workspaceId),
-        }
-      : {
-          ...requestOptions,
-          overrides: await this.loadFirstServeWorkspaceOverrides(requestOptions),
-        };
+    let options: MCPWorkspaceRequestOptions;
+    if (this.latestWorkspaceOverrides.has(requestOptions.workspaceId)) {
+      options = {
+        ...requestOptions,
+        overrides: this.latestWorkspaceOverrides.get(requestOptions.workspaceId),
+      };
+    } else {
+      const firstServeOverrides = await this.loadFirstServeWorkspaceOverrides(requestOptions);
+      // Recheck AFTER the await: an MCP settings save completing while the
+      // disk read was in flight published newer state into the cache, and
+      // recording the read's older result would expose a just-disabled
+      // server for this send (the save's repair path only patches recorded
+      // options, which do not exist yet on a first serve).
+      options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
+        ? {
+            ...requestOptions,
+            overrides: this.latestWorkspaceOverrides.get(requestOptions.workspaceId),
+          }
+        : { ...requestOptions, overrides: firstServeOverrides };
+    }
     // Same cold-workspace gap for project trust: a revocation landing while a
     // stream's pre-await trusted snapshot is still in flight has no recorded
     // options to repair, so overlay the newest trust the manager has seen.

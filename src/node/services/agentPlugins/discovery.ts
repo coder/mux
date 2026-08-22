@@ -49,6 +49,15 @@ export const UNIVERSAL_AGENT_PLUGINS_CONTAINER = "~/.agents/plugins";
  */
 export const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
 
+/**
+ * Ceiling for hooks.js source. Unlike other components, the hook FILE itself
+ * is read and hashed on every send and evaluated in the Electron main
+ * process, so a repository devoting its checkout quota to one giant script
+ * could stall the app after an accepted install. Enforced here so the
+ * consent preview and runtime discovery exclude the identical component set.
+ */
+export const MAX_PLUGIN_HOOK_SOURCE_BYTES = 1024 * 1024;
+
 export interface AgentPluginContainer {
   /** Absolute host path of the container directory (e.g. `<projectRoot>/.xum/plugins`). */
   path: string;
@@ -123,6 +132,8 @@ async function resolveComponentPath(args: {
   componentLabel: string;
   scope: AgentPluginScope;
   diagnostics: AgentPluginDiagnostic[];
+  /** For file components whose whole source gets loaded: exclude oversized files. */
+  maxBytes?: number;
 }): Promise<string | undefined> {
   const candidate = path.join(args.rootReal, args.relativePath);
 
@@ -155,6 +166,18 @@ async function resolveComponentPath(args: {
   const kindOk = args.expectKind === "file" ? stat.isFile() : stat.isDirectory();
   if (!kindOk) {
     const message = `${args.componentLabel} must be a ${args.expectKind === "file" ? "regular file" : "directory"}; ignoring this component`;
+    log.warn(`Agent plugin ${args.rootReal}: ${message}`);
+    args.diagnostics.push({
+      path: candidate,
+      scope: args.scope,
+      severity: "error",
+      message,
+    });
+    return undefined;
+  }
+
+  if (args.maxBytes !== undefined && stat.size > args.maxBytes) {
+    const message = `${args.componentLabel} is too large (${stat.size} bytes; max ${args.maxBytes}); ignoring this component`;
     log.warn(`Agent plugin ${args.rootReal}: ${message}`);
     args.diagnostics.push({
       path: candidate,
@@ -262,7 +285,8 @@ async function discoverPluginAt(args: {
   const contributes = validation.manifest.contributes;
   const resolveComponent = (
     relativePath: string,
-    expectKind: "file" | "directory"
+    expectKind: "file" | "directory",
+    options?: { maxBytes?: number }
   ): Promise<string | undefined> =>
     resolveComponentPath({
       rootReal,
@@ -271,11 +295,14 @@ async function discoverPluginAt(args: {
       componentLabel: expectKind === "directory" ? `${relativePath}/` : relativePath,
       scope,
       diagnostics,
+      ...(options?.maxBytes !== undefined ? { maxBytes: options.maxBytes } : {}),
     });
 
   const skillsDir = await resolveComponent(contributes?.skills ?? "skills", "directory");
   const mcpConfigPath = await resolveComponent(contributes?.mcp ?? "mcp.json", "file");
-  const hooksPath = await resolveComponent(contributes?.hooks ?? "hooks.js", "file");
+  const hooksPath = await resolveComponent(contributes?.hooks ?? "hooks.js", "file", {
+    maxBytes: MAX_PLUGIN_HOOK_SOURCE_BYTES,
+  });
   const agentsDir = await resolveComponent(contributes?.agents ?? "agents", "directory");
   const workflowsDir = await resolveComponent(contributes?.workflows ?? "workflows", "directory");
 

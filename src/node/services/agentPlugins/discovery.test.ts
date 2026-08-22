@@ -304,6 +304,29 @@ describe("discoverAgentPlugins", () => {
     expect(result.diagnostics[0].message).toContain("hooks.js");
   });
 
+  test("an oversized hooks.js invalidates only the hooks component", async () => {
+    // The hook source is read and hashed every send and evaluated in the
+    // main process: a repo pouring its checkout quota into hooks.js must not
+    // gain a post-install stall primitive. The same discovery cap governs
+    // the consent preview, so preview and runtime exclude identically.
+    using tmp = new DisposableTempDir("agent-plugins");
+    const container = path.join(tmp.path, "plugins");
+    const pluginDir = await writePlugin(container, "big-hooks", { mcpJson: "{}" });
+    await fs.writeFile(
+      path.join(pluginDir, "hooks.js"),
+      `// ${"x".repeat(2 * 1024 * 1024)}\n({})`,
+      "utf8"
+    );
+
+    const result = await discoverAgentPlugins([{ path: container, scope: "global" }]);
+
+    expect(result.plugins).toHaveLength(1);
+    expect(result.plugins[0].hooksPath).toBeUndefined();
+    expect(result.plugins[0].mcpConfigPath).toBeDefined();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0].message).toContain("too large");
+  });
+
   test("a symlinked plugin directory anchors containment at its realpath", async () => {
     using tmp = new DisposableTempDir("agent-plugins");
     const container = path.join(tmp.path, "plugins");

@@ -622,6 +622,67 @@ describe("MCPServerManager", () => {
     expect(Object.keys(result.tools)).toHaveLength(0);
   });
 
+  test("a settings save landing during the first-serve disk read wins over the read result", async () => {
+    // The first serve's disk read races a successful MCP settings save: the
+    // save persists to disk, then publishes into the override cache — but a
+    // read started BEFORE the save can resolve with the older state
+    // afterwards. The continuation must recheck the cache: recording the
+    // stale read would expose a just-disabled server for this send, and the
+    // save's repair path only patches recorded options, which do not exist
+    // yet on a first serve.
+    manager.dispose();
+    let readStarted: () => void = () => undefined;
+    const readStartedPromise = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    let resolveRead: (value: Record<string, unknown>) => void = () => undefined;
+    const pendingRead = new Promise<Record<string, unknown>>((resolve) => {
+      resolveRead = resolve;
+    });
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: {
+        keyPrefix: "plugin:",
+        readToken: () => Promise.resolve("epoch-1"),
+        readWorkspaceOverrides: () => {
+          readStarted();
+          return pendingRead;
+        },
+      },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-first-serve-race";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js", true) })
+    );
+    let startedPluginServer = false;
+    access.startServers = (...args: unknown[]) => {
+      const servers = args[0] as Record<string, unknown>;
+      if (pluginKey in servers) {
+        startedPluginServer = true;
+      }
+      return Promise.resolve(startResult([]));
+    };
+
+    const serve = manager.getToolsForWorkspace(
+      workspaceRequest(workspaceId, { overrides: { enabledServers: [pluginKey] } })
+    );
+    // Deterministic interleaving: the serve is parked on the disk read when
+    // the save publishes, then the read resolves with the pre-save state.
+    await readStartedPromise;
+    await manager.applyWorkspaceOverrides(workspaceId, {});
+    resolveRead({ enabledServers: [pluginKey] });
+
+    const result = await serve;
+    expect(startedPluginServer).toBe(false);
+    expect(Object.keys(result.tools)).toHaveLength(0);
+    const internals = access as unknown as {
+      lastWorkspaceRequestOptions: Map<string, { overrides?: unknown }>;
+    };
+    expect(internals.lastWorkspaceRequestOptions.get(workspaceId)?.overrides).toEqual({});
+  });
+
   test("stopServersWithKeyPrefix invalidates instances published by an in-flight startup, then retries them", async () => {
     const workspaceId = "ws-swap-race";
     const pluginKey = "plugin:abc123:echo";
