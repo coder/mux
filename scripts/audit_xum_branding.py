@@ -70,6 +70,11 @@ ALLOW_RULES = (
         re.compile(r"MUX_[A-Z0-9_]+|MuxAgent|mux_agent|mux-run\.sh"),
         "compatibility behavior coverage",
     ),
+    AllowRule(
+        "benchmarks/terminal_bench/prepare_leaderboard_submission.py",
+        re.compile(r"[\"']mux-(?:app\.tar\.gz|tokens\.json)[\"']"),
+        "pre-rename trial artifacts must remain excluded from mixed leaderboard submissions",
+    ),
     AllowRule("benchmarks/terminal_bench/xum-run.sh", re.compile(r"MUX_(?:\*|[A-Z0-9_]+|\$?\{)"), "legacy runner environment input"),
     AllowRule("benchmarks/terminal_bench/xum_setup.sh.j2", re.compile(r"MUX_(?:\*|[A-Z0-9_]+|\$?\{)"), "legacy setup environment input"),
     AllowRule(

@@ -42,12 +42,17 @@ class AuditXumBrandingTest(unittest.TestCase):
             )
             history_path.parent.mkdir(parents=True)
             history_path.write_text('{"agent": "Mux"}\n')
+            leaderboard_script = root / "benchmarks/terminal_bench/prepare_leaderboard_submission.py"
+            leaderboard_script.write_text(
+                'ignore_patterns("mux-app.tar.gz", "mux-tokens.json")\n'
+            )
 
             violations = audit_paths(
                 root,
                 [
                     "Makefile",
                     "benchmarks/terminal_bench/.leaderboard_cache/Mux__Historical/result.json",
+                    "benchmarks/terminal_bench/prepare_leaderboard_submission.py",
                 ],
             )
 
