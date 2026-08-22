@@ -1376,6 +1376,13 @@ describe("createCodeExecutionTool", () => {
         (entry) => typeof entry.args[0] === "string" && entry.args[0].startsWith("[kernel]")
       );
       expect(notice).toBeDefined();
+      // r28: the durable handle row/blob is published only after the snapshot
+      // commits — a failed persist must leave NO result-handle event, or
+      // provenance (and metrics handle-adoption counts) would claim a handle
+      // the model never received.
+      const journal = new DurableEventJournal(tmp.path);
+      const events = await journal.read();
+      expect(events.filter((e) => e.kind === "result-handle")).toHaveLength(0);
       await host.disposeScope("ws-budget-rewrite");
     });
 
@@ -1403,6 +1410,10 @@ describe("createCodeExecutionTool", () => {
       const record = result.result as { truncated?: boolean; handle?: string };
       expect(record.truncated).toBe(true);
       expect(record.handle).toBeUndefined();
+      // r28: no published handle event either (see the budget-rewrite test).
+      const journal = new DurableEventJournal(tmp.path);
+      const events = await journal.read();
+      expect(events.filter((e) => e.kind === "result-handle")).toHaveLength(0);
       await host.disposeScope("ws-cycle-rewrite");
     });
 

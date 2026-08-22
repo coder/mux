@@ -941,6 +941,25 @@ export class SandboxHostService {
       const key = await mount.storeResultHandle(serialized, RESULT_HANDLE_VARS_CAP_BYTES);
       const handle = `vars.${key}`;
       try {
+        // The handle mutated vars outside an eval: persist so vars.__handleSeq
+        // stays monotonic on disk (a stale snapshot could reuse a handle
+        // number an earlier result-handle event already references).
+        await mount.persistVars();
+      } catch (error) {
+        // Same contract as the post-eval path: memory and disk must agree, so
+        // dispose and let the next acquire restore the last durable snapshot.
+        // The event is dropped with the runtime (best-effort queue), so the
+        // handle row/blob must NOT have been published yet (r28): a durable
+        // event claiming a handle the guest never learned about would corrupt
+        // provenance — publication happens below, after this commit.
+        log.warn(
+          "SandboxHostService: vars snapshot after task-terminal offload failed; disposing mount",
+          { scopeKey, error }
+        );
+        mount.dispose();
+        return;
+      }
+      try {
         await mount.persistResultHandle({ handle, preview, serialized });
       } catch (error) {
         // Journaling failure only degrades durability of the FULL report; the
@@ -949,22 +968,6 @@ export class SandboxHostService {
           scopeKey,
           error,
         });
-      }
-      try {
-        // The handle mutated vars outside an eval: persist so vars.__handleSeq
-        // stays monotonic on disk (a stale snapshot could reuse a handle
-        // number an earlier result-handle event already references).
-        await mount.persistVars();
-      } catch (error) {
-        // Same contract as the post-eval path: memory and disk must agree, so
-        // dispose and let the next acquire restore the last durable snapshot.
-        // The event is dropped with the runtime (best-effort queue).
-        log.warn(
-          "SandboxHostService: vars snapshot after task-terminal offload failed; disposing mount",
-          { scopeKey, error }
-        );
-        mount.dispose();
-        return;
       }
       mount.postHostEvent({ ...base, reportHandle: { handle, preview, size } });
     } catch (error) {

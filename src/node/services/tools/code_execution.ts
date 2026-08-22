@@ -12,7 +12,10 @@ import type { Tool } from "ai";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { PTCConsoleRecord, PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
-import type { SandboxMount } from "@/node/services/sandbox/sandboxHostService";
+import type {
+  ResultHandlePersistArgs,
+  SandboxMount,
+} from "@/node/services/sandbox/sandboxHostService";
 import { VarsSnapshotBudgetError } from "@/node/services/sandbox/sandboxHostService";
 import type { KernelFileLoader } from "@/node/services/tools/kernelFileLoad";
 
@@ -128,6 +131,20 @@ export interface TruncatedValueRecord {
   note: string;
 }
 
+/**
+ * A handle stored in guest vars whose durable row/blob has NOT been published
+ * yet (r28): publication must wait for the vars snapshot to commit, otherwise
+ * a later persistVars failure rewrites the result as truncated while the
+ * already-published event keeps claiming a handle the model never received
+ * (metrics would count it as handle adoption).
+ */
+interface PendingResultHandle {
+  /** Bare vars key ("__hN"), for retention protection. */
+  key: string;
+  /** Deferred persistResultHandle args, published after the snapshot commit. */
+  persistArgs: ResultHandlePersistArgs;
+}
+
 /** Build the model-visible record for a value the kernel could not retain. */
 function buildTruncatedRecord(preview: string, size: number, note?: string): TruncatedValueRecord {
   return {
@@ -153,7 +170,11 @@ function buildTruncatedRecord(preview: string, size: number, note?: string): Tru
 async function offloadValue(
   mount: SandboxMount,
   value: unknown
-): Promise<OffloadedValueRecord | TruncatedValueRecord | null> {
+): Promise<
+  | { record: OffloadedValueRecord; persistArgs: ResultHandlePersistArgs }
+  | TruncatedValueRecord
+  | null
+> {
   let serialized: string | undefined;
   try {
     serialized = JSON.stringify(value);
@@ -223,15 +244,12 @@ async function offloadValue(
   }
   const handle = `vars.${handleKey}`;
   const preview = buildHandlePreview(serialized, size);
-  try {
-    await mount.persistResultHandle({ handle, preview, serialized });
-  } catch (error) {
-    // The model-visible preview is durably logged with the tool result in
-    // chat.jsonl either way; a journaling failure only degrades durability of
-    // the FULL value and must never fail the call (self-healing doctrine).
-    log.warn("code_execution: result-handle journaling failed; continuing", { error });
-  }
-  return { handle, preview, size };
+  // r28: publication of the durable row/blob is DEFERRED — the caller
+  // publishes only after persistVars commits the snapshot, so a snapshot
+  // failure (which rewrites this record as truncated and disposes the
+  // kernel) can never leave a durable event for a handle the model never
+  // received.
+  return { record: { handle, preview, size }, persistArgs: { handle, preview, serialized } };
 }
 
 /**
@@ -246,7 +264,7 @@ async function offloadValue(
 async function offloadOversizedReturnValue(
   mount: SandboxMount,
   result: PTCExecutionResult
-): Promise<string | null> {
+): Promise<PendingResultHandle | null> {
   if (result.result !== undefined) {
     const offloaded = await offloadValue(mount, result.result);
     if (offloaded !== null) {
@@ -256,11 +274,14 @@ async function offloadOversizedReturnValue(
         return null;
       }
       result.result = {
-        ...offloaded,
-        hint: `Return value exceeded the inline limit; the full value is stored in the kernel — access or slice ${offloaded.handle} in a follow-up code_execution call.`,
+        ...offloaded.record,
+        hint: `Return value exceeded the inline limit; the full value is stored in the kernel — access or slice ${offloaded.record.handle} in a follow-up code_execution call.`,
       } satisfies OffloadedValueRecord;
-      // "vars.__hN" → "__hN": the bare vars key, for retention protection.
-      return offloaded.handle.replace(/^vars\./, "");
+      return {
+        // "vars.__hN" → "__hN": the bare vars key, for retention protection.
+        key: offloaded.record.handle.replace(/^vars\./, ""),
+        persistArgs: offloaded.persistArgs,
+      };
     }
   }
   return null;
@@ -668,9 +689,10 @@ ${xumTypes}
           // RLM return-value offloading BEFORE the vars snapshot below, so the
           // handle vars land in the same durable snapshot the model's
           // {handle, preview, size} record relies on.
-          let returnHandleKey: string | null = null;
+          let pendingHandle: PendingResultHandle | null = null;
           if (mount?.lifetime === "persistent" && mount.grants.vars) {
-            returnHandleKey = await offloadOversizedReturnValue(mount, result);
+            pendingHandle = await offloadOversizedReturnValue(mount, result);
+            const returnHandleKey = pendingHandle?.key ?? null;
 
             // r12: loads count toward the r4 vars retention cap — register
             // this call's loaded keys and evict oldest managed entries
@@ -701,8 +723,10 @@ ${xumTypes}
           // failing and the live guest keeps those mutations, so persist after
           // failures too — memory and disk must agree.
           if (mount?.lifetime === "persistent" && mount.grants.vars) {
+            let snapshotCommitted = false;
             try {
               await mount.persistVars();
+              snapshotCommitted = true;
             } catch (persistError) {
               // Vars became unsnapshottable (cycle) or exceeded the snapshot
               // budget. Leaving the live mount would make memory and disk
@@ -730,7 +754,7 @@ ${xumTypes}
               // result so the model is never promised missing state.
               const advertised = result.result as Partial<OffloadedValueRecord> | undefined;
               if (
-                returnHandleKey !== null &&
+                pendingHandle !== null &&
                 advertised !== undefined &&
                 typeof advertised.handle === "string" &&
                 typeof advertised.preview === "string" &&
@@ -755,6 +779,22 @@ ${xumTypes}
                 }
               }
               mount.dispose();
+            }
+            // r28: publish the durable handle row/blob only AFTER the
+            // snapshot committed. Publishing before persistVars left a
+            // provenance row (and a metrics handle-adoption count) claiming a
+            // handle the model never received whenever the snapshot failed
+            // and the result was rewritten as truncated above. The
+            // model-visible preview is durably logged with the tool result in
+            // chat.jsonl either way; a journaling failure here only degrades
+            // durability of the FULL value and must never fail the call
+            // (self-healing doctrine).
+            if (snapshotCommitted && pendingHandle !== null) {
+              try {
+                await mount.persistResultHandle(pendingHandle.persistArgs);
+              } catch (error) {
+                log.warn("code_execution: result-handle journaling failed; continuing", { error });
+              }
             }
           }
           return result;
