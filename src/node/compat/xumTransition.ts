@@ -299,6 +299,7 @@ async function applyCompatibilityAliases(
   options: CompatibilityAliasOptions
 ): Promise<XumDirectoryTransitionResult | undefined> {
   const canonicalUsableForAliases = await isHealthyDirectory(options.canonicalPath);
+  const createdAliases: string[] = [];
 
   for (const legacyPath of options.legacyPaths) {
     if (await pathEntryExists(legacyPath)) {
@@ -317,29 +318,42 @@ async function applyCompatibilityAliases(
 
     try {
       await createDirectoryAlias(options.canonicalPath, legacyPath, options.platform);
+      createdAliases.push(legacyPath);
     } catch (error) {
       options.issues.push(`Could not create compatibility alias ${legacyPath}: ${String(error)}`);
 
-      // If this run just moved or created the canonical directory, roll it back to
-      // the primary legacy path rather than strand existing users without a path an
-      // older binary can open. A pre-existing canonical directory is never moved.
-      const primaryLegacyPath = options.legacyPaths[0];
-      if (
-        (options.migratedFrom != null || options.createdCanonical) &&
-        legacyPath === primaryLegacyPath
-      ) {
+      // A migrated tree must return to the exact name that supplied its data when any
+      // required alias fails. Rolling a `.cmux`/`Mux` source into the primary `.mux`
+      // name would make the old installation that owns the data lose its home.
+      const rollbackPath =
+        options.migratedFrom ??
+        (options.createdCanonical && legacyPath === options.legacyPaths[0]
+          ? options.legacyPaths[0]
+          : undefined);
+      if (rollbackPath != null) {
         try {
-          await fs.rename(options.canonicalPath, primaryLegacyPath);
+          // Remove only aliases created by this transition. In particular, the source
+          // alias may already point at canonical when a later compatibility alias fails.
+          await Promise.all(
+            createdAliases.map(async (createdAlias) => {
+              try {
+                await fs.rm(createdAlias, { force: true });
+              } catch (cleanupError) {
+                options.issues.push(
+                  `Could not remove compatibility alias ${createdAlias} during rollback: ${String(cleanupError)}`
+                );
+              }
+            })
+          );
+          await fs.rename(options.canonicalPath, rollbackPath);
           return {
             canonicalPath: options.canonicalPath,
-            activePath: await requireHealthyDirectory(primaryLegacyPath, options.issues),
+            activePath: await requireHealthyDirectory(rollbackPath, options.issues),
             status: "legacy-fallback",
             issues: options.issues,
           };
         } catch (rollbackError) {
-          options.issues.push(
-            `Could not roll back to ${primaryLegacyPath}: ${String(rollbackError)}`
-          );
+          options.issues.push(`Could not roll back to ${rollbackPath}: ${String(rollbackError)}`);
         }
       }
     }

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { join, resolve } from "node:path";
@@ -83,6 +84,10 @@ async function listQuarantineBackups(dir: string, baseName: string): Promise<str
     .sort();
 }
 
+function runGit(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
@@ -144,6 +149,40 @@ describe("initializeXumHomeTransition", () => {
     expect(await fs.readFile(join(canonicalPath, "from-mux"), "utf8")).toBe("old");
   });
 
+  test.skipIf(process.platform === "win32")(
+    "keeps real Git worktree metadata usable through canonical and downgrade paths",
+    async () => {
+      const homeDir = await createTempDir();
+      const repositoryPath = join(homeDir, "repository");
+      const legacyWorktreePath = join(homeDir, ".mux", "src", "project", "feature");
+      await fs.mkdir(repositoryPath);
+      runGit(repositoryPath, "init", "-q");
+      await fs.writeFile(join(repositoryPath, "README.md"), "base\n", "utf8");
+      runGit(repositoryPath, "add", "README.md");
+      runGit(
+        repositoryPath,
+        "-c",
+        "user.name=Xum Test",
+        "-c",
+        "user.email=xum@example.invalid",
+        "commit",
+        "-qm",
+        "initial"
+      );
+      await fs.mkdir(join(homeDir, ".mux", "src", "project"), { recursive: true });
+      runGit(repositoryPath, "worktree", "add", "-q", "-b", "feature", legacyWorktreePath);
+
+      const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+      const canonicalWorktreePath = join(homeDir, ".xum", "src", "project", "feature");
+
+      expect(result.status).toBe("migrated");
+      expect(runGit(canonicalWorktreePath, "status", "--porcelain")).toBe("");
+      await fs.writeFile(join(canonicalWorktreePath, "from-xum.txt"), "shared\n", "utf8");
+      expect(runGit(legacyWorktreePath, "status", "--porcelain")).toBe("?? from-xum.txt");
+      expect(await fs.realpath(legacyWorktreePath)).toBe(await fs.realpath(canonicalWorktreePath));
+    }
+  );
+
   test("moves a cmux-only tree and still creates the mux alias", async () => {
     const homeDir = await createTempDir();
     const cmuxPath = join(homeDir, ".cmux");
@@ -177,6 +216,56 @@ describe("initializeXumHomeTransition", () => {
       expect(await fs.readFile(join(legacyPath, "config.json"), "utf8")).toBe("legacy");
       expect((await fs.lstat(legacyPath)).isDirectory()).toBe(true);
       await expectMissingPath(join(homeDir, ".xum"));
+    } finally {
+      symlink.mockRestore();
+    }
+  });
+
+  test("rolls a cmux migration back to its actual source when the primary alias fails", async () => {
+    const homeDir = await createTempDir();
+    const sourcePath = join(homeDir, ".cmux");
+    await fs.mkdir(sourcePath);
+    await fs.writeFile(join(sourcePath, "config.json"), "cmux", "utf8");
+    const symlink = spyOn(fs, "symlink").mockImplementation(() => {
+      throw new Error("EPERM: alias blocked");
+    });
+
+    try {
+      const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+
+      expect(result.status).toBe("legacy-fallback");
+      expect(result.activePath).toBe(sourcePath);
+      expect(await fs.readFile(join(sourcePath, "config.json"), "utf8")).toBe("cmux");
+      await expectMissingPath(join(homeDir, ".xum"));
+      await expectMissingPath(join(homeDir, ".mux"));
+    } finally {
+      symlink.mockRestore();
+    }
+  });
+
+  test("removes an earlier alias before rolling a cmux migration back on a later failure", async () => {
+    const homeDir = await createTempDir();
+    const sourcePath = join(homeDir, ".cmux");
+    const primaryAlias = join(homeDir, ".mux");
+    await fs.mkdir(sourcePath);
+    await fs.writeFile(join(sourcePath, "config.json"), "cmux", "utf8");
+    const realSymlink = fs.symlink.bind(fs);
+    const symlink = spyOn(fs, "symlink").mockImplementation(async (target, path, type) => {
+      if (path === sourcePath) {
+        throw new Error("EPERM: source alias blocked");
+      }
+      await realSymlink(target, path, type);
+    });
+
+    try {
+      const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+
+      expect(result.status).toBe("legacy-fallback");
+      expect(result.activePath).toBe(sourcePath);
+      expect(await fs.readFile(join(sourcePath, "config.json"), "utf8")).toBe("cmux");
+      expect((await fs.lstat(sourcePath)).isDirectory()).toBe(true);
+      await expectMissingPath(join(homeDir, ".xum"));
+      await expectMissingPath(primaryAlias);
     } finally {
       symlink.mockRestore();
     }
@@ -656,6 +745,36 @@ describe("initializeXumUserDataTransition", () => {
       await fs.realpath(result.canonicalPath)
     );
   });
+
+  test.skipIf(process.platform !== "linux")(
+    "rolls historical Linux userData back to Mux when its alias cannot be created",
+    async () => {
+      const appDataDir = await createTempDir();
+      const sourcePath = join(appDataDir, "Mux");
+      const primaryAlias = join(appDataDir, "mux");
+      await fs.mkdir(sourcePath);
+      await fs.writeFile(join(sourcePath, "window-state.json"), "{}", "utf8");
+      const realSymlink = fs.symlink.bind(fs);
+      const symlink = spyOn(fs, "symlink").mockImplementation(async (target, path, type) => {
+        if (path === sourcePath) {
+          throw new Error("EPERM: historical alias blocked");
+        }
+        await realSymlink(target, path, type);
+      });
+
+      try {
+        const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
+
+        expect(result.status).toBe("legacy-fallback");
+        expect(result.activePath).toBe(sourcePath);
+        expect(await fs.readFile(join(sourcePath, "window-state.json"), "utf8")).toBe("{}");
+        await expectMissingPath(join(appDataDir, "xum"));
+        await expectMissingPath(primaryAlias);
+      } finally {
+        symlink.mockRestore();
+      }
+    }
+  );
 
   test("adopts a populated legacy tree into an empty canonical userData directory", async () => {
     const appDataDir = await createTempDir();

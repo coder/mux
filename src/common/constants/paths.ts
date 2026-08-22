@@ -98,6 +98,46 @@ function directoryHasEntries(path: string): boolean {
   }
 }
 
+function sameHealthyDirectory(leftPath: string, rightPath: string): boolean {
+  try {
+    const left = statSync(leftPath);
+    const right = statSync(rightPath);
+    return (
+      left.isDirectory() && right.isDirectory() && left.dev === right.dev && left.ino === right.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Match the mutating transition's empty-canonical adoption without changing disk.
+ * Standalone readers (notably VS Code) may run before desktop/CLI startup, so they
+ * must see the sole populated legacy tree rather than an empty Xum directory.
+ */
+function findSolePopulatedIndependentLegacy(
+  canonicalPath: string,
+  legacyPaths: readonly string[]
+): string | undefined {
+  const populatedPaths: string[] = [];
+
+  for (const legacyPath of legacyPaths) {
+    if (
+      !isHealthyDirectory(legacyPath) ||
+      sameHealthyDirectory(legacyPath, canonicalPath) ||
+      !directoryHasEntries(legacyPath)
+    ) {
+      continue;
+    }
+
+    if (!populatedPaths.some((candidate) => sameHealthyDirectory(candidate, legacyPath))) {
+      populatedPaths.push(legacyPath);
+    }
+  }
+
+  return populatedPaths.length === 1 ? populatedPaths[0] : undefined;
+}
+
 const MAX_LEGACY_FALLBACK_MARKER_BYTES = 64;
 
 /**
@@ -178,10 +218,10 @@ function readMarkedLegacyHome(homeDir: string, suffix: string): string | undefin
  * Appends '-dev' when NODE_ENV=development.
  *
  * Prefer a usable populated canonical directory, then a persisted leftover
- * fallback marker (written only with a known leftover name), then any healthy
- * canonical directory, then the first healthy leftover tree. A file or broken
- * symlink at ~/.xum is not a home. A genuinely empty unmarked home still
- * returns the canonical future path.
+ * fallback marker (written only with a known leftover name). When canonical is
+ * empty, choose a sole populated independent legacy tree so non-mutating readers
+ * agree with startup migration; true conflicts keep canonical active. A file or
+ * broken symlink at ~/.xum is not a home.
  *
  * Main-process only: this helper lives in constants/ for organization, but it
  * reads process.env / homedir and must not be imported from renderer code.
@@ -198,6 +238,11 @@ export function getXumHome(): string {
   const suffix = process.env.NODE_ENV === "development" ? "-dev" : "";
   const homeDir = os.homedir();
   const canonicalPath = join(homeDir, XUM_HOME_DIR_NAME + suffix);
+  const legacyPaths = [join(homeDir, LEGACY_MUX_HOME_DIR_NAME + suffix)];
+  if (!suffix) {
+    legacyPaths.push(join(homeDir, LEGACY_CMUX_HOME_DIR_NAME));
+  }
+
   if (isHealthyDirectory(canonicalPath) && directoryHasEntries(canonicalPath)) {
     return canonicalPath;
   }
@@ -208,18 +253,13 @@ export function getXumHome(): string {
   }
 
   if (isHealthyDirectory(canonicalPath)) {
-    return canonicalPath;
+    const solePopulatedLegacy = findSolePopulatedIndependentLegacy(canonicalPath, legacyPaths);
+    return solePopulatedLegacy ?? canonicalPath;
   }
 
-  const legacyMuxPath = join(homeDir, LEGACY_MUX_HOME_DIR_NAME + suffix);
-  if (isHealthyDirectory(legacyMuxPath)) {
-    return legacyMuxPath;
-  }
-
-  if (!suffix) {
-    const legacyCmuxPath = join(homeDir, LEGACY_CMUX_HOME_DIR_NAME);
-    if (isHealthyDirectory(legacyCmuxPath)) {
-      return legacyCmuxPath;
+  for (const legacyPath of legacyPaths) {
+    if (isHealthyDirectory(legacyPath)) {
+      return legacyPath;
     }
   }
 

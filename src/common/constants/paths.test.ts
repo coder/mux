@@ -178,6 +178,47 @@ describe("getXumHome", () => {
     });
   });
 
+  test("selects a sole populated legacy tree before startup adopts an empty canonical home", () => {
+    const homeDir = createTempMuxRoot();
+    const canonicalPath = join(homeDir, ".xum");
+    const legacyPath = join(homeDir, ".mux");
+    mkdirSync(canonicalPath);
+    mkdirSync(legacyPath);
+    writeFileSync(join(legacyPath, "config.json"), "legacy", "utf8");
+
+    withHomeDir(homeDir, () => {
+      expect(getXumHome()).toBe(legacyPath);
+      expect(readFileSync(join(getXumHome(), "config.json"), "utf8")).toBe("legacy");
+    });
+  });
+
+  test("keeps canonical active when two independent legacy trees are populated", () => {
+    const homeDir = createTempMuxRoot();
+    const canonicalPath = join(homeDir, ".xum");
+    const muxPath = join(homeDir, ".mux");
+    const cmuxPath = join(homeDir, ".cmux");
+    mkdirSync(canonicalPath);
+    mkdirSync(muxPath);
+    mkdirSync(cmuxPath);
+    writeFileSync(join(muxPath, "config.json"), "mux", "utf8");
+    writeFileSync(join(cmuxPath, "config.json"), "cmux", "utf8");
+
+    withHomeDir(homeDir, () => {
+      expect(getXumHome()).toBe(canonicalPath);
+    });
+  });
+
+  test("does not treat a legacy alias to empty canonical storage as independent data", () => {
+    const homeDir = createTempMuxRoot();
+    const canonicalPath = join(homeDir, ".xum");
+    mkdirSync(canonicalPath);
+    symlinkSync(canonicalPath, join(homeDir, ".mux"), "dir");
+
+    withHomeDir(homeDir, () => {
+      expect(getXumHome()).toBe(canonicalPath);
+    });
+  });
+
   test("prefers a healthy leftover tree when canonical storage is a regular file", () => {
     const homeDir = createTempMuxRoot();
     writeFileSync(join(homeDir, ".xum"), "not-a-directory", "utf8");
@@ -257,15 +298,16 @@ describe("getXumHome", () => {
     });
   });
 
-  test("ignores a malformed leftover marker and keeps an empty canonical home", () => {
+  test("ignores a malformed marker while still selecting the sole populated legacy home", () => {
     const homeDir = createTempMuxRoot();
+    const legacyPath = join(homeDir, ".mux");
     mkdirSync(join(homeDir, ".xum"));
-    mkdirSync(join(homeDir, ".mux"));
-    writeFileSync(join(homeDir, ".mux", "config.json"), "legacy", "utf8");
+    mkdirSync(legacyPath);
+    writeFileSync(join(legacyPath, "config.json"), "legacy", "utf8");
     writeFileSync(getXumHomeLegacyFallbackMarkerPath(homeDir), "../.mux\n", "utf8");
 
     withHomeDir(homeDir, () => {
-      expect(getXumHome()).toBe(join(homeDir, ".xum"));
+      expect(getXumHome()).toBe(legacyPath);
     });
   });
 
@@ -275,6 +317,8 @@ describe("getXumHome", () => {
     mkdirSync(canonicalPath);
     mkdirSync(join(homeDir, ".mux"));
     writeFileSync(join(homeDir, ".mux", "config.json"), "legacy", "utf8");
+    mkdirSync(join(homeDir, ".cmux"));
+    writeFileSync(join(homeDir, ".cmux", "config.json"), "other", "utf8");
     writeFileSync(getXumHomeLegacyFallbackMarkerPath(homeDir), `.mux\n${"x".repeat(80)}`, "utf8");
 
     withHomeDir(homeDir, () => {
@@ -291,6 +335,8 @@ describe("getXumHome", () => {
       mkdirSync(canonicalPath);
       mkdirSync(join(homeDir, ".mux"));
       writeFileSync(join(homeDir, ".mux", "config.json"), "legacy", "utf8");
+      mkdirSync(join(homeDir, ".cmux"));
+      writeFileSync(join(homeDir, ".cmux", "config.json"), "other", "utf8");
       const fifo = spawnSync("mkfifo", [markerPath], { encoding: "utf8" });
       expect(fifo.status).toBe(0);
       expect(lstatSync(markerPath).isFIFO()).toBe(true);
@@ -307,6 +353,8 @@ describe("getXumHome", () => {
     mkdirSync(canonicalPath);
     mkdirSync(join(homeDir, ".mux"));
     writeFileSync(join(homeDir, ".mux", "config.json"), "legacy", "utf8");
+    mkdirSync(join(homeDir, ".cmux"));
+    writeFileSync(join(homeDir, ".cmux", "config.json"), "other", "utf8");
     mkdirSync(getXumHomeLegacyFallbackMarkerPath(homeDir));
 
     withHomeDir(homeDir, () => {
@@ -321,6 +369,8 @@ describe("getXumHome", () => {
     mkdirSync(canonicalPath);
     mkdirSync(join(homeDir, ".mux"));
     writeFileSync(join(homeDir, ".mux", "config.json"), "legacy", "utf8");
+    mkdirSync(join(homeDir, ".cmux"));
+    writeFileSync(join(homeDir, ".cmux", "config.json"), "other", "utf8");
     writeFileSync(markerTarget, ".mux\n", "utf8");
     symlinkSync(markerTarget, getXumHomeLegacyFallbackMarkerPath(homeDir));
 
@@ -336,6 +386,8 @@ describe("getXumHome", () => {
     mkdirSync(canonicalPath);
     mkdirSync(join(homeDir, ".mux"));
     writeFileSync(join(homeDir, ".mux", "config.json"), "legacy", "utf8");
+    mkdirSync(join(homeDir, ".cmux"));
+    writeFileSync(join(homeDir, ".cmux", "config.json"), "other", "utf8");
     writeFileSync(markerPath, `.mux\n${"x".repeat(80)}`, "utf8");
 
     const originalLstat = lstatSync;
