@@ -195,6 +195,26 @@ describe("buildReadFileScript", () => {
     }
   });
 
+  test("parses the payload despite persistent shell tracing from tool_env", () => {
+    // A tool_env can leave `set -x` (or -v) enabled; the IPC merges stderr into the
+    // output, so trace lines must not interleave with the framed payload.
+    const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
+
+    try {
+      writeFileSync(join(tempDir, "file.txt"), "traced contents\n");
+      const result = spawnSync(
+        "bash",
+        ["-lc", `set -xv; echo prelude; ${buildReadFileScript("file.txt")} 2>&1`],
+        { cwd: tempDir }
+      );
+      expect(result.status).toBe(0);
+      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
+      expect(processed).toMatchObject({ type: "text", content: "traced contents\n" });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("resolves paths without realpath or readlink -f (BSD/macOS fallback)", () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "mux-file-read-outside-"));
     const workspaceDir = mkdtempSync(join(tmpdir(), "mux-file-read-ws-"));

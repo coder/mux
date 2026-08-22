@@ -183,7 +183,9 @@ awk_status=$?
   // POSIX loop (cd -P + plain readlink) for BSD/macOS hosts that lack both.
   //
   // The sentinel line frames the payload: the bash IPC sources .mux/tool_env with
-  // output merged into the stream, so parsing must skip any prelude output.
+  // output (stdout AND stderr) merged into the stream, so parsing must skip any
+  // prelude output, and xtrace/verbose diagnostics a tool_env may leave enabled are
+  // silenced before the payload so trace lines cannot interleave with it.
   return `mux_resolve_physical() {
   realpath "$1" 2>/dev/null && return 0
   readlink -f "$1" 2>/dev/null && return 0
@@ -215,6 +217,7 @@ case "$resolved" in
 esac
 size=$(stat -c %s "$resolved" 2>/dev/null || stat -f %z "$resolved")
 [ "$size" -gt ${maxSizeBytes} ] && exit ${EXIT_CODE_TOO_LARGE}${lineLimitScript}
+{ set +x +v; } 2>/dev/null
 echo "${FILE_READ_SENTINEL}"
 echo "$size"
 base64 < "$resolved"`;
