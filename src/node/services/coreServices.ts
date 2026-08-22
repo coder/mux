@@ -32,7 +32,7 @@ import { secretsToRecord } from "@/common/types/secrets";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { TaskService } from "@/node/services/taskService";
-import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
+import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
@@ -106,6 +106,12 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.goalServiceOptions
   );
 
+  // Default-construct when the caller (CLI) does not pass one: workspace MCP
+  // override reads AND registration-time plugin-override sanitization must
+  // work in every process that can register workspaces, not just desktop.
+  const workspaceMcpOverridesService =
+    opts.workspaceMcpOverridesService ?? new WorkspaceMcpOverridesService(config);
+
   const aiService = new AIService(
     config,
     historyService,
@@ -113,7 +119,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     providerService,
     backgroundProcessManager,
     sessionUsageService,
-    opts.workspaceMcpOverridesService,
+    workspaceMcpOverridesService,
     opts.policyService,
     opts.telemetryService,
     opts.devToolsService,
@@ -150,7 +156,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
         opts.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS) === true,
     }),
   });
-  const overridesServiceForInvalidation = opts.workspaceMcpOverridesService;
   const mcpServerManager = new MCPServerManager(
     mcpConfigService,
     {
@@ -162,13 +167,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
       pluginInvalidation: {
         keyPrefix: PLUGIN_SERVER_KEY_PREFIX,
         readToken: () => readMutationEpochToken(path.join(mcpConfig.rootDir, STAGING_DIR_NAME)),
-        ...(overridesServiceForInvalidation !== undefined
-          ? {
-              readWorkspaceOverrides: async (workspaceId: string) =>
-                (await overridesServiceForInvalidation.getOverridesForWorkspace(workspaceId))
-                  .overrides,
-            }
-          : {}),
+        readWorkspaceOverrides: async (workspaceId: string) =>
+          (await workspaceMcpOverridesService.getOverridesForWorkspace(workspaceId)).overrides,
       },
       ...opts.mcpServerManagerOptions,
     },
@@ -213,6 +213,12 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     workspaceService.setDevToolsService(opts.devToolsService);
   }
   workspaceService.setMCPServerManager(mcpServerManager);
+  // Plugin override keys must be pruned from a workspace's override files when
+  // registering a preserved checkout (desktop create/fork, task
+  // materialization, and headless `xum run`/`xum workflow` registration) and
+  // during removal: a stale enable in a kept .xum/mcp.local.jsonc could
+  // otherwise re-activate a same-name reinstall's server.
+  workspaceService.setWorkspaceMcpOverridesService(workspaceMcpOverridesService);
   workspaceService.setWorkspaceGoalService(workspaceGoalService);
   workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {
     workspaceService.emitWorkspaceActivity(workspaceId, snapshot);

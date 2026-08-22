@@ -330,12 +330,8 @@ export class ServiceContainer {
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     this.workspaceService.setDesktopSessionManager(this.desktopSessionManager);
-    // Plugin override keys must be pruned from a workspace's override files
-    // during removal: a removed workspace is invisible to the Agent Plugin
-    // uninstaller's pruning, but a preserved LocalRuntime checkout keeps
-    // .mux/mcp.local.jsonc, and a stale enable there could re-activate a
-    // same-name reinstall's server when the directory is re-registered.
-    this.workspaceService.setWorkspaceMcpOverridesService(this.workspaceMcpOverridesService);
+    // Plugin-override pruning is wired inside createCoreServices (shared with
+    // headless CLI registration), using this.workspaceMcpOverridesService.
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
