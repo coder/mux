@@ -317,10 +317,17 @@ const GUEST_UTF8_LEN_SOURCE = `
  * instead derives the next sequence from what actually exists: max of all
  * live __hN keys, all __loadMeta seqs, and a sanitized
  * (Number.isSafeInteger) counter, plus one. A clobbered counter therefore
- * never reuses a live key — worst case it skips numbers, and a
- * MAX_SAFE_INTEGER clobber mints one oversized key before the sanitizer
- * rejects the now-unsafe counter and the scan resumes from the live safe
- * max.
+ * never reuses a live key — worst case it skips numbers.
+ *
+ * r27: max + 1 must not cross the safe-integer ceiling. A guest key at
+ * Number.MAX_SAFE_INTEGER (__h9007199254740991) makes the candidate unsafe;
+ * the sanitizers above then ignore the stored counter on every later call
+ * while the ceiling key keeps winning the scan, so the SAME oversized key
+ * would be minted forever — each offload overwriting the previous one.
+ * When the candidate is unsafe (or its key somehow already exists), fall
+ * back to probing for the smallest free positive integer instead: the probe
+ * is bounded by the live key count and only runs in this guest-adversarial
+ * case, at the cost of age-order accuracy for the recovered handle.
  */
 const GUEST_NEXT_HANDLE_SEQ_SOURCE = `
       function nextHandleSeq() {
@@ -340,7 +347,18 @@ const GUEST_NEXT_HANDLE_SEQ_SOURCE = `
         const seqRaw = vars.__handleSeq;
         const current =
           typeof seqRaw === "number" && Number.isSafeInteger(seqRaw) && seqRaw > 0 ? seqRaw : 0;
-        return Math.max(maxSeq, current) + 1;
+        const candidate = Math.max(maxSeq, current) + 1;
+        if (
+          Number.isSafeInteger(candidate) &&
+          !Object.prototype.hasOwnProperty.call(vars, "__h" + candidate)
+        ) {
+          return candidate;
+        }
+        // Safe-integer ceiling (or key collision): probe the smallest free
+        // key instead of reusing one — see the r27 note above.
+        for (let n = 1; ; n++) {
+          if (!Object.prototype.hasOwnProperty.call(vars, "__h" + n)) return n;
+        }
       }
 `;
 

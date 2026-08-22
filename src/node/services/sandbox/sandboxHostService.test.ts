@@ -1171,16 +1171,47 @@ describe("SandboxHostService", () => {
     const meta = await mount.runtime.eval("return vars.__loadMeta.ld;");
     expect(meta.result).toBe(8);
 
-    // An unsafe counter cannot stick: MAX_SAFE_INTEGER mints one oversized
-    // key exactly once, then the sanitizer rejects the now-unsafe counter
-    // and the scan resumes from the live safe max — no live key is reused.
+    // An unsafe counter cannot stick: MAX_SAFE_INTEGER + 1 is unsafe, so the
+    // sequence falls back to the smallest free key (r27) instead of minting
+    // an oversized key the sanitizer would ignore — no live key is reused.
     const unsafe = await mount.runtime.eval(
       "vars.__handleSeq = Number.MAX_SAFE_INTEGER; return true;"
     );
     expect(unsafe.success).toBe(true);
-    expect(await mount.storeResultHandle(val(9), 10_000)).toBe("__h9007199254740992");
+    expect(await mount.storeResultHandle(val(9), 10_000)).toBe("__h8");
     expect(await mount.storeResultHandle(val(10), 10_000)).toBe("__h9");
     await host.disposeScope("ws-seq-clobber");
+  });
+
+  test("a guest key at the safe-integer ceiling cannot force handle reuse", async () => {
+    // Codex r27: vars.__h9007199254740991 (MAX_SAFE_INTEGER) made max + 1
+    // unsafe; the sanitizer then ignored the stored counter on EVERY later
+    // offload while the ceiling key kept winning the scan, so the same
+    // __h9007199254740992 key was minted repeatedly — each offload silently
+    // OVERWROTE the previous handle's value.
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-seq-ceiling",
+      sessionDir: tmp.path,
+    });
+
+    const seeded = await mount.runtime.eval(
+      'vars["__h" + Number.MAX_SAFE_INTEGER] = "ceiling"; return true;'
+    );
+    expect(seeded.success).toBe(true);
+
+    const first = await mount.storeResultHandle(JSON.stringify({ n: 1 }), 10_000);
+    const second = await mount.storeResultHandle(JSON.stringify({ n: 2 }), 10_000);
+    expect(second).not.toBe(first);
+    // Neither offload clobbered the other or the guest's ceiling key.
+    const state = await mount.runtime.eval(
+      `return [vars[${JSON.stringify(first)}].n, vars[${JSON.stringify(second)}].n, vars["__h" + Number.MAX_SAFE_INTEGER]];`
+    );
+    expect(state.result).toEqual([1, 2, "ceiling"]);
+    await host.disposeScope("ws-seq-ceiling");
   });
 
   test("retention measures UTF-8 bytes, not UTF-16 code units (multibyte payloads)", async () => {
