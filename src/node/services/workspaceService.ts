@@ -2787,6 +2787,37 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Registration-time sanitization for workspaces that AgentSession registers
+   * directly (CLI `xum run` / `xum workflow` in a directory without existing
+   * metadata) — a path that bypasses WorkspaceService.create/fork and the
+   * task-materialization flows. Called between the config write and the
+   * metadata announcement; on failure the registration is rolled back so a
+   * preserved checkout's stale `plugin:` enables can never activate a
+   * same-name reinstall's default-disabled server on the first CLI send.
+   * Returns an error string (the caller must abort) or undefined on success.
+   */
+  async sanitizeCliRegisteredWorkspace(
+    workspaceId: string,
+    workspacePath: string,
+    runtimeConfig: RuntimeConfig | undefined
+  ): Promise<string | undefined> {
+    this.pendingPluginSanitizations.add(workspaceId);
+    try {
+      const sanitizeError = await this.sanitizeMaterializedTaskWorkspace(
+        workspaceId,
+        workspacePath,
+        runtimeConfig
+      );
+      if (sanitizeError !== undefined) {
+        await this.rollbackUnsanitizedWorkspaceRegistration(workspaceId);
+      }
+      return sanitizeError;
+    } finally {
+      this.pendingPluginSanitizations.delete(workspaceId);
+    }
+  }
+
+  /**
    * Registration-time sanitization of stale Agent Plugin override keys.
    *
    * A host-local workspace's `.mux/mcp.local.jsonc` lives in the checkout,
@@ -3712,6 +3743,12 @@ export class WorkspaceService extends EventEmitter {
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
       backgroundProcessManager: this.backgroundProcessManager,
+      sanitizeCliWorkspaceRegistration: (args) =>
+        this.sanitizeCliRegisteredWorkspace(
+          args.workspaceId,
+          args.workspacePath,
+          args.runtimeConfig
+        ),
       onCompactionComplete: (metadata) => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
         // Compaction marks a long session with accumulated learnings: harvest

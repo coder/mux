@@ -370,23 +370,39 @@ export async function acquireCrossProcessLock(
       for (let attempt = 0; attempt < 40; attempt++) {
         const mutex = await enterLockMutex(lockPath);
         if (mutex !== undefined) {
+          let released = false;
           try {
             const current = await readLockHolder(lockPath);
             // Last-instant mutex re-check, mirroring reclamation: a stall
             // longer than the mutex ceiling between the token read and the rm
             // lets a competitor break our mutex, reclaim, and publish a
             // successor — deleting it here would hand out double ownership.
-            if (current?.token === token && (await mutex.owns())) {
-              await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
+            if (current?.token !== token) {
+              released = true; // Not ours anymore: nothing to delete.
+            } else if (await mutex.owns()) {
+              // A transiently failing unlink (Windows file lock, antivirus
+              // scan) must RETRY, not silently succeed: renewal already
+              // stopped, so a holder record left behind reads as a live
+              // owner until its lease ages out — blocking every sibling for
+              // up to the stale ceiling even though the transaction is done.
+              try {
+                await fsPromises.rm(lockPath, { force: true });
+                released = true;
+              } catch {
+                // Retry on the next attempt.
+              }
             }
           } finally {
             await mutex.exit();
           }
-          return;
+          if (released) {
+            return;
+          }
         }
         await sleepWithJitter(25);
       }
-      // Mutex never freed: leave the file; it is reclaimable as stale/dead.
+      // Mutex never freed (or the unlink kept failing): leave the file; it
+      // is reclaimable once its no-longer-renewed lease ages out.
     };
   };
 

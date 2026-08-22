@@ -1223,8 +1223,13 @@ describe("AgentPluginInstallService", () => {
     } finally {
       metadataSpy.mockRestore();
     }
-    // The manager cache received the PRUNED overrides (disk first, then memory).
-    expect(applied).toEqual([{ workspaceId: "ws-1", overrides: { enabledServers: [] } }]);
+    // The manager cache received the PRUNED overrides (disk first, then
+    // memory) — once from install's fresh-instance hygiene sweep, once from
+    // uninstall's prune.
+    expect(applied).toEqual([
+      { workspaceId: "ws-1", overrides: { enabledServers: [] } },
+      { workspaceId: "ws-1", overrides: { enabledServers: [] } },
+    ]);
   });
 
   test("update recovery leaves a user-placed tree at the vacated path alone", async () => {
@@ -1705,6 +1710,104 @@ describe("AgentPluginInstallService", () => {
     );
   });
 
+  test("recovery reconciles registry provenance for a promoted-but-unrecorded update", async () => {
+    // Crash window: the update promoted the (capability-reviewed) new tree
+    // but died before the registry write — the registry still claims the old
+    // commit, and a forced branch move back to that SHA would even hide the
+    // update badge. Recovery must commit the journal-recorded SHA and the
+    // promoted tree's manifest summary before consuming the journal.
+    const preview = await service.preview({ input: remoteDir });
+    const installed = await service.install({
+      source: preview.source,
+      expectedSha: preview.lockedSha,
+    });
+    await writePluginFixture(remoteDir, { version: "9.9.9" });
+    const newSha = await commitAll(remoteDir, "v9.9.9");
+
+    // Simulate the crash: journal deletion AND registry write both fail, so
+    // update() throws after the promote with the journal (and marker) intact.
+    const internals = service as unknown as {
+      consumeJournalFile: (journalPath: string) => Promise<void>;
+      writeRegistry: (envelope: Record<string, unknown>, entries: unknown[]) => Promise<void>;
+    };
+    const consumeSpy = spyOn(internals, "consumeJournalFile").mockImplementationOnce(() =>
+      Promise.reject(new Error("EBUSY: resource busy"))
+    );
+    const writeSpy = spyOn(internals, "writeRegistry").mockImplementationOnce(() =>
+      Promise.reject(new Error("ENOSPC: no space left on device"))
+    );
+    try {
+      await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(/ENOSPC/);
+    } finally {
+      consumeSpy.mockRestore();
+      writeSpy.mockRestore();
+    }
+    const staleDoc = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+      plugins: Array<{ lockedSha: string }>;
+    };
+    expect(staleDoc.plugins[0].lockedSha).toBe(installed.lockedSha);
+
+    // Section open runs recovery: provenance reconciled, journal consumed.
+    await service.list();
+    const doc = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+      plugins: Array<{ lockedSha: string; manifest?: { version?: string } }>;
+    };
+    expect(doc.plugins[0].lockedSha).toBe(newSha);
+    expect(doc.plugins[0].manifest?.version).toBe("9.9.9");
+    expect(await pathExists(path.join(stagingDir(), "update-demo-plugin.json"))).toBe(false);
+  });
+
+  test("a fresh install sweeps stale overrides left by a manually removed unmanaged plugin", async () => {
+    // An unmanaged plugin the user enabled and then deleted BY HAND was
+    // never uninstalled, so no tombstone exists — yet a same-name managed
+    // install reuses the lexical path-derived instance ID, and the stale
+    // workspace enable would start its default-disabled server without
+    // fresh consent. Install must sweep the prefix first, and fail closed
+    // when the sweep cannot run.
+    const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
+    const pruned: Array<{ workspaceId: string; prefix: string }> = [];
+    const overridesStub = {
+      prunePluginOverrideKeys: (workspaceId: string, prefix: string) => {
+        pruned.push({ workspaceId, prefix });
+        return Promise.resolve();
+      },
+    };
+    const serviceWithOverrides = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      workspaceMcpOverridesService: overridesStub as unknown as WorkspaceMcpOverridesService,
+    });
+    const metadataSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() =>
+      Promise.resolve([{ id: "ws-1", runtimeConfig: { type: "local" } }] as unknown as Awaited<
+        ReturnType<Config["getAllWorkspaceMetadata"]>
+      >)
+    );
+    try {
+      const preview = await serviceWithOverrides.preview({ input: remoteDir });
+      await serviceWithOverrides.install({
+        source: preview.source,
+        expectedSha: preview.lockedSha,
+      });
+      expect(pruned).toContainEqual({ workspaceId: "ws-1", prefix: `plugin:${instanceId}:` });
+    } finally {
+      metadataSpy.mockRestore();
+    }
+
+    // Fail closed: with workspaces unenumerable, a fresh install of another
+    // name must refuse rather than risk inheriting stale consent.
+    await serviceWithOverrides.uninstall({ name: "demo-plugin", deletePluginData: false });
+    const failingSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() =>
+      Promise.reject(new Error("config store unavailable"))
+    );
+    try {
+      const preview2 = await serviceWithOverrides.preview({ input: remoteDir });
+      await expect(
+        serviceWithOverrides.install({ source: preview2.source, expectedSha: preview2.lockedSha })
+      ).rejects.toThrow(/Could not verify/);
+    } finally {
+      failingSpy.mockRestore();
+    }
+  });
+
   test("a failed trash deletion after update releases the dir for staging reclamation", async () => {
     // The journal is consumed before the replaced tree is deleted, so a
     // failed deletion (e.g. a file locked on Windows) has no other cleaner
@@ -2116,11 +2219,13 @@ describe("AgentPluginInstallService", () => {
 
     await serviceWithMcp.update({ name: "demo-plugin" });
 
-    // Two recycles: pre-swap (old tree, servers stopped while their files
-    // still exist) and post-promote (new content behind the stable path).
-    expect(observedVersions.length).toBe(2);
-    expect(observedVersions[0]).toBe("1.0.0");
-    expect(observedVersions[1]).toBe("2.0.0");
+    // Three recycles: install's fresh-instance hygiene sweep (no tree yet),
+    // pre-swap (old tree, servers stopped while their files still exist),
+    // and post-promote (new content behind the stable path).
+    expect(observedVersions.length).toBe(3);
+    expect(observedVersions[0]).toBeNull();
+    expect(observedVersions[1]).toBe("1.0.0");
+    expect(observedVersions[2]).toBe("2.0.0");
   });
 
   test("uninstall completes even when deleting the staged tree fails", async () => {
@@ -2182,7 +2287,10 @@ describe("AgentPluginInstallService", () => {
     await serviceWithMcp.install({ source: preview.source, expectedSha: preview.lockedSha });
     await serviceWithMcp.uninstall({ name: "demo-plugin", deletePluginData: false });
 
-    expect(treeStates).toEqual([true, false]);
+    // Leading false: install's fresh-instance hygiene sweep runs before any
+    // tree exists. Uninstall then stops pre-rename (tree present) and again
+    // post-removal (tree gone).
+    expect(treeStates).toEqual([false, true, false]);
   });
 
   test("uninstall aborts intact when pruning enumeration fails (pre-commit)", async () => {
@@ -2240,8 +2348,9 @@ describe("AgentPluginInstallService", () => {
     const serverKey = `plugin:${instanceId}:echo`;
 
     // One local workspace with the plugin's server enabled; its override
-    // file is temporarily unwritable.
-    let overridesBroken = true;
+    // file becomes temporarily unwritable AFTER the install (install's own
+    // hygiene sweep must succeed for the install to complete).
+    let overridesBroken = false;
     let storedOverrides: Record<string, unknown> = { enabledServers: [serverKey] };
     const overridesStub = {
       prunePluginOverrideKeys: (_id: string, keyPrefix: string) => {
@@ -2272,6 +2381,10 @@ describe("AgentPluginInstallService", () => {
         source: preview.source,
         expectedSha: preview.lockedSha,
       });
+      // The workspace enabled the server while installed; the override file
+      // then becomes unwritable before the uninstall.
+      overridesBroken = true;
+      storedOverrides = { enabledServers: [serverKey] };
       await serviceWithOverrides.uninstall({ name: "demo-plugin", deletePluginData: false });
 
       // Uninstall committed, but the failed prune left a persisted tombstone.
@@ -2310,8 +2423,11 @@ describe("AgentPluginInstallService", () => {
 
   test("tombstone survives even when both the prune and the shrink write fail", async () => {
     const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
+    // Healthy during install (its hygiene sweep must pass); broken afterwards.
+    let overridesBroken = false;
     const overridesStub = {
-      prunePluginOverrideKeys: () => Promise.reject(new Error("checkout unavailable")),
+      prunePluginOverrideKeys: () =>
+        overridesBroken ? Promise.reject(new Error("checkout unavailable")) : Promise.resolve(),
     };
     const serviceWithOverrides = new AgentPluginInstallService(config, {
       isEnabled: () => true,
@@ -2329,6 +2445,7 @@ describe("AgentPluginInstallService", () => {
         source: preview.source,
         expectedSha: preview.lockedSha,
       });
+      overridesBroken = true;
 
       // The commit write (which must carry the pessimistic tombstone) runs
       // for real; the post-prune shrink write fails.
@@ -3367,11 +3484,12 @@ describe("AgentPluginInstallService", () => {
     }
 
     // No partial state: the promoted dir was rolled back and any server
-    // started from the briefly-visible tree was invalidated.
+    // started from the briefly-visible tree was invalidated. (The leading
+    // stop is install's fresh-instance hygiene sweep.)
     expect(await pathExists(path.join(pluginsDir(), "demo-plugin"))).toBe(false);
     expect(await stagingLeftovers()).toEqual([]);
     const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
-    expect(stoppedPrefixes).toEqual([`plugin:${instanceId}:`]);
+    expect(stoppedPrefixes).toEqual([`plugin:${instanceId}:`, `plugin:${instanceId}:`]);
 
     // The retry of the same consented install succeeds.
     const entry = await serviceWithMcp.install({
@@ -3423,11 +3541,16 @@ describe("AgentPluginInstallService", () => {
       removeSpy.mockRestore();
     }
     const instanceId = computePluginInstanceId(targetPath);
-    // Two stops: one so the retry can delete what a running server locked,
-    // and one AFTER the retry/quarantine — a startup that began after the
-    // first stop can have discovered the still-visible tree and would
-    // otherwise publish after it disappears.
-    expect(stoppedPrefixes).toEqual([`plugin:${instanceId}:`, `plugin:${instanceId}:`]);
+    // Three stops: install's fresh-instance hygiene sweep, then one so the
+    // retry can delete what a running server locked, and one AFTER the
+    // retry/quarantine — a startup that began after the first rollback stop
+    // can have discovered the still-visible tree and would otherwise publish
+    // after it disappears.
+    expect(stoppedPrefixes).toEqual([
+      `plugin:${instanceId}:`,
+      `plugin:${instanceId}:`,
+      `plugin:${instanceId}:`,
+    ]);
     expect(await registry()).toEqual([]);
     // The tree left the discovery container via the quarantine rename (the
     // staged-dir mock only rejects the container path), so no unmanaged

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -127,6 +127,32 @@ describe("acquireCrossProcessLock", () => {
     const release2 = await acquireCrossProcessLock({ lockPath, ...baseOptions });
     await release2();
   }, 10_000);
+
+  test("release retries a transiently failing unlink instead of leaving a live-looking holder", async () => {
+    // A swallowed unlink failure (Windows file lock, antivirus scan) leaves
+    // the holder record behind with renewal stopped: the live PID reads as a
+    // valid owner until the lease ages out, blocking siblings for minutes.
+    const lockPath = await tempLockPath();
+    const release = await acquireCrossProcessLock({ lockPath, ...baseOptions });
+    const realRm = fsPromises.rm;
+    let failures = 0;
+    const rmSpy = spyOn(fsPromises, "rm").mockImplementation((target, options) => {
+      if (String(target) === lockPath && failures < 2) {
+        failures += 1;
+        return Promise.reject(new Error("EBUSY: resource busy"));
+      }
+      return realRm(target, options);
+    });
+    try {
+      await release();
+    } finally {
+      rmSpy.mockRestore();
+    }
+    expect(failures).toBe(2);
+    expect(await pathExists(lockPath)).toBe(false);
+    const release2 = await acquireCrossProcessLock({ lockPath, ...baseOptions });
+    await release2();
+  });
 
   test("release during active renewals leaves the lock immediately reacquirable", async () => {
     // stopRenewal joins the in-flight renewal tick: releasing mid-tick must

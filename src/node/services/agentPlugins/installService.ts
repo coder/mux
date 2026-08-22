@@ -37,6 +37,7 @@ import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdo
 import { log } from "@/node/services/log";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
+import { MAX_FILE_SIZE } from "@/node/services/tools/fileCommon";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
 import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { acquireCrossProcessLock } from "@/node/utils/main/crossProcessLock";
@@ -1531,6 +1532,13 @@ export class AgentPluginInstallService {
       try {
         const filePath = path.join(dir, entry.name);
         const stat = await fsPromises.stat(filePath);
+        // Size-check BEFORE reading (mirroring runtime discovery): the parse
+        // below applies the same cap, but only after the whole file has been
+        // read and UTF-8-decoded — an untrusted repo pouring its checkout
+        // quota into one agents/*.md could stall the main process first.
+        if (stat.size > MAX_FILE_SIZE) {
+          continue;
+        }
         const content = await fsPromises.readFile(filePath, "utf8");
         // Throws on malformed frontmatter or oversized content — exactly the
         // definitions runtime discovery would skip.
@@ -1617,6 +1625,15 @@ export class AgentPluginInstallService {
       const dirNameParsed = SkillNameSchema.safeParse(dirName);
       if (!dirNameParsed.success) {
         warnings.push(`skills/${dirName}: invalid skill directory name; it will not load`);
+        continue;
+      }
+      // Size-check BEFORE reading (mirroring runtime discovery): the parse
+      // enforces the same cap, but only after the full read+decode — see the
+      // identical guard in collectAgentFiles.
+      if (stat.size > MAX_FILE_SIZE) {
+        warnings.push(
+          `skills/${dirName}: SKILL.md is too large (${stat.size} bytes; max ${MAX_FILE_SIZE}); it will not load`
+        );
         continue;
       }
       try {
@@ -1842,6 +1859,7 @@ export class AgentPluginInstallService {
         const name = plugin.name;
         await this.assertNoCollision(name);
         await this.assertNoPendingOverridePrune(name);
+        await this.assertNoResidualInstanceState(name);
         // A retained uninstall journal means a previous uninstall of this
         // name still has unfinished recovery (staged assets to restore or
         // delete). Block the reinstall until it resolves: with a fresh
@@ -2306,12 +2324,40 @@ export class AgentPluginInstallService {
         .readFile(path.join(targetPath, PROMOTION_MARKER_FILE), "utf-8")
         .catch(() => undefined);
       if (journalNonce !== undefined && treeNonce === journalNonce) {
-        // OUR promoted replacement landed and only the cleanup was lost:
-        // finish it. Journal FIRST, and ENFORCED (mirrors the update path):
-        // removing the marker while the journal survives would strand a
-        // markerless target that the next recovery misclassifies as a user
-        // replacement, deadlocking updates — so a failed journal deletion
-        // must abort cleanup and keep the marker as the tree's identity.
+        // OUR promoted replacement landed. Two states reach here: the live
+        // update failed only its journal DELETION (registry already updated)
+        // — or the process died between the promote and the registry write,
+        // leaving the registry claiming the OLD commit while the (already
+        // capability-reviewed) replacement runs. The recorded newSha
+        // distinguishes them: reconcile provenance FIRST, before the journal
+        // is consumed, so lockedSha/manifest can never silently keep
+        // describing a tree that no longer exists (a forced branch move back
+        // to the stale SHA would even hide the update badge).
+        const newSha = this.journalStringField(journal.doc, "newSha");
+        if (newSha !== undefined && isFullCommitSha(newSha)) {
+          try {
+            const reconciled = await this.reconcilePromotedUpdateProvenance(
+              name,
+              targetPath,
+              newSha
+            );
+            if (!reconciled) {
+              return false; // Keep the journal; retried next reconciliation.
+            }
+          } catch (error) {
+            log.warn("Failed to reconcile registry provenance for a promoted update", {
+              name,
+              error: getErrorMessage(error),
+            });
+            return false;
+          }
+        }
+        // Finish the lost cleanup. Journal FIRST, and ENFORCED (mirrors the
+        // update path): removing the marker while the journal survives would
+        // strand a markerless target that the next recovery misclassifies as
+        // a user replacement, deadlocking updates — so a failed journal
+        // deletion must abort cleanup and keep the marker as the tree's
+        // identity.
         try {
           await this.consumeJournalFile(journalPath);
         } catch (error) {
@@ -2369,6 +2415,76 @@ export class AgentPluginInstallService {
       });
       return false;
     }
+    return true;
+  }
+
+  /**
+   * Commit a promoted-but-unrecorded update's provenance into the registry:
+   * lockedSha from the journal, version/description re-read from the promoted
+   * tree's own plugin.json (the tree IS the source of truth for its manifest;
+   * its .git was stripped, so the SHA must ride in the journal). No-ops when
+   * the entry is gone (registry-only uninstall raced recovery) or already
+   * records the new SHA (the live update only lost its journal deletion).
+   * Returns false when the promoted tree's manifest cannot be read — the
+   * journal must survive so a transient read failure is retried rather than
+   * committing a SHA whose manifest summary silently stays stale.
+   */
+  private async reconcilePromotedUpdateProvenance(
+    name: string,
+    targetPath: string,
+    newSha: string
+  ): Promise<boolean> {
+    const { envelope, rawEntries } = await this.readRegistryDocument("strict");
+    const rawEntry = rawEntries.find((entry) => this.rawEntryName(entry) === name);
+    if (rawEntry === undefined) {
+      return true;
+    }
+    const currentSha = (rawEntry as Record<string, unknown>).lockedSha;
+    if (currentSha === newSha) {
+      return true;
+    }
+    const { plugin } = await discoverAgentPluginAt({ pluginDir: targetPath, scope: "global" });
+    if (!plugin) {
+      log.warn("Promoted update tree has an unreadable manifest; keeping the journal", { name });
+      return false;
+    }
+    await this.writeRegistry(
+      envelope,
+      rawEntries.map((entry) => {
+        if (this.rawEntryName(entry) !== name) {
+          return entry;
+        }
+        const rawRecord = entry as Record<string, unknown>;
+        const rawManifest =
+          typeof rawRecord.manifest === "object" &&
+          rawRecord.manifest !== null &&
+          !Array.isArray(rawRecord.manifest)
+            ? (rawRecord.manifest as Record<string, unknown>)
+            : {};
+        // Same raw-patch rules as the update path: only the fields this
+        // reconciliation owns are replaced; unknown keys pass through.
+        const {
+          version: _staleVersion,
+          description: _staleDescription,
+          ...preservedManifest
+        } = rawManifest;
+        return {
+          ...rawRecord,
+          lockedSha: newSha,
+          updatedAt: new Date().toISOString(),
+          manifest: {
+            ...preservedManifest,
+            ...(plugin.manifest.version !== undefined ? { version: plugin.manifest.version } : {}),
+            ...(plugin.manifest.description !== undefined
+              ? { description: plugin.manifest.description }
+              : {}),
+          },
+        };
+      })
+    );
+    log.info(
+      `Reconciled registry provenance for '${name}' after an interrupted update (→ ${newSha.slice(0, 12)})`
+    );
     return true;
   }
 
@@ -3276,6 +3392,37 @@ export class AgentPluginInstallService {
   }
 
   /**
+   * Fresh-install hygiene for consent state left by a PREVIOUS occupant of
+   * this plugin's path. The instance ID derives from the lexical target
+   * path, so an UNMANAGED plugin the user enabled and then deleted by hand
+   * (never uninstalled — no tombstone exists) leaves workspace overrides,
+   * and possibly cached server instances, that a same-name managed install
+   * would silently inherit: its default-disabled servers would start
+   * without fresh enablement. Sweep the prefix across live workspaces and
+   * retire cached instances BEFORE anything is promoted; failures block the
+   * install (over-blocking is safe, silent activation is not). Runs under
+   * install's exclusive mutation lock.
+   */
+  private async assertNoResidualInstanceState(name: string): Promise<void> {
+    const serverKeyPrefix = buildPluginServerKey(this.instanceIdFor(name), "");
+    await this.deps.mcpServerManager?.stopServersWithKeyPrefix(serverKeyPrefix);
+    const { enumerated, failed } = await this.retryPrune({
+      prefix: serverKeyPrefix,
+      workspaceIds: [],
+    });
+    if (!enumerated) {
+      throw new Error(
+        `Could not verify that no workspace holds stale MCP overrides for '${name}' (workspace enumeration failed). Retry in a moment.`
+      );
+    }
+    if (failed.length > 0) {
+      throw new Error(
+        `Stale workspace MCP overrides for '${name}' could not be cleaned up (workspaces: ${failed.join(", ")}). Retry once those workspaces are accessible.`
+      );
+    }
+  }
+
+  /**
    * Retry all pending override prunes; persists progress. Best-effort: runs
    * on section open (list), so transient failures self-heal the next time
    * the affected checkout is reachable. The read-modify-write runs under the
@@ -3501,11 +3648,16 @@ export class AgentPluginInstallService {
           // self-heal because assertNoCapabilityIncrease treats the missing
           // tree as an empty surface and rejects the staged capabilities as
           // additions. reconcileJournals restores the old tree on recovery.
+          // newSha lets crash recovery reconcile registry provenance: a crash
+          // between the promote below and the registry write leaves the
+          // (consented) replacement live while the registry still claims the
+          // old commit — recovery must be able to commit the recorded SHA.
           await this.writeJournalFile(updateJournalPath, {
             name: entry.name,
             trashDir,
             nonce: updateNonce,
             stagedAt: Date.now(),
+            newSha: resolved.sha,
           });
           try {
             await this.renameIntoStaging(targetPath, trashDir);
