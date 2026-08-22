@@ -196,6 +196,17 @@ describe("attachReasoningReplayMetadata", () => {
     expect("providerMetadata" in reasoningParts(output)[0]).toBe(false);
   });
 
+  test("drops a bare OpenAI itemId left behind by an interrupted stream (ZDR)", () => {
+    const input = assistantMessage([
+      { type: "reasoning", text: "cut off", providerOptions: { openai: { itemId: "rs_partial" } } },
+    ]);
+
+    const [output] = attachReasoningReplayMetadata([input]);
+
+    expect(output).toBe(input);
+    expect("providerMetadata" in reasoningParts(output)[0]).toBe(false);
+  });
+
   test("keeps complete xAI replay metadata and other namespaces alongside a dropped bare itemId", () => {
     const input = assistantMessage([
       {

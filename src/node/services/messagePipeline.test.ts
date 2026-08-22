@@ -287,6 +287,23 @@ describe("reasoning replay in built provider requests", () => {
     expect(JSON.stringify(result)).not.toContain("rs_partial");
   });
 
+  it("omits a bare OpenAI itemId from an interrupted stream (ZDR, unresolvable)", async () => {
+    const result = await buildRequest(
+      "openai",
+      "high",
+      historyWith([
+        {
+          type: "reasoning",
+          text: "interrupted thoughts",
+          providerOptions: { openai: { itemId: "rs_partial" } },
+        },
+        { type: "text", text: "answer" },
+      ])
+    );
+
+    expect(JSON.stringify(result)).not.toContain("rs_partial");
+  });
+
   it("bridges legacy signature-only histories to a replayable Anthropic signature", async () => {
     const result = await buildRequest(
       "anthropic",
