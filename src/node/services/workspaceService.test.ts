@@ -4603,6 +4603,50 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context-discarding mutations drain in-flight refine passes", async () => {
+    // A streaming refine pass distills the current transcript; reset and
+    // full clear discard it, so both must cancel + drain the pass before
+    // mutating (a late proposal would otherwise describe discarded context).
+    // Partial truncation keeps context and must NOT drain.
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "clear-drains-refine";
+    try {
+      await config.addWorkspace("/tmp/clear-drains-refine-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "clear-drains-refine-project",
+        projectPath: "/tmp/clear-drains-refine-project",
+        runtimeConfig: { type: "local" },
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-clear-user", "user", "before clear", {})
+      );
+      const drained: string[] = [];
+      workspaceService.setRefinePassCanceller({
+        cancelInFlightRefinePass: (id) => {
+          drained.push(id);
+          return Promise.resolve();
+        },
+      });
+
+      expect((await workspaceService.truncateHistory(workspaceId, 0.5)).success).toBe(true);
+      expect(drained).toHaveLength(0);
+
+      expect((await workspaceService.truncateHistory(workspaceId)).success).toBe(true);
+      expect(drained).toEqual([workspaceId]);
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      expect((await workspaceService.resetContext(workspaceId)).success).toBe(true);
+      expect(drained).toEqual([workspaceId, workspaceId]);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset surfaces active-context history read failures", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "context-reset-history-read-fails";

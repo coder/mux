@@ -784,8 +784,16 @@ export class RefineService {
     const boundaryIndex = findLatestContextBoundaryIndex(messagesResult.data);
     const boundaryRow = boundaryIndex >= 0 ? messagesResult.data[boundaryIndex] : undefined;
     const timelineSinceTs = boundaryRow?.metadata?.timestamp;
+    // Persisted rows are JSON-cast without metadata validation, so a
+    // corrupted boundary timestamp can be any number: -1 would admit every
+    // nonnegative event. Only a finite, nonnegative timestamp is a usable
+    // cutoff; anything else omits the timeline (fail closed).
+    const boundaryTsUsable =
+      typeof timelineSinceTs === "number" &&
+      Number.isFinite(timelineSinceTs) &&
+      timelineSinceTs >= 0;
     const timelineText =
-      boundaryRow !== undefined && typeof timelineSinceTs !== "number"
+      boundaryRow !== undefined && !boundaryTsUsable
         ? undefined
         : await this.buildTimelineText(workspaceId, timelineSinceTs);
 
@@ -905,13 +913,16 @@ export class RefineService {
       await using _stagingLock = stagingLock;
 
       // TOCTOU guard: the history snapshot above was taken before the model
-      // streamed. A /clear --soft during generation appends a reset boundary
-      // (resetContext cancels in-flight passes, but a pass admitted around
-      // that drain can still race); publishing now would land a proposal
-      // derived from the DISCARDED pre-reset rows AFTER the marker, exactly
-      // where the approval-hash scan accepts it. Verify under the staging
-      // lock that the latest context boundary is still the one this pass
-      // distilled from, and fail closed otherwise.
+      // streamed. A context reset, full clear, or compaction during
+      // generation discards/replaces the distilled rows; publishing now
+      // would land a proposal derived from that discarded context where the
+      // approval-hash scan accepts it. Verify under the staging lock — which
+      // the reset/clear paths also hold across their mutation — that both
+      // the latest context-boundary identity AND the active segment's first
+      // row (anchor) are unchanged. The anchor catches boundary-less
+      // mutations: a full /clear leaves the boundary identity null on both
+      // sides but changes (or empties) the segment's first row, while
+      // ordinary mid-pass appends extend the tail without touching it.
       const recheckResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
       if (!recheckResult.success) {
         return Err(`could not re-verify workspace history before staging: ${recheckResult.error}`);
@@ -919,10 +930,16 @@ export class RefineService {
       const recheckBoundaryIndex = findLatestContextBoundaryIndex(recheckResult.data);
       const recheckBoundaryId =
         recheckBoundaryIndex >= 0 ? recheckResult.data[recheckBoundaryIndex].id : null;
-      if (recheckBoundaryId !== (boundaryRow?.id ?? null)) {
+      const recheckAnchorId =
+        sliceMessagesForProviderFromLatestContextBoundary(recheckResult.data)[0]?.id ?? null;
+      if (
+        recheckBoundaryId !== (boundaryRow?.id ?? null) ||
+        recheckAnchorId !== (activeSegment[0]?.id ?? null)
+      ) {
         return Err(
-          "the workspace context was reset or compacted while the refine pass was running; " +
-            "the distilled proposal no longer describes the active context — run /refine again"
+          "the workspace context was reset, cleared, or compacted while the refine pass was " +
+            "running; the distilled proposal no longer describes the active context — run " +
+            "/refine again"
         );
       }
 

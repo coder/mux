@@ -187,7 +187,12 @@ export function buildAbandonedBranchSummarySystemPrompt(): string {
  * by message role, not delimiters alone.
  */
 export function buildAbandonedBranchSummaryPrompt(transcript: string): string {
-  const neutralized = transcript.replace(/<(\/?)abandoned_branch>/gi, "[$1abandoned_branch]");
+  // Whitespace-tolerant grammar: lenient tag parsing accepts
+  // "</abandoned_branch >", so exact-spelling matches are not enough.
+  const neutralized = transcript.replace(
+    /<\s*(\/?)\s*abandoned_branch\s*>/gi,
+    "[$1abandoned_branch]"
+  );
   return ["<abandoned_branch>", neutralized, "</abandoned_branch>"].join("\n");
 }
 

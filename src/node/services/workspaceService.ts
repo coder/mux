@@ -261,6 +261,8 @@ import type {
 } from "@/node/services/backgroundProcessManager";
 import { BashMonitorRegistryStore } from "@/node/services/bashMonitorRegistryStore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import { acquireProcessFileLock } from "@/node/utils/concurrency/fileLock";
+import { REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS } from "@/constants/refine";
 import {
   BashMonitorWakeStore,
   buildBashMonitorWakeMetadata,
@@ -2802,6 +2804,34 @@ export class WorkspaceService extends EventEmitter {
     cancelInFlightRefinePass(workspaceId: string): Promise<void>;
   }): void {
     this.refinePassCanceller = service;
+  }
+
+  /**
+   * Serialize a context-discarding history mutation (reset, full clear,
+   * destructive replace) with refine staging/apply, which hold the same
+   * per-workspace lockfile across their recheck-and-publish write sections.
+   * Without it, a refine pass could recheck before the mutation and publish
+   * after it, landing a proposal distilled from the discarded rows where the
+   * approval-hash scan accepts it. Callers must cancel+drain in-flight
+   * passes BEFORE acquiring (a drained pass may be waiting on this lock).
+   */
+  private async acquireRefineSerializationLock(
+    workspaceId: string,
+    operation: string
+  ): Promise<Result<AsyncDisposable>> {
+    try {
+      return Ok(
+        await acquireProcessFileLock({
+          lockPath: path.join(this.config.getSessionDir(workspaceId), "refine-apply.lock"),
+          timeoutMs: REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS,
+          label: `refine serialization lock (${operation})`,
+        })
+      );
+    } catch (error) {
+      return Err(
+        `Cannot ${operation} while a refine operation is in progress: ${getErrorMessage(error)}`
+      );
+    }
   }
 
   private getWorktreeArchiveBehavior(): "keep" | "delete" | "snapshot" {
@@ -9908,6 +9938,25 @@ export class WorkspaceService extends EventEmitter {
 
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
+    // A full clear discards the transcript a streaming refine pass may be
+    // distilling — and unlike a reset it appends NO boundary marker, so the
+    // pass's boundary identity stays null-to-null; only its segment-anchor
+    // recheck (first-row identity) catches the mutation. Drain the pass and
+    // hold the shared refine lock across the truncation so the recheck and
+    // this mutation cannot interleave (see acquireRefineSerializationLock).
+    let refineLock: AsyncDisposable | null = null;
+    if (isFullClear) {
+      await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+      const refineLockResult = await this.acquireRefineSerializationLock(
+        workspaceId,
+        "clear history"
+      );
+      if (!refineLockResult.success) {
+        return Err(refineLockResult.error);
+      }
+      refineLock = refineLockResult.data;
+    }
+    await using _refineLock = refineLock;
     if (effectivePercentage > 0) {
       session?.clearUsageState();
     }
@@ -10014,11 +10063,22 @@ export class WorkspaceService extends EventEmitter {
       // derived from the very context this reset discards. Cancel and drain
       // it first (never rejects): a pass already in its write section
       // finishes before the boundary is appended, leaving its proposal
-      // pre-boundary where the approval-hash scan refuses it. The residual
-      // window (a pass admitted after this drain) is closed by the
-      // boundary-identity recheck refineService performs under its staging
-      // lock before publishing.
+      // pre-boundary where the approval-hash scan refuses it.
       await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+      // The one-shot drain cannot exclude a pass admitted right after it, so
+      // the rest of the reset runs under the SAME per-workspace lockfile the
+      // refine staging/apply write sections hold. That forces an ordering: a
+      // pass that wins the lock publishes BEFORE the boundary lands (its
+      // proposal stays pre-boundary, refused by the approval-hash scan), and
+      // a pass that loses rechecks the boundary/anchor identity after
+      // release and fails closed. The drain stays BEFORE acquisition —
+      // draining while holding the lock would deadlock against a pass
+      // waiting for it.
+      const refineLockResult = await this.acquireRefineSerializationLock(workspaceId, "reset");
+      if (!refineLockResult.success) {
+        return Err(refineLockResult.error);
+      }
+      await using _refineLock = refineLockResult.data;
 
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
       if (!historyResult.success) {
@@ -10232,6 +10292,23 @@ export class WorkspaceService extends EventEmitter {
           `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
         );
 
+        // Same context-discard boundary as a full clear: drain + serialize
+        // with refine so a mid-pass proposal cannot publish into the
+        // replaced history (compaction replaces are exempt — they preserve
+        // context and the compaction boundary flips the recheck identity).
+        let refineLock: AsyncDisposable | null = null;
+        if (!isCompaction) {
+          await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+          const refineLockResult = await this.acquireRefineSerializationLock(
+            workspaceId,
+            "replace history"
+          );
+          if (!refineLockResult.success) {
+            return Err(refineLockResult.error);
+          }
+          refineLock = refineLockResult.data;
+        }
+        await using _refineLock = refineLock;
         this.sessions.get(workspaceId)?.clearUsageState();
         const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(
           workspaceId,
