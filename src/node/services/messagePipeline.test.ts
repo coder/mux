@@ -131,7 +131,12 @@ describe("reasoning replay in built provider requests", () => {
   function historyWith(assistantParts: MuxMessage["parts"]): MuxMessage[] {
     return [
       createMuxMessage("user-1", "user", "solve it", { timestamp: 1000 }),
-      { id: "assistant-1", role: "assistant", metadata: { timestamp: 1001 }, parts: assistantParts },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        metadata: { timestamp: 1001 },
+        parts: assistantParts,
+      },
       createMuxMessage("user-2", "user", "continue", { timestamp: 1002 }),
     ];
   }
@@ -152,7 +157,10 @@ describe("reasoning replay in built provider requests", () => {
     });
   }
 
-  type ReasoningRequestPart = { type: "reasoning"; text: string; providerOptions?: unknown };
+  type ReasoningRequestPart = Extract<
+    Exclude<AssistantModelMessage["content"], string>[number],
+    { type: "reasoning" }
+  >;
 
   function reasoningRequestParts(messages: ModelMessage[]): ReasoningRequestPart[] {
     return messages

@@ -48,9 +48,7 @@ describe("reasoningProviderOptionsFromMetadata", () => {
   });
 
   test("maps Google thought signatures", () => {
-    expect(
-      reasoningProviderOptionsFromMetadata({ google: { thoughtSignature: "ts_1" } })
-    ).toEqual({
+    expect(reasoningProviderOptionsFromMetadata({ google: { thoughtSignature: "ts_1" } })).toEqual({
       google: { thoughtSignature: "ts_1" },
     });
   });
