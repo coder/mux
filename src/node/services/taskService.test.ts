@@ -13295,6 +13295,11 @@ describe("TaskService", () => {
     const triggerContent = sendMessage.mock.calls[0]?.[1] as string;
     expect(triggerContent).toContain(childTaskId);
     expect(triggerContent).toContain("untrusted sub-agent output");
+    // The trigger names the payload row by its server-generated message ID —
+    // adjacency ("preceding message") breaks when a streaming target's own
+    // assistant row lands between the payload and the queued trigger.
+    expect(triggerContent).toContain(payloadRow!.id);
+    expect(triggerContent).not.toContain("preceding");
     expect(triggerContent).not.toContain("schema drift");
     expect(triggerContent).not.toContain("IGNORE PRIOR INSTRUCTIONS");
     expect(triggerContent).not.toContain("Schema researcher");
