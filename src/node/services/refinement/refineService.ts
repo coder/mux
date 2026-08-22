@@ -492,16 +492,20 @@ export class RefineService {
     // unjournaled success would otherwise be unreconstructable and the
     // resume would misreport a real mutation as a no-op (see the schema doc).
     const succeededIds = new Set(staged.succeededToolCallIds ?? []);
-    // Failed approved edits are REPORTED, never folded into a successful
-    // no-op: "nothing was applied" must not stand in for "everything failed"
-    // (the staged set would be consumed with no record that approved edits
-    // were dropped).
-    const failed: Array<{ description: string; reason: string }> = [];
+    // Failed EXECUTED outcomes are PERSISTED per edit (failedToolCalls), like
+    // successes: a crash-resumed apply skips the attempted edit, so without
+    // the persisted reason the failure of an approved edit would vanish from
+    // the rebuilt record and the resume would misreport a no-op, clearing the
+    // staged set with no audit row (see the schema doc).
+    const failedOutcomes = new Map<string, string>(
+      (staged.failedToolCalls ?? []).map((outcome) => [outcome.toolCallId, outcome.reason])
+    );
     // Never-executed skips (tool unavailable / schema-rejected input) have no
     // side effects, so they stay OUT of the attempted set and the staged set
     // is retained below: a later /refine apply may retry them safely once the
     // cause is fixed. Executed edits are marked attempted and never replay.
-    let retryableSkips = 0;
+    // Re-examined fresh each pass, hence in-pass only (never persisted).
+    const skipFailures = new Map<string, string>();
     for (const edit of staged.edits) {
       // Applied (or at least attempted) before a crash: never replay.
       if (attempted.has(edit.toolCallId)) continue;
@@ -511,8 +515,7 @@ export class RefineService {
           workspaceId,
           tool: edit.tool,
         });
-        failed.push({ description: edit.description, reason: "tool unavailable at apply time" });
-        retryableSkips += 1;
+        skipFailures.set(edit.toolCallId, "tool unavailable at apply time");
         continue;
       }
       // The staged file is on-disk state: validate the input against the
@@ -529,12 +532,11 @@ export class RefineService {
           tool: edit.tool,
           error: parsedInput.error.message,
         });
-        failed.push({
-          description: edit.description,
+        skipFailures.set(
+          edit.toolCallId,
           // Zod messages can run long; the audit row needs the gist only.
-          reason: `input failed schema validation: ${parsedInput.error.message.slice(0, 200)}`,
-        });
-        retryableSkips += 1;
+          `input failed schema validation: ${parsedInput.error.message.slice(0, 200)}`
+        );
         continue;
       }
       try {
@@ -556,13 +558,12 @@ export class RefineService {
             typeof result === "object" && result !== null
               ? (result as { error?: unknown }).error
               : undefined;
-          failed.push({
-            description: edit.description,
-            reason:
-              typeof toolError === "string" && toolError.length > 0
-                ? toolError.slice(0, 200)
-                : "tool reported failure",
-          });
+          failedOutcomes.set(
+            edit.toolCallId,
+            typeof toolError === "string" && toolError.length > 0
+              ? toolError.slice(0, 200)
+              : "tool reported failure"
+          );
         }
       } catch (error) {
         log.warn("[Refine] staged edit failed to apply", {
@@ -570,10 +571,7 @@ export class RefineService {
           tool: edit.tool,
           error: getErrorMessage(error),
         });
-        failed.push({
-          description: edit.description,
-          reason: getErrorMessage(error).slice(0, 200),
-        });
+        failedOutcomes.set(edit.toolCallId, getErrorMessage(error).slice(0, 200));
       } finally {
         // Durable per-edit journal entry AFTER the execution settled
         // (success or clean failure — a failed edit must not replay either,
@@ -587,6 +585,10 @@ export class RefineService {
             applyBaselineSeq: baselineSeq,
             attemptedToolCallIds: [...attempted],
             succeededToolCallIds: [...succeededIds],
+            failedToolCalls: [...failedOutcomes].map(([toolCallId, reason]) => ({
+              toolCallId,
+              reason,
+            })),
           });
         } catch (error) {
           log.warn("[Refine] failed to persist apply progress", {
@@ -618,6 +620,28 @@ export class RefineService {
     // untracked successes recorded by the pre-crash pass.
     const journaledIds = new Set(journaledRows.map(({ toolCallId }) => toolCallId));
     const untrackedApplied = [...succeededIds].filter((id) => !journaledIds.has(id)).length;
+    // Failed approved edits are REPORTED, never folded into a successful
+    // no-op: "nothing was applied" must not stand in for "everything failed".
+    // Rebuilt from this pass's never-executed skips plus the PERSISTED
+    // executed failures, so a crash-resumed apply still reports failures
+    // recorded by the pre-crash pass. Journaled/succeeded IDs are excluded
+    // defensively (an ID cannot be both, but the record must stay coherent).
+    const failed: Array<{ description: string; reason: string }> = [];
+    for (const edit of staged.edits) {
+      const skipReason = skipFailures.get(edit.toolCallId);
+      if (skipReason !== undefined) {
+        failed.push({ description: edit.description, reason: skipReason });
+        continue;
+      }
+      const failureReason = failedOutcomes.get(edit.toolCallId);
+      if (
+        failureReason !== undefined &&
+        !succeededIds.has(edit.toolCallId) &&
+        !journaledIds.has(edit.toolCallId)
+      ) {
+        failed.push({ description: edit.description, reason: failureReason });
+      }
+    }
     const record: RefineRecord = {
       applied,
       summary: staged.summary,
@@ -667,7 +691,7 @@ export class RefineService {
     // duplicate audit row — a far better failure than lost rollback
     // addresses. Re-runs still can never double-apply (per-edit attempted
     // progress is persisted before this point).
-    if (retryableSkips > 0) {
+    if (skipFailures.size > 0) {
       // Some edits never executed (no side effects, not in the attempted
       // set): keep the staged set so /refine apply can retry them once the
       // cause is fixed. The proposal row stays the newest hashed refine-
@@ -821,6 +845,29 @@ export class RefineService {
       if (cancellationSignal.aborted) {
         return Err("refine pass cancelled (workspace removed)");
       }
+
+      // Staged-set replacement and proposal publication must be serialized
+      // with a concurrent /refine apply in ANOTHER process
+      // (XUM_ALLOW_MULTIPLE_INSTANCES=1), using the same lockfile apply
+      // holds: apply's per-edit progress rewrites spread the staged snapshot
+      // it loaded, so an unserialized save (or clear) here would be
+      // overwritten by that stale spread — the new proposal row would remain
+      // in chat with a hash that no longer matches the file, losing the new
+      // edits and failing later applies closed.
+      let stagingLock: Awaited<ReturnType<typeof acquireProcessFileLock>>;
+      try {
+        stagingLock = await acquireProcessFileLock({
+          lockPath: path.join(sessionDir, "refine-apply.lock"),
+          timeoutMs: this.options.applyLockTimeoutMs ?? REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS,
+          label: "refine staging lock",
+        });
+      } catch (error) {
+        return Err(
+          `a refine apply appears to be running in another process; retry once it finishes: ` +
+            getErrorMessage(error)
+        );
+      }
+      await using _stagingLock = stagingLock;
 
       // Every completed pass REPLACES the staged set (one per workspace):
       // stale proposals from an older trajectory must not linger behind a

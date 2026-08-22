@@ -362,6 +362,51 @@ describe("RefineService", () => {
     }
   });
 
+  it("rejects staged-set replacement while another process holds the apply lock (r34)", async () => {
+    // A /refine run in one backend must not replace (or clear) the staged
+    // set while another backend's apply is mid-flight: apply's per-edit
+    // progress rewrites spread its loaded staged snapshot and would overwrite
+    // the new proposal, leaving a chat proposal row whose hash no longer
+    // matches the file.
+    using fixture = await createFixture({
+      applyLockTimeoutMs: 250,
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-staging-lock-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "A lesson staged while an apply holds the lock.\n",
+              },
+            },
+          ],
+          "one lesson staged"
+        ),
+    });
+    await fixture.seedTrajectory();
+    await fsPromises.mkdir(fixture.sessionDir, { recursive: true });
+    const foreignLock = await acquireProcessFileLock({
+      lockPath: path.join(fixture.sessionDir, "refine-apply.lock"),
+      timeoutMs: 1_000,
+      label: "test foreign apply lock",
+    });
+    try {
+      const result = await fixture.service.run(WORKSPACE_ID);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("another process");
+      }
+      // Nothing was replaced and no proposal row was published.
+      expect(await loadStagedRefineSet(fixture.sessionDir)).toBeNull();
+      expect(fixture.emittedMessages).toHaveLength(0);
+    } finally {
+      await foreignLock[Symbol.asyncDispose]();
+    }
+  });
+
   it("rejects a concurrent invocation while a pass is in flight", async () => {
     let releaseGate: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
@@ -600,6 +645,69 @@ describe("RefineService", () => {
     expect(resumed.data.noOp).toBe(false);
     expect(resumed.data.applied).toHaveLength(0);
     expect(resumed.data.untrackedApplied).toBe(1);
+    expect(await pathExists(stagedPath)).toBe(false);
+  });
+
+  it("reconstructs failed outcomes across apply recovery (r34)", async () => {
+    // Crash shape: the executed edit FAILED (its per-edit progress rewrite
+    // persisted the attempt + failure reason) and the process died before the
+    // audit summary row was appended. Recovery skips the attempted edit — no
+    // journal row, no success ID — so only the persisted failure outcome can
+    // keep the resume from misreporting a no-op, emitting no audit row, and
+    // consuming the staged set with the approved edit's failure silently
+    // lost.
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-failed-resume-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "An edit whose failure must survive recovery.\n",
+              },
+            },
+          ],
+          "one lesson staged"
+        ),
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    // A directory at the memory file's physical path makes the create fail
+    // at execution only (staging already validated the input).
+    await fsPromises.mkdir(path.join(fixture.sessionDir, "memory", "refine-lessons.md"), {
+      recursive: true,
+    });
+    const stagedPath = path.join(fixture.sessionDir, "refine-staged.json");
+    const appendSpy = spyOn(fixture.historyService, "appendToHistory").mockImplementationOnce(() =>
+      Promise.resolve(Err("history unavailable"))
+    );
+    try {
+      // "Crash" before the audit row: the failed append retains the staged
+      // set, leaving exactly the post-crash on-disk state (attempted +
+      // failure outcome persisted, no audit row).
+      const crashed = await fixture.service.apply(WORKSPACE_ID);
+      expect(crashed.success).toBe(false);
+    } finally {
+      appendSpy.mockRestore();
+    }
+    expect(await pathExists(stagedPath)).toBe(true);
+
+    const resumed = await fixture.service.apply(WORKSPACE_ID);
+    expect(resumed.success).toBe(true);
+    if (!resumed.success) return;
+    // The approved edit's failure is reported from the persisted outcome —
+    // never reclassified as a clean no-op.
+    expect(resumed.data.noOp).toBe(false);
+    expect(resumed.data.applied).toHaveLength(0);
+    expect(resumed.data.failed).toHaveLength(1);
+    // The audit row durably records the dropped edit on resume.
+    const auditText = fixture.emittedMessages.at(-1)?.parts.find((part) => part.type === "text");
+    expect(auditText?.type === "text" && auditText.text).toContain("FAILED:");
+    // Executed failures are attempted (never replayed): the set is consumed.
     expect(await pathExists(stagedPath)).toBe(false);
   });
 

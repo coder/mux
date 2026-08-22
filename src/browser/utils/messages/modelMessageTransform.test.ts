@@ -193,10 +193,15 @@ describe("modelMessageTransform", () => {
       const messages: ModelMessage[] = [assistantMsg1, assistantMsg2];
 
       const result = transformModelMessages(messages, "anthropic");
+      // Original text parts are preserved as separate blocks so part-level
+      // providerOptions survive the merge.
       expect(result).toEqual([
         {
           role: "assistant",
-          content: [{ type: "text", text: "Let me help you with that.\n\nHere's the result." }],
+          content: [
+            { type: "text", text: "Let me help you with that." },
+            { type: "text", text: "Here's the result." },
+          ],
         },
       ]);
     });
@@ -657,12 +662,47 @@ describe("modelMessageTransform", () => {
       const result = transformModelMessages(messages, "anthropic");
       expect(result).toHaveLength(3);
       expect(result[1].role).toBe("assistant");
-      const content = result[1].content;
-      expect(Array.isArray(content) && content[0].type === "text" && content[0].text).toBe(
-        "branch point answer\n\nSummary of the abandoned branch: explored a race."
-      );
+      // Original text parts preserved verbatim as separate blocks (never
+      // re-joined into one string, which would drop part providerOptions).
+      expect(result[1].content).toEqual([
+        { type: "text", text: "branch point answer" },
+        { type: "text", text: "Summary of the abandoned branch: explored a race." },
+      ]);
       // Alternation restored for Anthropic.
       expect(result.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    });
+
+    it("preserves part providerOptions and only merges for Anthropic", () => {
+      // The folded row's text parts keep their providerOptions (e.g.
+      // cacheControl); other providers accept consecutive assistant rows, so
+      // the merge must not change their request bytes.
+      const messages: ModelMessage[] = [
+        { role: "user", content: [{ type: "text", text: "question" }] },
+        { role: "assistant", content: [{ type: "text", text: "answer" }] },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "Summary.",
+              providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+            },
+          ],
+        },
+      ];
+      const anthropic = transformModelMessages(messages, "anthropic");
+      expect(anthropic).toHaveLength(2);
+      expect(anthropic[1].content).toEqual([
+        { type: "text", text: "answer" },
+        {
+          type: "text",
+          text: "Summary.",
+          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+        },
+      ]);
+      // Non-Anthropic providers: consecutive assistant rows pass through.
+      expect(transformModelMessages(messages, "openai")).toEqual(messages);
+      expect(transformModelMessages(messages, "google")).toEqual(messages);
     });
 
     it("keeps a summary row standalone after a tool-call/tool-result pair", () => {

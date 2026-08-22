@@ -72,6 +72,14 @@ export const StagedRefineSetSchema = z.object({
    * untrackedApplied instead of misreporting the real mutation as a no-op.
    */
   succeededToolCallIds: z.array(z.string()).optional(),
+  /**
+   * Executed tool calls that reported failure or threw, with the reason —
+   * persisted like successes. A crash-resumed apply skips the attempted edit,
+   * so without this record the approved edit's failure would vanish from the
+   * rebuilt result: the resume would misreport a no-op, emit no audit row,
+   * and consume the staged set with the failure silently lost.
+   */
+  failedToolCalls: z.array(z.object({ toolCallId: z.string(), reason: z.string() })).optional(),
 });
 export type StagedRefineSet = z.infer<typeof StagedRefineSetSchema>;
 

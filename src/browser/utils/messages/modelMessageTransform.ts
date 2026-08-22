@@ -1035,27 +1035,22 @@ function mergeConsecutiveAssistantTextMessages(messages: ModelMessage[]): ModelM
       isTextOnlyAssistantContent(msg.content) &&
       (typeof prev.content === "string" || !prev.content.some((part) => part.type === "tool-call"))
     ) {
-      const currentText =
+      // Preserve the original text parts verbatim instead of re-joining them
+      // into one string: rebuilding parts as plain {type,text} would discard
+      // part-level providerOptions (e.g. cacheControl) carried by the folded
+      // row. Only the message envelope of the merged-away row is dropped.
+      // Empty text parts are filtered — Anthropic rejects empty text blocks.
+      const currentParts: AssistantContentArray =
         typeof msg.content === "string"
-          ? msg.content
-          : msg.content
-              .map((part) => (part.type === "text" ? part.text : ""))
-              .filter((text) => text.length > 0)
-              .join("\n");
+          ? msg.content.length > 0
+            ? [{ type: "text", text: msg.content }]
+            : []
+          : msg.content.filter((part) => part.type !== "text" || part.text.length > 0);
       const prevContent: AssistantContentArray =
         typeof prev.content === "string"
           ? [{ type: "text", text: prev.content }]
           : [...prev.content];
-      const lastPart = prevContent[prevContent.length - 1];
-      if (lastPart?.type === "text") {
-        prevContent[prevContent.length - 1] = {
-          ...lastPart,
-          text: `${lastPart.text}\n\n${currentText}`,
-        };
-      } else {
-        prevContent.push({ type: "text", text: currentText });
-      }
-      merged[merged.length - 1] = { ...prev, content: prevContent };
+      merged[merged.length - 1] = { ...prev, content: [...prevContent, ...currentParts] };
       continue;
     }
     merged.push(msg);
@@ -1229,8 +1224,11 @@ export function transformModelMessages(
 
   // Pass 6: Merge text-only synthetic assistant rows (branch summaries) into
   // a preceding assistant turn — Anthropic rejects consecutive assistant
-  // messages just as it rejects consecutive user messages.
-  return mergeConsecutiveAssistantTextMessages(merged);
+  // messages just as it rejects consecutive user messages. Anthropic-only:
+  // other providers accept adjacent assistant rows, and an unconditional
+  // merge would change provider-request bytes for histories that contain
+  // them outside this path (recovery, imported history).
+  return provider === "anthropic" ? mergeConsecutiveAssistantTextMessages(merged) : merged;
 }
 
 /**
