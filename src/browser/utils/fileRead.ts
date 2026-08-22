@@ -21,6 +21,13 @@ export const EXIT_CODE_OUTSIDE_WORKSPACE = 44;
  */
 export const MAX_COPY_FILE_SIZE_BYTES = 750 * 1024;
 
+/**
+ * Marks where the read script's own payload begins. The bash IPC sources
+ * `.mux/tool_env` with its output merged into the stream, so any prelude output
+ * would otherwise corrupt the size/base64 framing.
+ */
+const FILE_READ_SENTINEL = "__MUX_FILE_CONTENTS_V1__";
+
 interface ReadFileScriptOptions {
   maxSizeBytes?: number;
   maxLineCount?: number;
@@ -162,7 +169,7 @@ awk_status=$?
     relativePath.includes("/") &&
     firstSegment.length > 0;
   const anchorScript = useFirstSegmentAnchor
-    ? `anchor=$(realpath ${shellEscapePath(firstSegment)} 2>/dev/null || readlink -f ${shellEscapePath(firstSegment)} 2>/dev/null)`
+    ? `anchor=$(mux_resolve_physical ${shellEscapePath(firstSegment)})`
     : `anchor=$(pwd -P)`;
 
   // SECURITY AUDIT: repo-controlled paths are attacker-controlled input. A changed
@@ -171,21 +178,59 @@ awk_status=$?
   // it. Fail closed: an unresolvable path or anchor (loop, missing resolver) also
   // exits. All reads then use the validated physical path, not the original link, so
   // swapping the symlink between validation and read cannot redirect the read.
-  return `${anchorScript}
+  //
+  // mux_resolve_physical prefers realpath/readlink -f but falls back to a portable
+  // POSIX loop (cd -P + plain readlink) for BSD/macOS hosts that lack both.
+  //
+  // The sentinel line frames the payload: the bash IPC sources .mux/tool_env with
+  // output merged into the stream, so parsing must skip any prelude output.
+  return `mux_resolve_physical() {
+  realpath "$1" 2>/dev/null && return 0
+  readlink -f "$1" 2>/dev/null && return 0
+  mux_rp_path=$1
+  mux_rp_hops=0
+  while [ "$mux_rp_hops" -lt 40 ]; do
+    mux_rp_dir=$(CDPATH= cd -P -- "$(dirname -- "$mux_rp_path")" 2>/dev/null && pwd -P) || return 1
+    mux_rp_base=$(basename -- "$mux_rp_path")
+    if [ -h "$mux_rp_dir/$mux_rp_base" ]; then
+      mux_rp_target=$(readlink -- "$mux_rp_dir/$mux_rp_base" 2>/dev/null) || return 1
+      case "$mux_rp_target" in
+        /*) mux_rp_path=$mux_rp_target ;;
+        *) mux_rp_path="$mux_rp_dir/$mux_rp_target" ;;
+      esac
+      mux_rp_hops=$((mux_rp_hops + 1))
+    else
+      printf '%s\\n' "$mux_rp_dir/$mux_rp_base"
+      return 0
+    fi
+  done
+  return 1
+}
+${anchorScript}
 [ -n "$anchor" ] || exit ${EXIT_CODE_OUTSIDE_WORKSPACE}
-resolved=$(realpath ${file} 2>/dev/null || readlink -f ${file} 2>/dev/null)
+resolved=$(mux_resolve_physical ${file})
 case "$resolved" in
   "$anchor"/*) ;;
   *) exit ${EXIT_CODE_OUTSIDE_WORKSPACE} ;;
 esac
 size=$(stat -c %s "$resolved" 2>/dev/null || stat -f %z "$resolved")
 [ "$size" -gt ${maxSizeBytes} ] && exit ${EXIT_CODE_TOO_LARGE}${lineLimitScript}
+echo "${FILE_READ_SENTINEL}"
 echo "$size"
 base64 < "$resolved"`;
 }
 
 /** Parse the read file script output (size on first line, base64 on remaining lines). */
-function parseReadFileOutput(output: string): { size: number; base64: string } {
+function parseReadFileOutput(rawOutput: string): { size: number; base64: string } {
+  // Skip any prelude output (e.g. from sourcing .mux/tool_env) that precedes the
+  // sentinel. Use the LAST occurrence so prelude output echoing the sentinel string
+  // cannot truncate the real payload. Sentinel-less output (older callers, tests)
+  // parses as before.
+  let output = rawOutput;
+  const sentinelIndex = rawOutput.lastIndexOf(FILE_READ_SENTINEL);
+  if (sentinelIndex !== -1) {
+    output = rawOutput.slice(sentinelIndex + FILE_READ_SENTINEL.length).replace(/^\r?\n/, "");
+  }
   const firstNewline = output.indexOf("\n");
 
   if (firstNewline === -1) {

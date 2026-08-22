@@ -175,6 +175,65 @@ describe("buildReadFileScript", () => {
     }
   });
 
+  test("parses the payload despite prelude output before the script", () => {
+    // The bash IPC sources .mux/tool_env with output merged into the stream, so any
+    // prelude echo must not corrupt the size/base64 framing.
+    const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
+
+    try {
+      writeFileSync(join(tempDir, "file.txt"), "framed contents\n");
+      const result = spawnSync(
+        "bash",
+        ["-lc", `echo ready; echo warming up; ${buildReadFileScript("file.txt")}`],
+        { cwd: tempDir }
+      );
+      expect(result.status).toBe(0);
+      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
+      expect(processed).toMatchObject({ type: "text", content: "framed contents\n" });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves paths without realpath or readlink -f (BSD/macOS fallback)", () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "mux-file-read-outside-"));
+    const workspaceDir = mkdtempSync(join(tmpdir(), "mux-file-read-ws-"));
+
+    try {
+      writeFileSync(join(workspaceDir, "real.txt"), "portable contents\n");
+      symlinkSync(join(workspaceDir, "real.txt"), join(workspaceDir, "link.txt"));
+      writeFileSync(join(outsideDir, "secret.txt"), "outside secret\n");
+      symlinkSync(join(outsideDir, "secret.txt"), join(workspaceDir, "escape.txt"));
+
+      // Shadow realpath entirely and reject readlink -f (plain readlink still works),
+      // modeling hosts that ship neither GNU tool.
+      const shims =
+        "realpath() { return 127; }; " +
+        'readlink() { if [ "$1" = "-f" ]; then return 127; fi; command readlink "$@"; }; ';
+
+      const okResult = spawnSync("bash", ["-lc", `${shims}${buildReadFileScript("link.txt")}`], {
+        cwd: workspaceDir,
+      });
+      expect(okResult.status).toBe(0);
+      expect(processFileContents(okResult.stdout.toString(), okResult.status ?? 0)).toMatchObject({
+        type: "text",
+        content: "portable contents\n",
+      });
+
+      // Containment still holds under the fallback resolver.
+      const escapeResult = spawnSync(
+        "bash",
+        ["-lc", `${shims}${buildReadFileScript("escape.txt")}`],
+        { cwd: workspaceDir }
+      );
+      expect(escapeResult.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+      expect(escapeResult.stdout.toString()).not.toContain("outside secret");
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test("reads files whose names look like command options", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
 
