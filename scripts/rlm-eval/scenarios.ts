@@ -36,6 +36,19 @@ export interface EvalConfig {
   nudge?: string;
 }
 
+/**
+ * Exact-token verifier match: the expected `KEY=<value>` (or bare answer)
+ * must sit on a token boundary. Unrestricted includes() marked prefixes as
+ * passing — COUNT=1200 matched inside COUNT=12000 — silently corrupting the
+ * harness's task-success metric for A/B comparisons. Values are digits or
+ * order IDs (alphanumeric with '-'), so any adjacent character of that class
+ * disqualifies the match on both sides.
+ */
+function hasExactToken(text: string, token: string): boolean {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![A-Za-z0-9_-])${escaped}(?![A-Za-z0-9_-])`, "u").test(text);
+}
+
 /** Deterministic PRNG (mulberry32) so fixture data and ground truth are reproducible. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -73,8 +86,9 @@ export const SCENARIOS: EvalScenario[] = [
     verify: (truth, texts) => {
       const t1 = texts[0] ?? "";
       const t2 = texts[1] ?? "";
-      const countOk = t1.includes(`COUNT=${truth.count}`);
-      const minMaxOk = t2.includes(`MIN=${truth.min}`) && t2.includes(`MAX=${truth.max}`);
+      const countOk = hasExactToken(t1, `COUNT=${truth.count}`);
+      const minMaxOk =
+        hasExactToken(t2, `MIN=${truth.min}`) && hasExactToken(t2, `MAX=${truth.max}`);
       return {
         pass: countOk && minMaxOk,
         detail: `count:${countOk ? "ok" : "FAIL"} minmax:${minMaxOk ? "ok" : "FAIL"}`,
@@ -146,8 +160,8 @@ export const SCENARIOS: EvalScenario[] = [
     ],
     verify: (truth, texts) => {
       const t = texts[0] ?? "";
-      const totalOk = t.includes(`TOTAL=${truth.total}`);
-      const topOk = t.includes(`TOP=${truth.top}`);
+      const totalOk = hasExactToken(t, `TOTAL=${truth.total}`);
+      const topOk = hasExactToken(t, `TOP=${truth.top}`);
       return {
         pass: totalOk && topOk,
         detail: `total:${totalOk ? "ok" : "FAIL"} top:${topOk ? "ok" : "FAIL"}`,
@@ -196,9 +210,9 @@ export const SCENARIOS: EvalScenario[] = [
     verify: (truth, texts) => {
       const t = texts[0] ?? "";
       const ok =
-        t.includes(`EMEA=${truth.emea}`) &&
-        t.includes(`AMER=${truth.amer}`) &&
-        t.includes(`APAC=${truth.apac}`);
+        hasExactToken(t, `EMEA=${truth.emea}`) &&
+        hasExactToken(t, `AMER=${truth.amer}`) &&
+        hasExactToken(t, `APAC=${truth.apac}`);
       return { pass: ok, detail: ok ? "totals:ok" : "totals:FAIL" };
     },
   },
@@ -209,7 +223,7 @@ export const SCENARIOS: EvalScenario[] = [
     setup: () => ({ answer: "391" }),
     turns: () => [`What is 17 * 23? Reply with just the number.`],
     verify: (truth, texts) => {
-      const pass = (texts[0] ?? "").includes(truth.answer);
+      const pass = hasExactToken(texts[0] ?? "", truth.answer);
       return { pass, detail: pass ? "answer:ok" : "answer:FAIL" };
     },
   },
