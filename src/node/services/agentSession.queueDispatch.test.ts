@@ -531,34 +531,48 @@ describe("AgentSession queued message tool-call dispatch", () => {
       }
     );
     const followUp = "Follow up after compaction";
+    const nextFollowUp = "A later queued message";
     const isFollowUpUserMessage = (event: (typeof events)[number]) =>
       event.type === "message" &&
       event.role === "user" &&
       event.parts.some((part) => part.type === "text" && part.text === followUp);
-    const latestQueuedMessages = () =>
-      events.filter((event) => event.type === "queued-message-changed").at(-1)?.queuedMessages;
+    const latestQueueEvent = () =>
+      events.filter((event) => event.type === "queued-message-changed").at(-1);
 
     try {
       session.queueMessage(followUp, { model: TEST_MODEL, agentId: "exec" });
+      const queueEventCountBeforeDispatch = events.filter(
+        (event) => event.type === "queued-message-changed"
+      ).length;
       session.sendQueuedMessages();
       await appendStarted.promise;
 
-      expect(latestQueuedMessages()).toEqual([followUp]);
+      expect(events.filter((event) => event.type === "queued-message-changed").length).toBe(
+        queueEventCountBeforeDispatch + 1
+      );
+      expect(latestQueueEvent()?.queuedMessages).toEqual([followUp]);
       expect(events.some(isFollowUpUserMessage)).toBe(false);
+
+      // Any queue mutation during persistence must retain the in-flight entry in the
+      // authoritative projection instead of falling back to a stale renderer snapshot.
+      session.queueMessage(nextFollowUp, { model: TEST_MODEL, agentId: "exec" });
+      expect(latestQueueEvent()?.queuedMessages).toEqual([followUp, nextFollowUp]);
 
       appendRelease.resolve();
       expect(await waitForCondition(() => events.some(isFollowUpUserMessage))).toBe(true);
-      expect(await waitForCondition(() => latestQueuedMessages()?.length === 0)).toBe(true);
+      expect(
+        await waitForCondition(() => latestQueueEvent()?.queuedMessages.join() === nextFollowUp)
+      ).toBe(true);
 
       const userMessageIndex = events.findIndex(isFollowUpUserMessage);
-      const clearedQueueIndex = events.findIndex(
+      const handoffIndex = events.findIndex(
         (event, index) =>
           index > userMessageIndex &&
           event.type === "queued-message-changed" &&
-          event.queuedMessages.length === 0
+          event.queuedMessages.join() === nextFollowUp
       );
       expect(userMessageIndex).toBeGreaterThanOrEqual(0);
-      expect(clearedQueueIndex).toBeGreaterThan(userMessageIndex);
+      expect(handoffIndex).toBeGreaterThan(userMessageIndex);
     } finally {
       appendRelease.resolve();
       appendSpy.mockRestore();
