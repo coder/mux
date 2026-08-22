@@ -1128,6 +1128,47 @@ describe("SandboxHostService", () => {
     await host.disposeScope("ws-evict");
   });
 
+  test("retention measures UTF-8 bytes, not UTF-16 code units (multibyte payloads)", async () => {
+    // Codex r24: sizes were measured as JSON.stringify().length — UTF-16
+    // code units — under-counting multibyte payloads by up to 4x. Handles
+    // passed the retention cap unevicted while the REAL snapshot exceeded
+    // the byte budget persistVars enforces, throwing VarsSnapshotBudgetError
+    // and wiping working state instead of evicting oldest entries.
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-utf8",
+      sessionDir: tmp.path,
+    });
+
+    // Each entry: 402 UTF-16 units but 1202 UTF-8 bytes (3-byte CJK chars,
+    // plus 2 quote bytes). Two entries = 804 units / 2404 bytes; cap 2000
+    // must evict __h1 (pre-fix unit counting kept both).
+    const cjk = JSON.stringify("\u4e16".repeat(400));
+    await mount.storeResultHandle(cjk, 2000); // __h1
+    await mount.storeResultHandle(cjk, 2000); // __h2
+    const handles = await mount.runtime.eval("return [typeof vars.__h1, typeof vars.__h2];");
+    expect(handles.result).toEqual(["undefined", "string"]);
+
+    // Same unit bug in enforceVarsRetention's measurement, via a surrogate-
+    // pair payload: 300 emoji = 602 units / 1202 bytes serialized.
+    const seed = await mount.runtime.eval('vars.moji = "\\u{1F600}".repeat(300); return true;');
+    expect(seed.success).toBe(true);
+    await mount.enforceVarsRetention({
+      newLoadKeys: ["moji"],
+      protectedKeys: [],
+      capBytes: 10_000,
+    });
+    // moji (1202 bytes) + __h2 (1202 bytes) > 2000: the oldest (__h2) evicts
+    // (pre-fix: 602 + 402 units stayed under the cap and kept both).
+    await mount.enforceVarsRetention({ newLoadKeys: [], protectedKeys: [], capBytes: 2000 });
+    const after = await mount.runtime.eval("return [typeof vars.__h2, typeof vars.moji];");
+    expect(after.result).toEqual(["undefined", "string"]);
+    await host.disposeScope("ws-utf8");
+  });
+
   test("enforceVarsRetention counts loads with handles and evicts oldest-first, protecting new keys", async () => {
     using tmp = new DisposableTempDir("sandbox-host-test");
     const host = new SandboxHostService();

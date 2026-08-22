@@ -267,6 +267,47 @@ export interface AcquireMountOptions {
   bridgeKey?: string;
 }
 
+/**
+ * Guest-side EXACT UTF-8 byte measurement (r24). Retention budgets are BYTE
+ * caps — persistVars enforces VARS_SNAPSHOT_MAX_BYTES with Buffer.byteLength
+ * — but managed-entry sizes were measured as JSON.stringify().length (UTF-16
+ * code units), under-counting multibyte payloads by up to 4x: ~3MB of
+ * CJK/emoji passed the 4MB retention cap unevicted while the real snapshot
+ * blew the 8MB byte budget, so persistVars threw VarsSnapshotBudgetError and
+ * the mount reset wiped unsnapshotted working state instead of retention
+ * evicting oldest entries.
+ *
+ * Counted with C-speed regex scans instead of a per-code-unit loop (multi-MB
+ * payloads would interpret millions of iterations) and replace("") length
+ * deltas instead of match() (which allocates one array element per match):
+ * base 1 byte per code unit; U+0080-07FF +1; U+0800-FFFF non-surrogate +2;
+ * surrogate PAIRS 4 bytes per 2 units (+1 per unit); LONE surrogates encode
+ * as the 3-byte replacement char (+2 per unit), matching Buffer.byteLength
+ * host-side.
+ */
+const GUEST_UTF8_LEN_SOURCE = `
+      function utf8Len(s) {
+        if (!/[\\u0080-\\uffff]/.test(s)) return s.length;
+        let bytes = s.length;
+        bytes += s.length - s.replace(/[\\u0080-\\u07ff]/g, "").length;
+        bytes += (s.length - s.replace(/[\\u0800-\\ud7ff\\ue000-\\uffff]/g, "").length) * 2;
+        const noPairs = s.replace(/[\\ud800-\\udbff][\\udc00-\\udfff]/g, "");
+        bytes += s.length - noPairs.length;
+        bytes += (noPairs.length - noPairs.replace(/[\\ud800-\\udfff]/g, "").length) * 2;
+        return bytes;
+      }
+      function measureVarBytes(key) {
+        // Unmeasurable (guest mutated the entry into a cycle, or deleted it)
+        // counts as 0; snapshotVars is where cycles crash-fast.
+        try {
+          const s = JSON.stringify(vars[key]);
+          return typeof s === "string" ? utf8Len(s) : 0;
+        } catch (err) {
+          return 0;
+        }
+      }
+`;
+
 export class SandboxMount {
   private readonly hostEventQueue: unknown[] = [];
   private disposed = false;
@@ -399,8 +440,10 @@ export class SandboxMount {
    * monotonic per scope across restarts. Returns the handle key.
    *
    * Also enforces `capBytes` on the total bytes retained by handle vars,
-   * evicting oldest-first (sizes measured as JSON string length — close
-   * enough to bytes for a cap). The just-stored handle is never evicted even
+   * evicting oldest-first (sizes measured as exact UTF-8 bytes of the JSON
+   * serialization — the unit persistVars enforces, so multibyte payloads
+   * cannot pass the cap while blowing the snapshot budget; see
+   * GUEST_UTF8_LEN_SOURCE). The just-stored handle is never evicted even
    * when it alone exceeds the cap: the model is about to be told the handle
    * exists and a follow-up call must find it, so the cap is soft by one
    * entry. Eviction only drops the guest-local copy — the blob store keeps
@@ -415,8 +458,12 @@ export class SandboxMount {
       "storeResultHandle: capBytes must be a positive integer"
     );
     const literal = JSON.stringify(serializedValue);
+    // The new handle's own size is known host-side: measure it in UTF-8
+    // bytes (the budget unit), not string length.
+    const serializedByteLength = Buffer.byteLength(serializedValue, "utf8");
     const result = await this.runtime.eval(
       `
+      ${GUEST_UTF8_LEN_SOURCE}
       const value = JSON.parse(${literal});
       const seqRaw = vars.__handleSeq;
       // Tolerate a guest-clobbered counter (vars is guest-writable): restart
@@ -430,18 +477,10 @@ export class SandboxMount {
         if (k === key) continue;
         const m = /^__h(\\d+)$/.exec(k);
         if (m === null) continue;
-        let bytes = 0;
-        // Unmeasurable (guest mutated a handle into a cycle) counts as 0;
-        // snapshotVars is where cycles crash-fast.
-        try {
-          bytes = JSON.stringify(vars[k]).length;
-        } catch (err) {
-          bytes = 0;
-        }
-        others.push({ key: k, n: Number(m[1]), bytes });
+        others.push({ key: k, n: Number(m[1]), bytes: measureVarBytes(k) });
       }
       others.sort((a, b) => a.n - b.n);
-      let total = ${serializedValue.length};
+      let total = ${serializedByteLength};
       for (const h of others) total += h.bytes;
       for (const h of others) {
         if (total <= ${capBytes}) break;
@@ -489,6 +528,7 @@ export class SandboxMount {
     );
     const result = await this.runtime.eval(
       `
+      ${GUEST_UTF8_LEN_SOURCE}
       const newLoads = ${JSON.stringify(args.newLoadKeys)};
       const protectedKeys = ${JSON.stringify(args.protectedKeys)};
       const cap = ${args.capBytes};
@@ -525,13 +565,7 @@ export class SandboxMount {
       }
       let total = 0;
       for (const e of entries) {
-        // Unmeasurable (guest mutated an entry into a cycle) counts as 0;
-        // snapshotVars is where cycles crash-fast.
-        try {
-          e.bytes = JSON.stringify(vars[e.key]).length;
-        } catch (err) {
-          e.bytes = 0;
-        }
+        e.bytes = measureVarBytes(e.key);
         total += e.bytes;
       }
       entries.sort((a, b) => a.n - b.n);
