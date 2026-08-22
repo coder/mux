@@ -14,6 +14,7 @@ import {
 import {
   applyRefinementInverse,
   readRefinementEvents,
+  seedForeignTargetLock,
 } from "@/node/services/refinement/refinementTestHelpers";
 import { sharedDurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
@@ -215,6 +216,51 @@ describe("agent_skill_delete", () => {
     } finally {
       rmSpy.mockRestore();
     }
+  });
+
+  it("does not migrate a legacy package while another process holds the target lock", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-legacy-migration-locked");
+    const projectRoot = path.join(tempDir.path, "project");
+    const legacyManifest = path.join(projectRoot, ".mux", "skills", "demo-skill", SKILL_FILENAME);
+    await writeSkill(path.dirname(path.dirname(legacyManifest)), "demo-skill");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+
+    // Deterministic cross-process interleaving: occupy the canonical skills
+    // root target lock, as another process's in-flight rollback would.
+    // Migration REWRITES the canonical dir, so run outside the lock it could
+    // land between the rollback's in-lock verify and its inverse apply.
+    const lockPath = await seedForeignTargetLock(
+      tempDir.path,
+      path.join(projectRoot, ".xum", "skills")
+    );
+
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const blocked = (await tool.execute!(
+      { name: "demo-skill", filePath: SKILL_FILENAME, confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+    expect(blocked.success).toBe(false);
+    if (blocked.success) throw new Error("unreachable");
+    expect(blocked.error).toContain("Another process is mutating");
+    // Nothing mutated: no canonical dir appeared, the legacy manifest survived.
+    const statErr = await fs.stat(canonicalDir).catch((error: NodeJS.ErrnoException) => error);
+    expect(statErr).toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(legacyManifest, "utf-8")).toContain("name: demo-skill");
+
+    // Lock released → the same delete migrates, then removes both manifests.
+    await fs.unlink(lockPath);
+    const retried = (await tool.execute!(
+      { name: "demo-skill", filePath: SKILL_FILENAME, confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+    expect(retried).toMatchObject({ success: true, deleted: "file" });
+    expect(fs.stat(path.join(canonicalDir, SKILL_FILENAME))).rejects.toThrow();
+    expect(fs.stat(legacyManifest)).rejects.toThrow();
   });
 
   it("deletes host-local project skills through the host runtime for Devcontainers", async () => {

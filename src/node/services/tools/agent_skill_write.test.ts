@@ -14,6 +14,7 @@ import {
 import {
   applyRefinementInverse,
   readRefinementEvents,
+  seedForeignTargetLock,
 } from "@/node/services/refinement/refinementTestHelpers";
 import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createAgentSkillWriteTool } from "./agent_skill_write";
@@ -193,6 +194,51 @@ describe("agent_skill_write", () => {
     );
     expect(await fs.readFile(path.join(canonicalDir, "references/legacy.txt"), "utf-8")).toBe(
       "legacy"
+    );
+    expect(await fs.readFile(path.join(canonicalDir, "references/new.txt"), "utf-8")).toBe("new");
+  });
+
+  it("does not migrate a legacy package while another process holds the target lock", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-migration-locked");
+    const projectRoot = path.join(tempDir.path, "project");
+    await writeSkill(path.join(projectRoot, ".mux", "skills"), "demo-skill");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+
+    // Deterministic cross-process interleaving: occupy the canonical skills
+    // root target lock, as another process's in-flight rollback would.
+    // Migration REWRITES the canonical dir, so run outside the lock it could
+    // land between the rollback's in-lock verify and its inverse apply.
+    const lockPath = await seedForeignTargetLock(
+      tempDir.path,
+      path.join(projectRoot, ".xum", "skills")
+    );
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const blocked = (await tool.execute!(
+      { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+    expect(blocked.success).toBe(false);
+    if (blocked.success) throw new Error("unreachable");
+    expect(blocked.error).toContain("Another process is mutating");
+    // Nothing — including the legacy migration — touched the canonical dir.
+    const statErr = await fs.stat(canonicalDir).catch((error: NodeJS.ErrnoException) => error);
+    expect(statErr).toMatchObject({ code: "ENOENT" });
+
+    // Lock released → the same write migrates and lands.
+    await fs.unlink(lockPath);
+    const retried = (await tool.execute!(
+      { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+    expect(retried.success).toBe(true);
+    expect(await fs.readFile(path.join(canonicalDir, SKILL_FILENAME), "utf-8")).toContain(
+      "name: demo-skill"
     );
     expect(await fs.readFile(path.join(canonicalDir, "references/new.txt"), "utf-8")).toBe("new");
   });

@@ -27,6 +27,7 @@ import {
 } from "./skillFileUtils";
 import {
   ensureRuntimePathWithinWorkspace,
+  getProjectSkillDirs,
   inspectContainmentOnRuntime,
   migrateLegacyProjectSkill,
   resolveSkillFilePathForRuntime,
@@ -184,7 +185,26 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
           xumScope: config.xumScope ?? null,
         });
 
-        await migrateLegacyProjectSkill(skillCtx, parsedName.data);
+        // Legacy→canonical migration REWRITES the canonical skill dir, so a
+        // host-local migration must hold the same per-root target lock as the
+        // rollback engine (targetMutationLocks.ts): unlocked, it could land
+        // between a rollback's in-lock divergence verify and its inverse
+        // apply and be silently overwritten by the inverse. Sequential (not
+        // nested) with the write lock below — the in-process target mutex is
+        // not reentrant. Runtime-backed writers stay excluded from target
+        // locks (their rows are remote-stamped and never rollbackable).
+        const projectSkillDirs = getProjectSkillDirs(skillCtx, parsedName.data);
+        if (projectSkillDirs != null) {
+          if (skillCtx.kind === "project-runtime" || config.xumScope == null) {
+            await migrateLegacyProjectSkill(skillCtx, parsedName.data);
+          } else {
+            await withTargetMutationLock(
+              config.xumScope.xumHome,
+              path.resolve(projectSkillDirs[0], ".."),
+              () => migrateLegacyProjectSkill(skillCtx, parsedName.data)
+            );
+          }
+        }
 
         if (skillCtx.kind === "project-runtime") {
           const skillsRoot = config.runtime.normalizePath(

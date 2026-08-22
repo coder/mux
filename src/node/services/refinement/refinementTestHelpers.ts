@@ -11,9 +11,29 @@ import * as path from "node:path";
 import assert from "@/common/utils/assert";
 import type { DurableEvent } from "@/common/types/durableEvent";
 import { RefinementInverseSchema } from "@/common/types/refinement";
+import { getProcessBirth } from "@/node/utils/concurrency/fileLock";
 import { sharedDurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import { targetMutationLockFilePath } from "./targetMutationLocks";
 
 export type RefinementEvent = Extract<DurableEvent, { kind: "refinement" }>;
+
+/**
+ * Occupy a target mutation lockfile with a verified-live foreign-owner token,
+ * as another process's in-flight rollback would (verified-live is never
+ * reclaimed while this test process runs, so writers must fail fast).
+ * Returns the lockfile path; unlink it to release.
+ */
+export async function seedForeignTargetLock(muxHome: string, targetKey: string): Promise<string> {
+  const birth = getProcessBirth(process.pid);
+  const token =
+    birth === null
+      ? `${process.pid}:foreign`
+      : `${process.pid}:foreign:${Buffer.from(birth).toString("hex")}`;
+  const lockPath = targetMutationLockFilePath(muxHome, targetKey);
+  await fsPromises.mkdir(path.dirname(lockPath), { recursive: true });
+  await fsPromises.writeFile(lockPath, token, { encoding: "utf-8", flag: "wx" });
+  return lockPath;
+}
 
 /** All `refinement` rows in the session journal, in seq order. */
 export async function readRefinementEvents(sessionDir: string): Promise<RefinementEvent[]> {
