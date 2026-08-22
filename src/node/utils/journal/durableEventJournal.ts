@@ -259,15 +259,36 @@ export class DurableEventJournal {
     buildDraft: (ref: BlobRef, size: number) => DurableEventDraft
   ): Promise<{ event: DurableEvent; ref: BlobRef; size: number }> {
     return await this.withBlobLock(async () => {
-      const { ref, size } = await this.blobs.put(content);
-      // Ownership re-check between put and append (round 11 defense in
-      // depth): if this holder was wrongfully displaced, a reclaimer may
-      // have deleted the just-put blob — appending would then create a row
-      // permanently referencing a missing payload. Abort instead (an
-      // unreferenced orphan blob is harmless).
-      await this.assertBlobLockOwned();
-      const event = await this.append(buildDraft(ref, size));
-      return { event, ref, size };
+      const { ref, size, created } = await this.blobs.put(content);
+      try {
+        // Ownership re-check between put and append (round 11 defense in
+        // depth): if this holder was wrongfully displaced, a reclaimer may
+        // have deleted the just-put blob — appending would then create a row
+        // permanently referencing a missing payload. Abort instead.
+        await this.assertBlobLockOwned();
+        const event = await this.append(buildDraft(ref, size));
+        return { event, ref, size };
+      } catch (error) {
+        // A blob whose row never landed would leak forever: reclamation
+        // derives its candidates from journal references, so it never even
+        // considers an unreferenced file. Restore the pre-put state — but
+        // ONLY when this put created the file: content-addressed dedup means
+        // a pre-existing blob with the same hash may be referenced by
+        // earlier rows. deleteBlobUnderLock re-verifies ownership, so a
+        // displaced holder skips the delete instead of racing a new owner
+        // who may already reference the hash. That skip — and a crash
+        // anywhere in this window — can still leave an orphan; accepted as
+        // bounded (one blob per failed publish) rather than adding a
+        // startup mark-and-sweep.
+        if (created) {
+          try {
+            await this.deleteBlobUnderLock(ref);
+          } catch {
+            // Best-effort: never mask the original publish failure.
+          }
+        }
+        throw error;
+      }
     });
   }
 

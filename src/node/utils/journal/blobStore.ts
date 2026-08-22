@@ -25,21 +25,31 @@ export class BlobStore {
     assert(dir.length > 0, "BlobStore requires a directory");
   }
 
-  /** Store content once by hash. Returns the BlobRef and size in bytes. */
-  async put(content: string | Uint8Array): Promise<{ ref: BlobRef; size: number }> {
+  /**
+   * Store content once by hash. Returns the BlobRef, size in bytes, and
+   * whether this call created the file. `created` is false whenever a file
+   * already existed at the hash path (matching or corrupt-and-rewritten):
+   * a pre-existing path may be referenced by earlier journal rows, so
+   * failed-publish cleanup must never delete those (see publishWithBlob).
+   */
+  async put(
+    content: string | Uint8Array
+  ): Promise<{ ref: BlobRef; size: number; created: boolean }> {
     const buffer =
       typeof content === "string" ? Buffer.from(content, "utf-8") : Buffer.from(content);
     const hash = crypto.createHash("sha256").update(buffer).digest("hex");
     const ref: BlobRef = `sha256:${hash}`;
     const blobPath = this.pathFor(ref);
 
+    let existed = false;
     try {
       // Store-once, but verify: an existing path whose bytes no longer match
       // the addressed content (torn write, disk corruption) must be replaced,
       // otherwise get() rejects it forever and no future put() could repair it.
       const existing = await fs.readFile(blobPath);
+      existed = true;
       if (existing.equals(buffer)) {
-        return { ref, size: buffer.byteLength };
+        return { ref, size: buffer.byteLength, created: false };
       }
       log.warn(`BlobStore: existing blob ${ref} is corrupted; rewriting`);
     } catch {
@@ -52,7 +62,7 @@ export class BlobStore {
     const tempPath = `${blobPath}.tmp-${process.pid}-${crypto.randomBytes(4).toString("hex")}`;
     await fs.writeFile(tempPath, buffer);
     await fs.rename(tempPath, blobPath);
-    return { ref, size: buffer.byteLength };
+    return { ref, size: buffer.byteLength, created: !existed };
   }
 
   /**

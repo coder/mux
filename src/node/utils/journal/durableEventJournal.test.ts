@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import * as fs from "fs/promises";
 import * as path from "path";
+import type { BlobRef } from "@/common/types/durableEvent";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { DurableEventJournal, sharedDurableEventJournal } from "./durableEventJournal";
 
@@ -111,6 +112,52 @@ describe("DurableEventJournal", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(event.id);
     expect(rows[0].kind === "result-handle" && rows[0].data.blobHash === ref).toBe(true);
+  });
+
+  test("publishWithBlob deletes a newly-created blob when the append fails", async () => {
+    using tmp = new DisposableTempDir("durable-journal-test");
+    const journal = new DurableEventJournal(tmp.path);
+    let ref: BlobRef | null = null;
+    try {
+      await journal.publishWithBlob("doomed-payload", (blobHash) => {
+        ref = blobHash;
+        // hook-context with both text and blobHash violates the schema, so
+        // the append rejects the draft after the blob was already stored.
+        return {
+          workspaceId: "ws-1",
+          kind: "hook-context",
+          data: { hookId: "plugin:demo", placement: "system-prompt", text: "both", blobHash },
+        };
+      });
+      expect.unreachable("append should have rejected the draft");
+    } catch (error) {
+      expect(String(error)).toContain("failed schema validation");
+    }
+    // No row references the blob, so leaving it would leak it forever
+    // (reclamation only considers journal-referenced hashes).
+    expect(ref).not.toBeNull();
+    expect(await journal.blobs.has(ref!)).toBe(false);
+    expect(await journal.read()).toHaveLength(0);
+  });
+
+  test("publishWithBlob preserves a pre-existing blob when the append fails", async () => {
+    using tmp = new DisposableTempDir("durable-journal-test");
+    const journal = new DurableEventJournal(tmp.path);
+    // Same bytes stored earlier (e.g. referenced by an existing row):
+    // content addressing dedups the failed publish onto this file, and the
+    // failure cleanup must not delete it out from under those references.
+    const { ref } = await journal.blobs.put("shared-payload");
+    try {
+      await journal.publishWithBlob("shared-payload", (blobHash) => ({
+        workspaceId: "ws-1",
+        kind: "hook-context",
+        data: { hookId: "plugin:demo", placement: "system-prompt", text: "both", blobHash },
+      }));
+      expect.unreachable("append should have rejected the draft");
+    } catch (error) {
+      expect(String(error)).toContain("failed schema validation");
+    }
+    expect(await journal.blobs.has(ref)).toBe(true);
   });
 
   test("cross-process: reclamation cannot delete a blob a foreign publisher has put but not appended", async () => {
@@ -224,8 +271,10 @@ describe("DurableEventJournal", () => {
     // is held): models a wrongful displacement, after which a reclaimer may
     // already have deleted the just-put payload.
     const originalPut = journal.blobs.put.bind(journal.blobs);
+    let hijackedRef: BlobRef | null = null;
     const putSpy = spyOn(journal.blobs, "put").mockImplementation(async (content) => {
       const result = await originalPut(content);
+      hijackedRef = result.ref;
       await fs.writeFile(blobsLockPath, "424242:hijack", "utf-8");
       return result;
     });
@@ -241,6 +290,11 @@ describe("DurableEventJournal", () => {
     }
     // No row references the (possibly reclaimed) payload.
     expect(await journal.read()).toHaveLength(0);
+    // The displaced holder must not run failed-publish cleanup either: the
+    // new lock owner may already reference the hash. The orphan is the
+    // accepted bounded leftover of this window.
+    expect(hijackedRef).not.toBeNull();
+    expect(await journal.blobs.has(hijackedRef!)).toBe(true);
     putSpy.mockRestore();
   });
 
