@@ -288,10 +288,10 @@ jobs:
         run: |
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "xum-*-x86_64.AppImage" \
-            --pattern "xum-*-arm64.AppImage" \
-            --pattern "mux-*-x86_64.AppImage" \
-            --pattern "mux-*-arm64.AppImage" \
+            --pattern "xum-*-x86_64-linux.AppImage" \
+            --pattern "xum-*-arm64-linux.AppImage" \
+            --pattern "mux-*-x86_64-linux.AppImage" \
+            --pattern "mux-*-arm64-linux.AppImage" \
             --dir artifacts
 
           cd artifacts

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import { AppInfo as ElectronBuilderAppInfo } from "app-builder-lib/out/appInfo";
+import { expandMacro } from "app-builder-lib/out/util/macroExpander";
 import packageJson from "../../../package.json";
 import legacyPackageJson from "../../../packages/mux-compat/package.json";
 import vscodePackageJson from "../../../vscode/package.json";
@@ -32,11 +33,28 @@ const LEGACY_MUX_BIN_PATH = fileURLToPath(
 // invisible to installers that match assets by OS (mise/ubi, Homebrew, asdf).
 const LOWERCASE_ARTIFACT_TEMPLATE = "xum-${version}-${arch}-${os}.${ext}";
 
+// Expand through electron-builder's own macro expander rather than a local copy
+// of the substitution rules, so this exercises the builder's real behaviour: it
+// throws ERR_ELECTRON_BUILDER_MACRO_NOT_DEFINED on any macro it cannot resolve,
+// which is what makes `${os}` support an assertion instead of a restatement.
 function expandArtifactName(arch: string, ext: string, os: string): string {
-  return LOWERCASE_ARTIFACT_TEMPLATE.replaceAll("${version}", packageJson.version)
-    .replaceAll("${arch}", arch)
-    .replaceAll("${os}", os)
-    .replaceAll("${ext}", ext);
+  const appInfo = new AppInfo(
+    {
+      metadata: {
+        name: packageJson.name,
+        version: packageJson.version,
+        description: packageJson.description,
+      },
+      config: {
+        productName: packageJson.build.productName,
+        executableName: packageJson.build.executableName,
+      },
+    },
+    null
+  );
+  // `os` and `ext` are supplied by the packager as extras; `version` resolves
+  // off AppInfo, mirroring how electron-builder expands artifactName at build time.
+  return expandMacro(LOWERCASE_ARTIFACT_TEMPLATE, arch, appInfo as never, { os, ext });
 }
 
 describe("xum package transition contract", () => {
