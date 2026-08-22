@@ -10017,14 +10017,23 @@ export class WorkspaceService extends EventEmitter {
       try {
         await sandboxHostService.discardScope(workspaceId, this.config.getSessionDir(workspaceId));
       } catch (error) {
-        // The chat reset already applied; only the sandbox invalidation
-        // failed. The scope is reset-pending: it refuses to mount (no
-        // resurrection of cleared vars) until an acquisition-time tombstone
-        // retry lands, so surface loudly instead of failing the reset.
+        // The chat-side reset already applied, but the sandbox invalidation
+        // is NOT durable: the empty-snapshot tombstone failed to publish, and
+        // the only remaining record is the in-memory reset-pending guard,
+        // which blocks mounts and retries for THIS process only. A crash
+        // before a retry lands would let the next process restore — resurrect
+        // — the pre-reset snapshot the user explicitly cleared. Invalidation
+        // must be durable before success is reported, so surface the partial
+        // failure to the caller instead of returning Ok.
         log.error(
           `Failed to durably invalidate sandbox state for ${workspaceId} after context reset; ` +
             `the sandbox kernel stays unavailable until invalidation succeeds`,
           error
+        );
+        return Err(
+          `Context was reset, but the sandbox kernel state could not be durably invalidated ` +
+            `(${getErrorMessage(error)}). The sandbox stays unavailable and cleared variables ` +
+            `may reappear after a restart; retry once the session storage is writable.`
         );
       }
 

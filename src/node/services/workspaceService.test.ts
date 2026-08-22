@@ -74,6 +74,7 @@ import {
 // `./testDispatchHelpers` (Coder-agents-review P3 DEREM-41 + nit DEREM-48 +
 // nit DEREM-50) — import instead of defining local copies.
 import { drainPendingDispatches, waitForCondition } from "./testDispatchHelpers";
+import { sandboxHostService } from "./sandbox/sandboxHostService";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -4407,6 +4408,50 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       );
       expect(iterateResult.success).toBe(true);
       expect(boundaryCount).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("context reset fails when the sandbox invalidation is not durable", async () => {
+    // The reset's kernel-vars invalidation is only durable once the
+    // empty-snapshot tombstone publishes; the in-memory reset-pending guard
+    // dies with the process. Reporting Ok on a failed publish would hide that
+    // a restart can resurrect the cleared (potentially sensitive) vars, so
+    // the failure must reach the caller as a partial-failure error.
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-sandbox-invalidation";
+    try {
+      await config.addWorkspace("/tmp/context-reset-sandbox-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-sandbox-project",
+        projectPath: "/tmp/context-reset-sandbox-project",
+        runtimeConfig: { type: "local" },
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      const discardSpy = spyOn(sandboxHostService, "discardScope").mockImplementationOnce(() =>
+        Promise.reject(new Error("journal write failed"))
+      );
+
+      try {
+        const result = await workspaceService.resetContext(workspaceId);
+        expect(result.success).toBe(false);
+        expect(result.success ? "" : result.error).toContain("durably invalidated");
+        expect(result.success ? "" : result.error).toContain("journal write failed");
+      } finally {
+        discardSpy.mockRestore();
+      }
+
+      // Partial-failure semantics: the chat-side boundary DID apply (only the
+      // sandbox invalidation is outstanding), so a follow-up reset noops.
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "noop",
+      });
     } finally {
       await cleanup();
     }
