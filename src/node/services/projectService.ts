@@ -739,6 +739,15 @@ export class ProjectService {
       // depth and parent-only hierarchy rejections leave the directory ours to remove.
       if (transformFailure === "depth" || transformFailure === "hierarchy-changed") {
         await cleanupCreatedDirectory();
+      } else if (transformFailure === "hierarchy-changed-descendant" && initializedGitDir) {
+        // The winning descendant owns the files, but the .git this losing request
+        // created would wrap the winner's checkout in an unregistered outer repository
+        // (changing its git discovery) and make retries fail the non-empty check.
+        await fsPromises
+          .rm(path.join(normalizedPath, ".git"), { recursive: true, force: true })
+          .catch((cleanupError: unknown) => {
+            log.error(`Failed to roll back git init in ${normalizedPath}:`, cleanupError);
+          });
       }
       if (createResult.success && !this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
         // Config persistence (editConfig → private saveConfig) logs-and-continues on

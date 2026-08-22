@@ -330,6 +330,29 @@ exit 1
       expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
     });
 
+    it("removes only .git when a descendant wins registration during an initGit create", async () => {
+      const parentPath = path.join(tempDir, "late-descendant-parent");
+      const descendantPath = path.join(parentPath, "child-project");
+
+      // Deterministic interleaving: queue the descendant registration so create()'s
+      // snapshot misses it (git init runs) while its transform sees it and records
+      // hierarchy-changed-descendant, which must strip our .git but keep the tree.
+      const registerDescendant = config.editConfig((cfg) => {
+        cfg.projects.set(descendantPath, { workspaces: [] });
+        return cfg;
+      });
+      const result = await service.create(parentPath, { initGit: true });
+      await registerDescendant;
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain("changed concurrently");
+      // The winner's tree survives, but our unregistered outer repository must not.
+      expect((await fs.stat(parentPath)).isDirectory()).toBe(true);
+      expect(fs.stat(path.join(parentPath, ".git"))).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(parentPath)).toBe(false);
+      expect(config.loadConfigOrDefault().projects.has(descendantPath)).toBe(true);
+    });
+
     it("serializes concurrent initGit creates of the same pre-existing empty directory", async () => {
       const projectPath = path.join(tempDir, "shared-empty-project");
       await fs.mkdir(projectPath);
