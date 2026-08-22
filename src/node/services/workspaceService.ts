@@ -650,6 +650,25 @@ interface QueuedBashMonitorWakeCancellation {
   matchedOutputByProcess: Map<string, { matchedThroughOffset: number; originNotAfterMs: number }>;
 }
 
+function combineSendCallbacks<T>(
+  correlationCallback: ((value: T) => Promise<void> | void) | undefined,
+  deliveryCallback: ((value: T) => Promise<void> | void) | undefined
+): ((value: T) => Promise<void> | void) | undefined {
+  if (correlationCallback == null) {
+    return deliveryCallback;
+  }
+  if (deliveryCallback == null) {
+    return correlationCallback;
+  }
+  return async (value: T) => {
+    try {
+      await correlationCallback?.(value);
+    } finally {
+      await deliveryCallback?.(value);
+    }
+  };
+}
+
 async function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
   assert(session instanceof AgentSession, "waitForAgentSessionIdle requires an AgentSession");
   try {
@@ -8564,8 +8583,14 @@ export class WorkspaceService extends EventEmitter {
       /** Force Copilot billing classification to "agent" for internal sends. */
       agentInitiated?: boolean;
       onAccepted?: () => Promise<void> | void;
+      /** Workspace-turn correlation callback. It is removed when an earlier turn supersedes it. */
       onCanceled?: (reason: string) => Promise<void> | void;
+      /** Workspace-turn correlation callback. It is removed when an earlier turn supersedes it. */
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      /** Delivery callback. It runs even when workspace-turn correlation is removed. */
+      onDeliveryCanceled?: (reason: string) => Promise<void> | void;
+      /** Delivery callback. It runs even when workspace-turn correlation is removed. */
+      onDeliveryAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
       /** Cancels a synthetic send even after it has left MessageQueue for PREPARING. */
       cancelSignal?: AbortSignal;
@@ -8701,6 +8726,8 @@ export class WorkspaceService extends EventEmitter {
           onAcceptedPreStreamFailure: preserveCorrelation
             ? internal?.onAcceptedPreStreamFailure
             : undefined,
+          onDeliveryCanceled: internal?.onDeliveryCanceled,
+          onDeliveryAcceptedPreStreamFailure: internal?.onDeliveryAcceptedPreStreamFailure,
         };
       };
 
@@ -8715,15 +8742,22 @@ export class WorkspaceService extends EventEmitter {
       );
       if (!pricingGate.success) {
         if (internal?.synthetic !== true) {
-          return session.sendMessage(message, normalizedOptions, {
+          const continuationSendState = getContinuationSendState();
+          return session.sendMessage(message, continuationSendState.options, {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
             goalKind: internal?.goalKind,
             cancelState: internal?.cancelState,
             cancelSignal: internal?.cancelSignal,
-            onCanceled: internal?.onCanceled,
+            onCanceled: combineSendCallbacks(
+              continuationSendState.onCanceled,
+              continuationSendState.onDeliveryCanceled
+            ),
             onAccepted: internal?.onAccepted,
-            onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
+            onAcceptedPreStreamFailure: combineSendCallbacks(
+              continuationSendState.onAcceptedPreStreamFailure,
+              continuationSendState.onDeliveryAcceptedPreStreamFailure
+            ),
             startStreamInBackground: internal?.startStreamInBackground,
             goalContinuation: internal?.goalContinuation,
           });
@@ -8818,6 +8852,9 @@ export class WorkspaceService extends EventEmitter {
             cancelState: internal?.cancelState,
             cancelSignal: internal?.cancelSignal,
             onCanceled: continuationSendState.onCanceled,
+            onDeliveryCanceled: continuationSendState.onDeliveryCanceled,
+            onDeliveryAcceptedPreStreamFailure:
+              continuationSendState.onDeliveryAcceptedPreStreamFailure,
             onAccepted: internal?.onAccepted,
             onAcceptedPreStreamFailure: continuationSendState.onAcceptedPreStreamFailure,
           }
@@ -8861,6 +8898,10 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const continuationSendState = getContinuationSendState();
+      const continuationAcceptedPreStreamFailure = combineSendCallbacks(
+        continuationSendState.onAcceptedPreStreamFailure,
+        continuationSendState.onDeliveryAcceptedPreStreamFailure
+      );
       const onAcceptedPreStreamFailure = async (error: SendMessageError) => {
         if (resumedInterruptedTask && normalizedOptions?.editMessageId) {
           try {
@@ -8876,7 +8917,7 @@ export class WorkspaceService extends EventEmitter {
             );
           }
         }
-        await continuationSendState.onAcceptedPreStreamFailure?.(error);
+        await continuationAcceptedPreStreamFailure?.(error);
       };
 
       const shouldRunPendingAutoTitle =
@@ -8897,7 +8938,10 @@ export class WorkspaceService extends EventEmitter {
         startStreamInBackground: internal?.startStreamInBackground,
         cancelState: internal?.cancelState,
         cancelSignal: internal?.cancelSignal,
-        onCanceled: continuationSendState.onCanceled,
+        onCanceled: combineSendCallbacks(
+          continuationSendState.onCanceled,
+          continuationSendState.onDeliveryCanceled
+        ),
         onAccepted: internal?.onAccepted,
         onAcceptedPreStreamFailure,
       });
@@ -9486,7 +9530,7 @@ export class WorkspaceService extends EventEmitter {
   removeQueuedMessagesByDedupeKeyPrefix(
     workspaceId: string,
     prefix: string,
-    options?: { cancelReason?: string }
+    options?: { cancelReason?: string; notifyCancellation?: boolean }
   ): Result<number> {
     try {
       const session = this.sessions.get(workspaceId.trim());
@@ -9496,7 +9540,8 @@ export class WorkspaceService extends EventEmitter {
       return Ok(
         session.removeQueuedMessagesByDedupeKeyPrefix(
           prefix,
-          options?.cancelReason ?? "Queued message superseded before dispatch."
+          options?.cancelReason ?? "Queued message superseded before dispatch.",
+          { notifyCancellation: options?.notifyCancellation }
         )
       );
     } catch (error) {

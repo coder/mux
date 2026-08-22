@@ -5688,6 +5688,8 @@ describe("WorkspaceService sendMessage status clearing", () => {
     fakeSession.hasQueuedOrDispatchingEntry.mockReturnValue(true);
     const onCanceled = mock(() => undefined);
     const onAcceptedPreStreamFailure = mock(() => undefined);
+    const onDeliveryCanceled = mock(() => undefined);
+    const onDeliveryAcceptedPreStreamFailure = mock(() => undefined);
     const muxMetadata = {
       type: "workspace-turn-task" as const,
       taskHandleId: "wst_stale_progress",
@@ -5705,6 +5707,8 @@ describe("WorkspaceService sendMessage status clearing", () => {
         workspaceTurnContinuation: true,
         onCanceled,
         onAcceptedPreStreamFailure,
+        onDeliveryCanceled,
+        onDeliveryAcceptedPreStreamFailure,
       }
     );
 
@@ -5715,6 +5719,8 @@ describe("WorkspaceService sendMessage status clearing", () => {
       expect.objectContaining({
         onCanceled: undefined,
         onAcceptedPreStreamFailure: undefined,
+        onDeliveryCanceled,
+        onDeliveryAcceptedPreStreamFailure,
       })
     );
   });

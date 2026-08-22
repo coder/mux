@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { MessageQueue } from "./messageQueue";
 import type { MuxMessageMetadata } from "@/common/types/message";
+import type { SendMessageError } from "@/common/types/errors";
 import type { SendMessageOptions } from "@/common/orpc/types";
 
 describe("MessageQueue", () => {
@@ -504,6 +505,40 @@ describe("MessageQueue", () => {
       expect(second.internal?.onAcceptedPreStreamFailure).toBeUndefined();
     });
 
+    it("should preserve delivery callbacks when reordering strips correlation", async () => {
+      const onCanceled = mock(() => undefined);
+      const onAcceptedPreStreamFailure = mock(() => undefined);
+      const onDeliveryCanceled = mock(() => undefined);
+      const onDeliveryAcceptedPreStreamFailure = mock(() => undefined);
+      queue.add(
+        "Background report",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          workspaceTurnContinuation: true,
+          onCanceled,
+          onAcceptedPreStreamFailure,
+          onDeliveryCanceled,
+          onDeliveryAcceptedPreStreamFailure,
+        }
+      );
+      queue.add("User send now", { model: "gpt-4", agentId: "exec" });
+
+      expect(queue.setVisibleQueueDispatchMode("tool-end")).toBe(true);
+      queue.dequeueNext();
+      const reordered = queue.dequeueNext();
+      const error: SendMessageError = { type: "unknown", raw: "startup failed" };
+      await reordered.internal?.onCanceled?.("cleared");
+      await reordered.internal?.onAcceptedPreStreamFailure?.(error);
+
+      expect(reordered.options?.muxMetadata).toBeUndefined();
+      expect(onCanceled).not.toHaveBeenCalled();
+      expect(onAcceptedPreStreamFailure).not.toHaveBeenCalled();
+      expect(onDeliveryCanceled).toHaveBeenCalledWith("cleared");
+      expect(onDeliveryAcceptedPreStreamFailure).toHaveBeenCalledWith(error);
+    });
+
     it("should preserve an original queued workspace-turn prompt during reordering", () => {
       const onAccepted = () => undefined;
       const onCanceled = () => undefined;
@@ -565,6 +600,17 @@ describe("MessageQueue", () => {
       expect(queue.hasWorkspaceTurn("wst_followup")).toBe(false);
       // Unrelated queued input survives the targeted cancel.
       expect(queue.getMessages()).toEqual(["User message before", "User message after"]);
+    });
+
+    it("removeWorkspaceTurn reports removal when the entry has no callbacks", () => {
+      queue.add(
+        "Follow up without callbacks",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        { agentInitiated: true, workspaceTurnContinuation: true }
+      );
+
+      expect(queue.removeWorkspaceTurn("wst_followup")).toEqual({});
+      expect(queue.hasWorkspaceTurn("wst_followup")).toBe(false);
     });
 
     it("should report clear callbacks for every pending entry", () => {
