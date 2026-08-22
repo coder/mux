@@ -4150,7 +4150,7 @@ export const router = (authToken?: string) => {
         .input(schemas.refinements.run.input)
         .output(schemas.refinements.run.output)
         .handler(async ({ context, input }) => {
-          const result = await context.refineService.run(input.workspaceId);
+          const result = await context.refineService.run(input.workspaceId, input.experiments);
           return result.success
             ? { success: true as const, data: result.data }
             : { success: false as const, error: result.error };
@@ -4161,7 +4161,7 @@ export const router = (authToken?: string) => {
         .input(schemas.refinements.apply.input)
         .output(schemas.refinements.apply.output)
         .handler(async ({ context, input }) => {
-          const result = await context.refineService.apply(input.workspaceId);
+          const result = await context.refineService.apply(input.workspaceId, input.experiments);
           return result.success
             ? { success: true as const, data: result.data }
             : { success: false as const, error: result.error };

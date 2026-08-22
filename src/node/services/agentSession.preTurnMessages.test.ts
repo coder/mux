@@ -63,6 +63,8 @@ describe("AgentSession.sendMessage (preTurnMessages)", () => {
       timestamp: 1,
       synthetic: true,
     });
+    const appendMany = spyOn(historyService, "appendManyToHistory");
+    const appendOne = spyOn(historyService, "appendToHistory");
 
     const result = await session.sendMessage(
       "family trigger",
@@ -70,6 +72,12 @@ describe("AgentSession.sendMessage (preTurnMessages)", () => {
       { synthetic: true, agentInitiated: true, preTurnMessages: [payload] }
     );
     expect(result.success).toBe(true);
+
+    // r32: payload + user row land in ONE durable write — separate appends
+    // left a crash window that stranded the payload without its turn.
+    expect(appendMany).toHaveBeenCalledTimes(1);
+    expect(appendMany.mock.calls[0]?.[1]).toHaveLength(2);
+    expect(appendOne.mock.calls.filter(([, message]) => message.role === "user")).toHaveLength(0);
 
     const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
     expect(history.success).toBe(true);
@@ -84,7 +92,7 @@ describe("AgentSession.sendMessage (preTurnMessages)", () => {
     expect(userText?.type === "text" && userText.text).toContain("family trigger");
   });
 
-  it("rolls pre-turn rows back when the user row fails to persist", async () => {
+  it("persists nothing when the atomic batch write fails", async () => {
     const workspaceId = "ws-preturn-rollback";
     const { session, historyService } = await createSessionHarness(workspaceId);
     const payload = createMuxMessage("family-payload-2", "assistant", "untrusted payload", {
@@ -92,13 +100,9 @@ describe("AgentSession.sendMessage (preTurnMessages)", () => {
       synthetic: true,
     });
 
-    const realAppend = historyService.appendToHistory.bind(historyService);
-    spyOn(historyService, "appendToHistory").mockImplementation((wsId, message) => {
-      if (message.role === "user") {
-        return Promise.resolve(Err("simulated user-row append failure"));
-      }
-      return realAppend(wsId, message);
-    });
+    spyOn(historyService, "appendManyToHistory").mockImplementation(() =>
+      Promise.resolve(Err("simulated batch append failure"))
+    );
 
     const result = await session.sendMessage(
       "family trigger",
@@ -107,12 +111,12 @@ describe("AgentSession.sendMessage (preTurnMessages)", () => {
     );
     expect(result.success).toBe(false);
 
-    // The orphaned payload (whose trigger never persisted) must not survive
-    // into later provider requests.
+    // Atomic contract: a failed delivery leaves neither the payload nor the
+    // trigger in history, so no orphan can enter later provider requests.
     const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
     expect(history.success).toBe(true);
     if (!history.success) return;
-    expect(history.data.some((m) => m.id === "family-payload-2")).toBe(false);
+    expect(history.data).toHaveLength(0);
   });
 
   it("rejects non-assistant or non-synthetic pre-turn rows", async () => {

@@ -1320,4 +1320,56 @@ describe("SandboxHostService", () => {
     expect(afterSecond.result).toEqual(["undefined", {}]);
     await host.disposeScope("ws-load-evict");
   });
+
+  test("enforceVarsRetention rebuilds a clobbered __loadMeta registry (r32)", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-load-clobber",
+      sessionDir: tmp.path,
+    });
+
+    // Guest clobbers the registry with a frozen object: registration writes
+    // would silently no-op in non-strict eval, exempting every later load
+    // from the retention cap until the snapshot ceiling reset the kernel.
+    const freeze = await mount.runtime.eval(
+      'vars.__loadMeta = Object.freeze({}); vars.big = "x".repeat(400); return true;'
+    );
+    expect(freeze.success).toBe(true);
+    await mount.enforceVarsRetention({
+      newLoadKeys: ["big"],
+      protectedKeys: ["big"],
+      capBytes: 10_000,
+    });
+    const registered = await mount.runtime.eval(
+      "return [typeof vars.__loadMeta.big, Object.isFrozen(vars.__loadMeta)];"
+    );
+    expect(registered.result).toEqual(["number", false]);
+
+    // The registered load now counts toward the cap: a tighter cap evicts it.
+    await mount.enforceVarsRetention({ newLoadKeys: [], protectedKeys: [], capBytes: 100 });
+    const evicted = await mount.runtime.eval("return [typeof vars.big, vars.__loadMeta];");
+    expect(evicted.result).toEqual(["undefined", {}]);
+
+    // A write-swallowing Proxy registry is rebuilt the same way; surviving
+    // numeric entries are copied over.
+    const proxy = await mount.runtime.eval(
+      'vars.keep = "y".repeat(50); vars.__loadMeta = new Proxy({ keep: 7 }, { set: () => true }); return true;'
+    );
+    expect(proxy.success).toBe(true);
+    const seed = await mount.runtime.eval('vars.fresh = "z".repeat(50); return true;');
+    expect(seed.success).toBe(true);
+    await mount.enforceVarsRetention({
+      newLoadKeys: ["fresh"],
+      protectedKeys: ["fresh"],
+      capBytes: 10_000,
+    });
+    const rebuilt = await mount.runtime.eval(
+      "return [vars.__loadMeta.keep, typeof vars.__loadMeta.fresh];"
+    );
+    expect(rebuilt.result).toEqual([7, "number"]);
+    await host.disposeScope("ws-load-clobber");
+  });
 });

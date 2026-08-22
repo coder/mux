@@ -604,9 +604,25 @@ export class SandboxMount {
       // registry writes below would silently no-op on a primitive vars.
       if (typeof vars !== "object" || vars === null) vars = {};
       const metaRaw = vars.__loadMeta;
-      // Tolerate a guest-clobbered registry (vars is guest-writable).
-      const meta = typeof metaRaw === "object" && metaRaw !== null ? metaRaw : {};
+      // Rebuild the registry as a FRESH plain object every pass (r32): the
+      // guest can clobber vars.__loadMeta with a frozen object or a
+      // write-swallowing Proxy, and the registration writes below would then
+      // silently no-op in non-strict eval — new loads would never count
+      // toward the retention cap until the snapshot ceiling reset the
+      // kernel. Copy over only sane surviving entries; a hostile registry
+      // that throws on enumeration fails this eval (the host asserts
+      // success), an honest failure instead of a cap bypass.
+      const meta = {};
+      if (typeof metaRaw === "object" && metaRaw !== null) {
+        for (const k of Object.keys(metaRaw)) {
+          const v = metaRaw[k];
+          if (typeof v === "number" && isFinite(v)) meta[k] = v;
+        }
+      }
       vars.__loadMeta = meta;
+      if (vars.__loadMeta !== meta) {
+        throw new Error("vars.__loadMeta write rejected by guest vars object");
+      }
       for (const key of newLoads) {
         const seq = nextHandleSeq();
         vars.__handleSeq = seq;

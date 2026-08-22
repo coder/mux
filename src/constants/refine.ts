@@ -24,3 +24,10 @@ export const REFINE_TIMELINE_EVENT_LIMIT = 50;
 
 /** Human-readable marker prefixed to the durable refine summary chat row. */
 export const REFINE_SUMMARY_LABEL = "Refine pass applied durable lessons:";
+
+/**
+ * Acquisition timeout for the cross-process /refine apply lock. A held lock
+ * means another process is mid-apply; callers reject quickly (mirroring the
+ * in-process "already running" rejection) instead of queueing user commands.
+ */
+export const REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS = 10_000;

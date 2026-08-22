@@ -551,6 +551,8 @@ export class AgentSession {
     [];
   private disposed = false;
   private turnPhase: TurnPhase = TurnPhase.IDLE;
+  /** Edit-flow admission reservations currently holding busy-ness (see isBusy, r32). */
+  private editAdmissionDepth = 0;
   private activePreparedTurnAbortController: AbortController | null = null;
   /**
    * Per-turn holder for mid-turn thinking-level overrides. Created when a turn
@@ -2942,6 +2944,33 @@ export class AgentSession {
       this.emitChatEvent({ ...pendingBranchSummary, type: "message" });
     }
 
+    // r32: reserve turn admission for the whole edit flow. Armed AFTER the
+    // preempt/wait section below (arming earlier would make the edit's own
+    // busy-preemption logic see the reservation as an active turn) and
+    // released automatically on every sendMessage exit: on success the turn
+    // phase has taken over busy-ness by then; on a pre-PREPARING failure the
+    // session returns to idle, so drain anything queued behind the
+    // reservation (mirrors the queued-dispatch failure contract).
+    const editAdmission = {
+      armed: false,
+      arm: () => {
+        if (!editAdmission.armed) {
+          editAdmission.armed = true;
+          this.editAdmissionDepth += 1;
+        }
+      },
+      [Symbol.dispose]: () => {
+        if (!editAdmission.armed) return;
+        editAdmission.armed = false;
+        this.editAdmissionDepth -= 1;
+        assert(this.editAdmissionDepth >= 0, "editAdmissionDepth must not go negative");
+        if (this.editAdmissionDepth === 0 && this.turnPhase === TurnPhase.IDLE) {
+          this.sendQueuedMessages();
+        }
+      },
+    };
+    using _editAdmission = editAdmission;
+
     if (editMessageId) {
       // Ensure no in-flight completion code can append after we truncate.
       if (this.isBusy()) {
@@ -2993,6 +3022,11 @@ export class AgentSession {
           this.deferQueuedFlushUntilAfterEdit = false;
         }
       }
+
+      // Idle (or preempted to idle) now: hold busy-ness from here until the
+      // turn phase takes over, so concurrent sends queue instead of racing the
+      // truncate + summary + append sequence below.
+      editAdmission.arm();
 
       // The edit is about to truncate and rewrite history. Any queued content from
       // the previous turn was written in the old context — return it to the input
@@ -3368,10 +3402,12 @@ export class AgentSession {
 
     // Pre-turn rows persist immediately before the user row so the payload and
     // its trigger land as one uninterrupted transcript unit (see the internal
-    // option's doc comment). They join the rollback set: a failed or canceled
-    // turn must not leave an orphaned payload whose trigger never dispatched.
+    // option's doc comment). ONE durable write for payload(s) + user row (r32):
+    // separate appends left a crash window where the payload persisted without
+    // the turn that delivers it — in-process rollback cannot repair a process
+    // exit. They still join the rollback set for in-process failures.
     // hasPreTurnMessages implies autoCompactionMessage === null (exempted above).
-    if (internal?.preTurnMessages != null) {
+    if (internal?.preTurnMessages != null && internal.preTurnMessages.length > 0) {
       for (const preTurnMessage of internal.preTurnMessages) {
         // Family payloads are the only producer today: synthetic assistant rows
         // only, so a future caller cannot smuggle user-role content past the
@@ -3380,24 +3416,26 @@ export class AgentSession {
           preTurnMessage.role === "assistant" && preTurnMessage.metadata?.synthetic === true,
           "sendMessage: preTurnMessages must be synthetic assistant rows"
         );
-        const preTurnAppendResult = await this.historyService.appendToHistory(
-          this.workspaceId,
-          preTurnMessage
-        );
-        if (!preTurnAppendResult.success) {
-          await rollbackPersistedTurnRows();
-          return Err(createUnknownSendMessageError(preTurnAppendResult.error));
-        }
-        persistedCancelableMessageIds.push(preTurnMessage.id);
-        if (await cancelBeforeAcceptance()) {
-          return Ok(undefined);
-        }
       }
-    }
-
-    // When on-send compaction triggers, the user message is NOT persisted to history
-    // (it's sent as follow-up after compaction). Otherwise, persist normally.
-    if (!autoCompactionMessage) {
+      const batchAppendResult = await this.historyService.appendManyToHistory(this.workspaceId, [
+        ...internal.preTurnMessages,
+        userMessage,
+      ]);
+      if (!batchAppendResult.success) {
+        await rollbackPersistedTurnRows();
+        return Err(createUnknownSendMessageError(batchAppendResult.error));
+      }
+      persistedCancelableMessageIds.push(
+        ...internal.preTurnMessages.map((message) => message.id),
+        userMessage.id
+      );
+      if (await cancelBeforeAcceptance()) {
+        return Ok(undefined);
+      }
+    } else if (!autoCompactionMessage) {
+      // When on-send compaction triggers, the user message is NOT persisted to
+      // history (it's sent as follow-up after compaction). Otherwise, persist
+      // normally.
       const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
       if (!appendResult.success) {
         await rollbackPersistedTurnRows();
@@ -5622,7 +5660,12 @@ export class AgentSession {
   }
 
   isBusy(): boolean {
-    return this.turnPhase !== TurnPhase.IDLE;
+    // editAdmissionDepth covers the edit flow's pre-PREPARING window (r32):
+    // truncation + abandoned-branch summary can take seconds before the edit
+    // turn reaches PREPARING, and a concurrent ordinary send observing an
+    // idle session would interleave its rows with the edit's against moved
+    // history.
+    return this.turnPhase !== TurnPhase.IDLE || this.editAdmissionDepth > 0;
   }
 
   /**

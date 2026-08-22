@@ -1875,6 +1875,47 @@ export class HistoryService {
   }
 
   /**
+   * Append several messages as ONE durable write (a single JSONL append).
+   * Family-message delivery persists its payload row(s) and the trigger's
+   * user row atomically so a crash between separate appends cannot strand a
+   * payload without the turn that delivers it (r32) — in-process rollback
+   * cannot repair that window. Sequences are assigned in array order under
+   * the same per-workspace lock every other history mutation takes. Messages
+   * must not carry pre-assigned historySequence values.
+   */
+  async appendManyToHistory(workspaceId: string, messages: MuxMessage[]): Promise<Result<void>> {
+    assert(messages.length > 0, "appendManyToHistory requires at least one message");
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to append history",
+      async () => {
+        try {
+          const workspaceDir = this.config.getSessionDir(workspaceId);
+          await ensurePrivateDir(workspaceDir);
+          const historyPath = this.getChatHistoryPath(workspaceId);
+          for (const message of messages) {
+            assert(
+              message.metadata?.historySequence === undefined,
+              "appendManyToHistory messages must not carry pre-assigned historySequence values"
+            );
+            const nextSeqNum = await this.getNextHistorySequence(workspaceId);
+            assert(
+              isNonNegativeInteger(nextSeqNum),
+              "getNextHistorySequence must return a non-negative integer"
+            );
+            message.metadata = { ...message.metadata, historySequence: nextSeqNum };
+            this.sequenceCounters.set(workspaceId, nextSeqNum + 1);
+          }
+          await fs.appendFile(historyPath, this.serializeHistoryEntries(messages, workspaceId));
+          return Ok(undefined);
+        } catch (error) {
+          return Err(`Failed to append to history: ${getErrorMessage(error)}`);
+        }
+      }
+    );
+  }
+
+  /**
    * Compare-and-append: append `message` only if the workspace's current tail
    * message id still equals `expectedTailMessageId`, checked atomically under
    * the same per-workspace lock every other history mutation takes. Used by

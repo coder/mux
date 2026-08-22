@@ -36,16 +36,23 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import {
+  REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS,
   REFINE_MAX_MESSAGES,
   REFINE_OP_BUDGET,
   REFINE_SUMMARY_LABEL,
   REFINE_TIMELINE_EVENT_LIMIT,
   REFINE_TIMEOUT_MS,
 } from "@/constants/refine";
+import * as path from "node:path";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { buildAbandonedBranchTranscript, isRlmModeEnabled } from "@/node/services/branchSummary";
+import {
+  buildAbandonedBranchTranscript,
+  isRlmModeEnabled,
+  type RlmExperimentFlags,
+} from "@/node/services/branchSummary";
+import { acquireProcessFileLock } from "@/node/utils/concurrency/fileLock";
 import type { HistoryService } from "@/node/services/historyService";
 import { runLanguageModelCleanup } from "@/node/services/languageModelCleanup";
 import { log } from "@/node/services/log";
@@ -107,6 +114,8 @@ interface RefineServiceOptions {
   emitChatMessage?: (workspaceId: string, message: MuxMessage) => void;
   /** Test seam: overrides REFINE_TIMEOUT_MS as the pass deadline. */
   timeoutMs?: number;
+  /** Test seam: overrides the cross-process apply-lock acquisition timeout. */
+  applyLockTimeoutMs?: number;
   /**
    * Test seam: invoked after each staged edit's apply-progress journal write
    * settles. Crash-recovery tests throw from here to simulate process death
@@ -263,15 +272,21 @@ export class RefineService {
     private readonly options: RefineServiceOptions = {}
   ) {}
 
-  private enabled(): boolean {
+  private enabled(experiments?: RlmExperimentFlags): boolean {
     // RLM is a sub-experiment of Programmatic Tool Calling; both machine
-    // overrides must be on (same fallback path as backend-initiated branch
-    // summaries — /refine has no send options to ride on).
-    return isRlmModeEnabled(undefined, (id) => this.experiments.isExperimentEnabled(id));
+    // overrides must be on. Explicit renderer flags ride the request with the
+    // same authority as send options.experiments (r32): persisting overrides
+    // to the backend is asynchronous/best-effort, so a backend-only predicate
+    // could refuse /refine while the same workspace is already running with
+    // the RLM kernel the renderer sees.
+    return isRlmModeEnabled(experiments, (id) => this.experiments.isExperimentEnabled(id));
   }
 
-  async run(workspaceId: string): Promise<Result<RefineRecord, string>> {
-    if (!this.enabled()) {
+  async run(
+    workspaceId: string,
+    experiments?: RlmExperimentFlags
+  ): Promise<Result<RefineRecord, string>> {
+    if (!this.enabled(experiments)) {
       return Err("rlm-mode experiment is disabled (enable Programmatic Tool Calling + RLM Mode)");
     }
     if (this.inFlight.has(workspaceId)) {
@@ -321,8 +336,11 @@ export class RefineService {
    * every applied edit lands as an invertible r2 refinement row and r6
    * rollback keeps working. Shares the per-workspace lock with run().
    */
-  async apply(workspaceId: string): Promise<Result<RefineRecord, string>> {
-    if (!this.enabled()) {
+  async apply(
+    workspaceId: string,
+    experiments?: RlmExperimentFlags
+  ): Promise<Result<RefineRecord, string>> {
+    if (!this.enabled(experiments)) {
       return Err("rlm-mode experiment is disabled (enable Programmatic Tool Calling + RLM Mode)");
     }
     if (this.inFlight.has(workspaceId)) {
@@ -348,6 +366,26 @@ export class RefineService {
     const workspace = this.config.findWorkspace(workspaceId);
     if (!workspace) return Err(`workspace not found: ${workspaceId}`);
     const sessionDir = this.config.getSessionDir(workspaceId);
+    // r32: the in-process inFlight map cannot see a second backend over the
+    // same root (XUM_ALLOW_MULTIPLE_INSTANCES=1). Hold a cross-process lock
+    // across staged-state load, recovery, execution, and progress persistence
+    // — per-target mutation locks only serialize the individual writes, so
+    // two processes could both capture an empty attempted set and double-
+    // apply a non-idempotent edit. Short acquisition timeout: a held lock
+    // means another apply is running, mirror the in-process rejection.
+    let applyLock: Awaited<ReturnType<typeof acquireProcessFileLock>>;
+    try {
+      applyLock = await acquireProcessFileLock({
+        lockPath: path.join(sessionDir, "refine-apply.lock"),
+        timeoutMs: this.options.applyLockTimeoutMs ?? REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS,
+        label: "refine apply lock",
+      });
+    } catch (error) {
+      return Err(
+        `a refine apply appears to be running in another process: ${getErrorMessage(error)}`
+      );
+    }
+    await using _applyLock = applyLock;
     const staged = await loadStagedRefineSet(sessionDir);
     if (staged === null) {
       return Err("no staged refine edits (run /refine first)");

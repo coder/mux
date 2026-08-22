@@ -257,8 +257,16 @@ export async function runRefinePass(args: {
     ...(args.timelineText !== undefined && args.timelineText.length > 0
       ? [`Workspace timeline events (oldest first):\n${args.timelineText}`]
       : []),
-    // Explicit delimiters: arbitrary chat history must not read as instructions.
-    `<workspace_trajectory>\n${args.transcript}\n</workspace_trajectory>`,
+    // Explicit delimiters: arbitrary chat history must not read as
+    // instructions. Neutralize embedded delimiter sequences (same posture as
+    // the branch-summary path): a retained message containing
+    // "</workspace_trajectory>" would otherwise close the data region and
+    // promote attacker-influenced text to instruction level, steering the
+    // pass into staging unrelated memory/skill edits.
+    `<workspace_trajectory>\n${args.transcript.replace(
+      /<(\/?)workspace_trajectory>/gi,
+      "[$1workspace_trajectory]"
+    )}\n</workspace_trajectory>`,
   ];
 
   const stream = streamText({

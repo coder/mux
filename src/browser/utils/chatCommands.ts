@@ -830,10 +830,21 @@ export async function processSlashCommand(
         // /refine apply is the explicit approval step.
         const refineWorkspaceId = context.workspaceId;
         const refineApply = parsed.apply === true;
+        // Ride the renderer's effective experiment flags with the request:
+        // backend override persistence is asynchronous/best-effort, so a
+        // backend-only gate could refuse /refine while this client already
+        // offers the command and runs with the RLM kernel.
+        const refineExperiments = context.sendMessageOptions.experiments;
         void (
           refineApply
-            ? refineClient.refinements.apply({ workspaceId: refineWorkspaceId })
-            : refineClient.refinements.run({ workspaceId: refineWorkspaceId })
+            ? refineClient.refinements.apply({
+                workspaceId: refineWorkspaceId,
+                experiments: refineExperiments,
+              })
+            : refineClient.refinements.run({
+                workspaceId: refineWorkspaceId,
+                experiments: refineExperiments,
+              })
         )
           .then((result) => {
             context.setToast(
