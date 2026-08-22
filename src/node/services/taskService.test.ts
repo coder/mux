@@ -424,6 +424,37 @@ async function createAgentTask(
   });
 }
 
+/**
+ * r30: family payload rows ride workspaceService.sendMessage as pre-turn rows
+ * (internal.preTurnMessages) instead of a direct history append from
+ * TaskService. Simulate the accepting side — persist the rows, then fire
+ * onAccepted — so history-based assertions observe what a real accepted turn
+ * would persist.
+ */
+function simulateAcceptedFamilySends(
+  sendMessage: ReturnType<typeof mock>,
+  historyService: Pick<HistoryService, "appendToHistory">
+): void {
+  sendMessage.mockImplementation(
+    async (
+      workspaceId: string,
+      _message: string,
+      _options: unknown,
+      internal?: {
+        preTurnMessages?: MuxMessage[];
+        onAccepted?: () => Promise<void> | void;
+      }
+    ): Promise<Result<void>> => {
+      for (const row of internal?.preTurnMessages ?? []) {
+        const appended = await historyService.appendToHistory(workspaceId, row);
+        if (!appended.success) throw new Error(appended.error);
+      }
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    }
+  );
+}
+
 function createWorkspaceServiceMocks(
   overrides?: Partial<{
     sendMessage: ReturnType<typeof mock>;
@@ -13264,6 +13295,7 @@ describe("TaskService", () => {
     const { taskService, historyService } = createTaskServiceHarness(config, {
       workspaceService,
     });
+    simulateAcceptedFamilySends(sendMessage, historyService);
 
     // The payload embeds a prompt-injection attempt; it must never reach the
     // parent as user-role input.
@@ -13314,14 +13346,21 @@ describe("TaskService", () => {
         skipAutoResumeReset: true,
       })
     );
+    // r30: the payload rides the SAME send as its trigger (pre-turn row), so
+    // it can never land inside another turn's PREPARING window via a direct
+    // history append.
+    const internalArg = sendMessage.mock.calls[0]?.[3] as {
+      preTurnMessages?: MuxMessage[];
+    };
+    expect(internalArg.preTurnMessages).toHaveLength(1);
+    expect(internalArg.preTurnMessages?.[0]?.id).toBe(payloadRow!.id);
   });
 
   test("concurrent family messages to the same target serialize payload+trigger delivery", async () => {
-    // Each delivery appends the sender's payload row and then a fixed trigger
-    // that points at the "preceding assistant message". Two concurrent senders
-    // to the same target could interleave (payload1, payload2, trigger1,
-    // trigger2), making a trigger reference the wrong sender's payload — so
-    // payload+trigger must land as one atomic delivery per target.
+    // r30: payload + trigger ride ONE sendMessage call (pre-turn rows), so
+    // each pair is atomic by construction. The delivery lock must still
+    // serialize concurrent senders so a second delivery cannot begin while
+    // the first is mid-admission (its busy phase not yet set).
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
     const parentWorkspaceId = "parent-family-race";
@@ -13349,59 +13388,58 @@ describe("TaskService", () => {
       testTaskSettings()
     );
 
-    // Ordered log of delivery halves; every payload/trigger names its sender.
+    // Ordered log of deliveries; every send names its sender.
     const events: string[] = [];
     const senderOf = (text: string) => (text.includes(childA) ? childA : childB);
-    // The FIRST trigger send stalls until released, holding delivery A open
-    // between its payload append and its trigger — the exact window a
-    // concurrent delivery could interleave into.
-    let releaseFirstTrigger!: () => void;
-    const firstTriggerGate = new Promise<void>((resolve) => {
-      releaseFirstTrigger = resolve;
+    // The FIRST send stalls until released, holding delivery A open
+    // mid-admission — the exact window a concurrent delivery could race into.
+    let releaseFirstSend!: () => void;
+    const firstSendGate = new Promise<void>((resolve) => {
+      releaseFirstSend = resolve;
     });
     const sendMessage = mock(
-      async (_workspaceId: string, content: string): Promise<Result<void>> => {
-        events.push(`trigger:${senderOf(content)}`);
-        if (events.filter((event) => event.startsWith("trigger:")).length === 1) {
-          await firstTriggerGate;
+      async (
+        _workspaceId: string,
+        content: string,
+        _options: unknown,
+        internal?: { preTurnMessages?: MuxMessage[] }
+      ): Promise<Result<void>> => {
+        const sender = senderOf(content);
+        // The payload rides the same call as its trigger and names the same
+        // sender — a trigger can never pair with another sender's payload.
+        expect(internal?.preTurnMessages).toHaveLength(1);
+        expect(senderOf(JSON.stringify(internal?.preTurnMessages?.[0]))).toBe(sender);
+        events.push(`send:${sender}`);
+        if (events.length === 1) {
+          await firstSendGate;
         }
         return Ok(undefined);
       }
     );
     const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
-    const { taskService, historyService } = createTaskServiceHarness(config, {
+    const { taskService } = createTaskServiceHarness(config, {
       workspaceService,
-    });
-    const realAppend = historyService.appendToHistory.bind(historyService);
-    spyOn(historyService, "appendToHistory").mockImplementation((workspaceId, message) => {
-      events.push(`payload:${senderOf(JSON.stringify(message))}`);
-      return realAppend(workspaceId, message);
     });
 
     const firstSend = taskService.sendMessageToParentFromAgentTask(childA, "update A", "tool-end");
-    // Let delivery A reach its (stalled) trigger before starting delivery B.
+    // Let delivery A reach its (stalled) send before starting delivery B.
     const start = Date.now();
-    while (!events.includes(`trigger:${childA}`)) {
-      if (Date.now() - start > 5_000) throw new Error("Timed out waiting for the first trigger");
+    while (!events.includes(`send:${childA}`)) {
+      if (Date.now() - start > 5_000) throw new Error("Timed out waiting for the first send");
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
 
     const secondSend = taskService.sendMessageToParentFromAgentTask(childB, "update B", "tool-end");
-    // Give delivery B every chance to (incorrectly) interleave into A's window.
+    // Give delivery B every chance to (incorrectly) start inside A's window.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(events).toEqual([`payload:${childA}`, `trigger:${childA}`]);
+    expect(events).toEqual([`send:${childA}`]);
 
-    releaseFirstTrigger();
+    releaseFirstSend();
     expect(await firstSend).toEqual(Ok({ parentWorkspaceId }));
     expect(await secondSend).toEqual(Ok({ parentWorkspaceId }));
 
-    // Serialized: each payload is immediately followed by its own trigger.
-    expect(events).toEqual([
-      `payload:${childA}`,
-      `trigger:${childA}`,
-      `payload:${childB}`,
-      `trigger:${childB}`,
-    ]);
+    // Serialized: delivery B dispatched only after delivery A completed.
+    expect(events).toEqual([`send:${childA}`, `send:${childB}`]);
   });
 
   test("sendMessageToParentFromAgentTask refuses oversized messages without delivering", async () => {
@@ -13644,6 +13682,7 @@ describe("TaskService", () => {
     const { taskService, historyService } = createTaskServiceHarness(config, {
       workspaceService,
     });
+    simulateAcceptedFamilySends(sendMessage, historyService);
 
     // Probe: measure the per-send framing overhead and trigger length (IDs
     // and names are deliberately equal-length across the two children so the
@@ -13715,12 +13754,12 @@ describe("TaskService", () => {
     );
   });
 
-  test("wake failures retain the budget charge for persisted payload rows", async () => {
+  test("post-acceptance wake failures retain the budget charge for persisted payload rows", async () => {
     // Codex round 18: refunding on wake failure let a child that catches the
     // tool error retry unlimited max-size payload rows while the wake path
     // was down — each retry durably appended another row into parent history
     // (and the next provider request) without ever consuming budget. Once
-    // the payload row is persisted, the charge must stay.
+    // the payload row is persisted (turn accepted), the charge must stay.
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
     const parentWorkspaceId = "parent-wake-fail-budget";
@@ -13742,14 +13781,30 @@ describe("TaskService", () => {
       testTaskSettings()
     );
 
-    // Wake path is down: every trigger send fails after the payload append.
-    const sendMessage = mock(() =>
-      Promise.resolve(Err({ type: "unknown", raw: "wake path down" }))
-    );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    // Stream path is down AFTER acceptance: the turn is accepted (payload +
+    // trigger durably persisted) but the send still reports failure.
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService, historyService } = createTaskServiceHarness(config, {
       workspaceService,
     });
+    sendMessage.mockImplementation(
+      async (
+        workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: {
+          preTurnMessages?: MuxMessage[];
+          onAccepted?: () => Promise<void> | void;
+        }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        for (const row of internal?.preTurnMessages ?? []) {
+          const appended = await historyService.appendToHistory(workspaceId, row);
+          if (!appended.success) throw new Error(appended.error);
+        }
+        await internal?.onAccepted?.();
+        return Err({ type: "unknown", raw: "stream path down after acceptance" });
+      }
+    );
 
     const maxSizeSends = TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS / TASK_FAMILY_MESSAGE_MAX_CHARS;
     for (let i = 0; i < maxSizeSends; i++) {
@@ -13785,6 +13840,64 @@ describe("TaskService", () => {
     expect(payloadRows.length).toBeLessThan(maxSizeSends);
   });
 
+  test("pre-acceptance send failures refund the budget (nothing persisted)", async () => {
+    // r30: the payload rides the trigger send as a pre-turn row, and a
+    // pre-acceptance failure rolls every persisted row back — nothing lands
+    // in the parent transcript, so keeping the charge would burn the sender's
+    // budget on a flaky target that never received any bytes.
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-preaccept-refund";
+    const childTaskId = "child-preaccept-refund";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          taskExperiments: { rlm: true },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    // Every send fails BEFORE acceptance: onAccepted never fires and nothing
+    // is persisted (a real pre-acceptance failure rolls pre-turn rows back).
+    const sendMessage = mock(() =>
+      Promise.resolve(Err({ type: "unknown", raw: "wake path down" }))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService, historyService } = createTaskServiceHarness(config, {
+      workspaceService,
+    });
+
+    // Well past the budget quotient: refunds must keep every retry admissible.
+    const maxSizeSends = TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS / TASK_FAMILY_MESSAGE_MAX_CHARS;
+    for (let i = 0; i < maxSizeSends + 2; i++) {
+      const sent = await taskService.sendMessageToParentFromAgentTask(
+        childTaskId,
+        "x".repeat(TASK_FAMILY_MESSAGE_MAX_CHARS),
+        "tool-end"
+      );
+      expect(sent.success).toBe(false);
+      if (!sent.success) {
+        // The failure is the wake error every time — never budget exhaustion.
+        expect("message" in sent.error && sent.error.message).not.toContain("budget");
+      }
+    }
+    const history = await historyService.getHistoryFromLatestBoundary(parentWorkspaceId);
+    expect(history.success).toBe(true);
+    if (!history.success) return;
+    expect(
+      history.data.filter((m) => m.metadata?.muxMetadata?.type === "family-message")
+    ).toHaveLength(0);
+  });
+
   test("huge sender titles are capped and budgets charge the rendered payload", async () => {
     // Codex round 20: attribution interpolated the FULL title while quotas
     // charged only message.trim().length — spawn/retitle impose no title cap,
@@ -13813,22 +13926,11 @@ describe("TaskService", () => {
       testTaskSettings()
     );
 
-    const { workspaceService } = createWorkspaceServiceMocks({
-      sendMessage: mock(
-        async (
-          _workspaceId: string,
-          _message: string,
-          _options: unknown,
-          internal?: { onAccepted?: () => Promise<void> | void }
-        ): Promise<Result<void>> => {
-          await internal?.onAccepted?.();
-          return Ok(undefined);
-        }
-      ),
-    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService, historyService } = createTaskServiceHarness(config, {
       workspaceService,
     });
+    simulateAcceptedFamilySends(sendMessage, historyService);
 
     const sent = await taskService.sendMessageToParentFromAgentTask(
       childTaskId,
@@ -14049,22 +14151,11 @@ describe("TaskService", () => {
       testTaskSettings()
     );
 
-    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
-      sendMessage: mock(
-        async (
-          _workspaceId: string,
-          _message: string,
-          _options: unknown,
-          internal?: { onAccepted?: () => Promise<void> | void }
-        ): Promise<Result<void>> => {
-          await internal?.onAccepted?.();
-          return Ok(undefined);
-        }
-      ),
-    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService, historyService } = createTaskServiceHarness(config, {
       workspaceService,
     });
+    simulateAcceptedFamilySends(sendMessage, historyService);
 
     // The payload embeds a prompt-injection attempt; it must never reach the
     // target sibling as user-role input.

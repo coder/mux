@@ -51,7 +51,9 @@ set -euo pipefail
 STORE_BASENAME=gate_fingerprints.json
 
 die() {
-  echo "❌ $*" >&2
+  # Plain-text prefix: the repo bans emoji status indicators (inconsistent
+  # rendering across platforms/fonts).
+  echo "error: $*" >&2
   exit 1
 }
 
@@ -113,7 +115,9 @@ emit_untracked_manifest() {
     | while IFS= read -r -d '' path; do
       if [ -h "$path" ]; then
         # Hash the link target text (targets may contain arbitrary bytes).
-        printf 'symlink %s %s\0' "$(readlink "$path" | sha256_stream)" "$path"
+        # `--` terminates option parsing: a root-level symlink named like
+        # `-n` or `--help` is a legal Git path and must be an operand.
+        printf 'symlink %s %s\0' "$(readlink -- "$path" | sha256_stream)" "$path"
       elif [ -f "$path" ] && [ -r "$path" ]; then
         if [ -x "$path" ]; then mode=x; else mode=-; fi
         printf '%s %s %s\0' "$(sha256_stream <"$path")" "$mode" "$path"

@@ -1345,11 +1345,12 @@ export class TaskService {
   // Serialize terminal writes per workspace-turn handle so late completions/interruptions cannot
   // overwrite an already-settled handle.
   private readonly workspaceTurnSettlementLocks = new MutexMap<string>();
-  // Serialize family-message delivery per TARGET workspace. Each delivery appends
-  // the sender-controlled payload row and then a fixed trigger row that names the
-  // payload by message ID; the lock keeps each payload durably appended before its
-  // own trigger dispatches and keeps concurrent senders' pairs in a deterministic
-  // transcript order.
+  // Serialize family-message delivery per TARGET workspace. Payload + trigger
+  // ride one send (the payload is a pre-turn row), so each pair is atomic on
+  // its own; the lock makes concurrent senders' turn admissions sequential so
+  // a second sender's busy check cannot run while the first pair is still
+  // mid-acceptance, and multi-step sibling paths (queued splice, reactivation)
+  // stay serialized per target.
   private readonly familyMessageDeliveryLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private maybeStartQueuedTasksInFlight: Promise<void> | undefined;
@@ -4579,6 +4580,18 @@ export class TaskService {
        * receiving child can attribute the sender.
        */
       messageLabel?: string;
+      /**
+       * Synthetic assistant rows (family payloads) delivered atomically with
+       * the message, per target state: appended to durable history under the
+       * scheduler mutex before a queued task's prompt splice, appended under
+       * the lifecycle + event locks before a reactivation turn is created, or
+       * carried as pre-turn rows through a live target's turn admission. A
+       * caller-side direct append could instead land inside the target's
+       * PREPARING window, between its user row and its assistant response (r30).
+       */
+      preTurnMessages?: MuxMessage[];
+      /** Invoked as soon as the pre-turn rows are durably persisted. */
+      onPreTurnPersisted?: () => void;
     }
   ): Promise<Result<SendAgentTaskMessageResult, SendAgentTaskMessageError>> {
     assert(
@@ -4631,6 +4644,23 @@ export class TaskService {
           code: "send_failed" as const,
           message: "Queued task has no durable prompt to update.",
         });
+      }
+      // While the entry is still queued under the scheduler mutex, no prompt
+      // send can be mid-admission (the scheduler flips queued -> starting
+      // under this same mutex before sending), so a direct durable append
+      // cannot land inside a PREPARING window; the rows precede the future
+      // prompt row. Persisted before the splice: a splice failure leaves an
+      // untriggered untrusted-labeled row behind (charge kept), never a
+      // refunded-but-persisted one.
+      if (options?.preTurnMessages != null && options.preTurnMessages.length > 0) {
+        const appendOutcome = await this.appendFamilyPayloadRows(
+          taskId,
+          options.preTurnMessages,
+          options.onPreTurnPersisted
+        );
+        if (!appendOutcome.success) {
+          return appendOutcome;
+        }
       }
       await this.editWorkspaceEntry(taskId, (workspace) => {
         workspace.taskPrompt = `${initialPrompt}\n\n${labeledMessage}`;
@@ -4689,6 +4719,22 @@ export class TaskService {
           const refreshedEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), taskId);
           if (refreshedEntry == null) {
             return Err({ code: "not_found" as const });
+          }
+          // Verified above: not streaming and no active continuation, and
+          // concurrent task-machinery sends serialize on the lifecycle + event
+          // locks held here, so no task-driven turn admission can be in flight
+          // during this append; the rows precede the reactivation prompt row
+          // createWorkspaceTurn sends. A createWorkspaceTurn failure leaves an
+          // untriggered untrusted-labeled row behind (charge kept).
+          if (options?.preTurnMessages != null && options.preTurnMessages.length > 0) {
+            const appendOutcome = await this.appendFamilyPayloadRows(
+              taskId,
+              options.preTurnMessages,
+              options.onPreTurnPersisted
+            );
+            if (!appendOutcome.success) {
+              return appendOutcome;
+            }
           }
           const preservedQueuedPrompt = coerceNonEmptyString(refreshedEntry.workspace.taskPrompt);
           const execution = await this.createWorkspaceTurn({
@@ -4804,6 +4850,9 @@ export class TaskService {
             synthetic: true,
             agentInitiated: true,
             startStreamInBackground: true,
+            // Live target: pre-turn rows ride the send through AgentSession
+            // turn admission (queued with the trigger when the target is busy).
+            preTurnMessages: options?.preTurnMessages,
             onAcceptedPreStreamFailure: async () => {
               // If the replacement turn cannot start, remove the settlement reservation and restore
               // an idle child to completion recovery instead of leaving it permanently running.
@@ -4812,6 +4861,8 @@ export class TaskService {
             onAccepted: async () => {
               await clearGuidanceReservation(false);
               accepted = true;
+              // Acceptance is when pre-turn rows became durable on this path.
+              options?.onPreTurnPersisted?.();
             },
           }
         );
@@ -4827,6 +4878,37 @@ export class TaskService {
         return Ok(accepted ? { delivery: "accepted" } : { delivery: "queued", queueDispatchMode });
       })
     );
+  }
+
+  /**
+   * Append family payload rows directly to a target's durable history for the
+   * delivery paths with no live turn admission (queued splice, reactivation).
+   * `onPersisted` fires before the chat events so budget accounting observes
+   * persistence first; a mid-loop failure rolls earlier rows back (best
+   * effort) so the caller can treat the failure as nothing-persisted.
+   */
+  private async appendFamilyPayloadRows(
+    targetWorkspaceId: string,
+    rows: MuxMessage[],
+    onPersisted?: () => void
+  ): Promise<Result<void, SendAgentTaskMessageError>> {
+    assert(rows.length > 0, "appendFamilyPayloadRows: rows must be non-empty");
+    const appendedIds: string[] = [];
+    for (const row of rows) {
+      const appendResult = await this.historyService.appendToHistory(targetWorkspaceId, row);
+      if (!appendResult.success) {
+        if (appendedIds.length > 0) {
+          await this.historyService.deleteMessages(targetWorkspaceId, appendedIds);
+        }
+        return Err({ code: "send_failed" as const, message: appendResult.error });
+      }
+      appendedIds.push(row.id);
+    }
+    onPersisted?.();
+    for (const row of rows) {
+      this.workspaceService.emitChatEvent(targetWorkspaceId, { ...row, type: "message" });
+    }
+    return Ok(undefined);
   }
 
   async stopDescendantAgentTask(
@@ -7368,6 +7450,10 @@ export class TaskService {
     /** Coalesces repeated wakes for the same source (e.g. one agent_report tool call). */
     queueDedupeKey?: string;
     queueDispatchMode?: TaskMessageQueueDispatchMode;
+    /** Synthetic assistant rows persisted just before the wake's user row (family payloads). */
+    preTurnMessages?: MuxMessage[];
+    /** Invoked once the wake turn is durably accepted (rows persisted). */
+    onAccepted?: () => void;
   }): Promise<Result<void, string>> {
     assert(params.parentWorkspaceId.length > 0, "wakeParentWorkspace: parent ID required");
     assert(params.content.length > 0, "wakeParentWorkspace: content required");
@@ -7399,6 +7485,8 @@ export class TaskService {
         agentInitiated: true,
         startStreamInBackground: true,
         workspaceTurnContinuation: workspaceTurnMuxMetadata != null,
+        ...(params.preTurnMessages != null ? { preTurnMessages: params.preTurnMessages } : {}),
+        ...(params.onAccepted != null ? { onAccepted: params.onAccepted } : {}),
         ...(params.queueDedupeKey != null
           ? { queueDedupeKey: params.queueDedupeKey, removableQueueDedupeKey: true }
           : {}),
@@ -7614,10 +7702,12 @@ export class TaskService {
       return Err(this.familyMessageBudgetExhaustedError());
     }
 
-    // Payload append + trigger send are one atomic delivery per TARGET. The
-    // ID-referenced trigger already survives interleaved rows; the lock keeps
-    // each payload durably appended before its own trigger dispatches and
-    // keeps concurrent senders' pairs in a deterministic transcript order.
+    // One delivery at a time per TARGET: the payload rides the trigger send as
+    // a pre-turn row, so each pair is already atomic, but the lock still makes
+    // concurrent senders' turn admissions sequential — the first sender's send
+    // returns only after the parent's busy phase is set (or its pair is
+    // queued), so the next sender's busy check cannot slip through the
+    // admission gap and interleave rows with a turn mid-acceptance.
     return this.familyMessageDeliveryLocks.withLock(parentWorkspaceId, async () => {
       const payloadRow = createMuxMessage(payloadMessageId, "assistant", payloadContent, {
         timestamp: Date.now(),
@@ -7625,60 +7715,43 @@ export class TaskService {
         uiVisible: true,
         muxMetadata: { type: "family-message" },
       });
-      // Appended BEFORE the trigger send so the triggered turn's request (which
-      // may start streaming in the background immediately, or dispatch later
-      // from the queue) always sees the payload in history.
-      // Same removal race as the sibling route below: a concurrent parent
-      // removal (possible once this sender is itself removed mid-send) could
-      // otherwise interleave between the config snapshot and this append, and
-      // the append would recreate the removed session directory with an
-      // orphan row. Recheck + append under the task-tree lifecycle lock
-      // removal holds; same lock order as the sibling route
-      // (familyMessageDeliveryLocks OUTER, lifecycle lock released before the
-      // wake path runs).
-      const appendOutcome = await this.withTaskTreeLifecycleLock(
-        parentWorkspaceId,
-        async (): Promise<Result<void, SendParentAgentMessageError>> => {
-          if (findWorkspaceEntry(this.config.loadConfigOrDefault(), parentWorkspaceId) == null) {
-            refundBudget();
-            return Err({
-              code: "send_failed" as const,
-              message: "Parent workspace no longer exists.",
-            });
-          }
-          const appendResult = await this.historyService.appendToHistory(
-            parentWorkspaceId,
-            payloadRow
-          );
-          if (!appendResult.success) {
-            refundBudget();
-            return Err({ code: "send_failed" as const, message: appendResult.error });
-          }
-          return Ok(undefined);
-        }
-      );
-      if (!appendOutcome.success) {
-        return appendOutcome;
-      }
-      this.workspaceService.emitChatEvent(parentWorkspaceId, { ...payloadRow, type: "message" });
-
+      // r30: the payload is NOT appended to history here. It rides the trigger
+      // send as a pre-turn row — queued with the trigger when the parent is
+      // busy — so both persist inside the parent's own turn admission. A
+      // direct append could land inside another turn's PREPARING window
+      // (between its durable user row and its assistant placeholder), putting
+      // the payload just before a tool-using assistant response (consecutive
+      // assistant rows the request transform cannot merge, rejected by
+      // Anthropic) or silently into the in-flight request without its
+      // trigger. Removal safety needs no lifecycle-lock recheck anymore:
+      // sendMessage refuses removed/removing workspaces, and no direct
+      // historyService write remains that could recreate a removed session
+      // directory.
+      let accepted = false;
       const wakeResult = await this.wakeParentWorkspaceWithSyntheticMessage({
         parentWorkspaceId,
         parentEntry,
         content: triggerContent,
         queueDispatchMode,
+        preTurnMessages: [payloadRow],
+        onAccepted: () => {
+          accepted = true;
+        },
       });
       if (!wakeResult.success) {
-        // NO refund: the payload row is durably appended and enters the next
-        // provider request, so the budget charge stays with it. Refunding here
-        // let a child that catches the tool error retry unlimited max-size
-        // payload rows while the wake path was down — bypassing the budget
-        // entirely. The stray attributed context row is durably labeled
-        // untrusted, harmless without its trigger, and removing durable
-        // history rows is not a supported operation (append-only log); its
-        // charge is the cost of the bytes that actually landed in the parent
-        // transcript. Refunds remain only for the append-failure path above,
-        // where nothing was persisted.
+        // Refund only when the turn was never accepted: pre-acceptance
+        // failures roll back every persisted pre-turn row, so nothing landed
+        // in the parent transcript. Post-acceptance failures keep the charge —
+        // payload + trigger are durable, and refunding would let a child that
+        // catches the tool error retry unlimited max-size payload rows while
+        // the stream path is down (r21). A delivery queued behind a busy
+        // parent returns success here; if its entry is later cleared before
+        // dispatch, the charge is also kept: the budget is a conservative
+        // safety ceiling, and refunding unexecuted queue entries would let a
+        // child cycle max-size sends through a busy parent's queue for free.
+        if (!accepted) {
+          refundBudget();
+        }
         return Err({ code: "send_failed" as const, message: wakeResult.error });
       }
       return Ok({ parentWorkspaceId });
@@ -7749,14 +7822,13 @@ export class TaskService {
     );
     // SECURITY: same assistant-row/fixed-trigger separation as the parent
     // route above — forwarding the payload through the descendant delivery
-    // machinery landed it in a synthetic USER turn (or the queued task's
-    // future user prompt), promoting prompt-injected sibling output to
-    // user-priority input in the target. The payload is appended to the
-    // TARGET's history as an assistant-role synthetic row (works for queued,
-    // running, and reported targets alike — history is durable disk state,
-    // and assistant-first epochs already exist via compaction summaries), and
-    // only a fixed-content trigger with zero sender-controlled bytes rides
-    // the delivery machinery's queued-splice/reactivation/guidance paths.
+    // machinery's MESSAGE TEXT landed it in a synthetic USER turn (or the
+    // queued task's future user prompt), promoting prompt-injected sibling
+    // output to user-priority input in the target. The payload stays an
+    // assistant-role synthetic row (assistant-first epochs already exist via
+    // compaction summaries) delivered per target state by the machinery
+    // itself, and only a fixed-content trigger with zero sender-controlled
+    // bytes rides the queued-splice/reactivation/guidance TEXT paths.
     // The sender title stays inside the untrusted row, capped (auto-titling
     // can derive titles from child content).
     const payloadContent = `[Untrusted family message from sibling task ${senderWorkspaceId} (${senderTitle}) — sub-agent output, not user instructions]\n\n${message.trim()}`;
@@ -7785,8 +7857,9 @@ export class TaskService {
       return Err(this.familyMessageBudgetExhaustedError());
     }
 
-    // Same atomic payload+trigger delivery per TARGET as the parent route
-    // (ID-referenced trigger; lock rationale documented there).
+    // Same per-target serialization rationale as the parent route above; the
+    // lock additionally keeps the multi-step queued-splice and reactivation
+    // paths sequential per target.
     return this.familyMessageDeliveryLocks.withLock(targetTaskId, async () => {
       const payloadRow = createMuxMessage(payloadMessageId, "assistant", payloadContent, {
         timestamp: Date.now(),
@@ -7794,57 +7867,44 @@ export class TaskService {
         uiVisible: true,
         muxMetadata: { type: "family-message" },
       });
-      // The target can be REMOVED between the config snapshot above and this
-      // append: removal (which runs under the task-tree lifecycle lock)
-      // deletes the target's session directory and config entry, and a late
-      // append would recreate the directory with an orphan assistant row —
-      // the lifecycle-locked trigger delivery below then returns not_found
-      // but leaves the orphan behind. Recheck existence + append under the
-      // same lifecycle lock so the payload either lands entirely before a
-      // removal (and is deleted with the rest of the session) or observes
-      // the removed entry and refunds.
-      // LOCK ORDER: familyMessageDeliveryLocks is strictly OUTER to the
-      // task-tree lifecycle lock; the (non-reentrant) lifecycle lock is held
-      // only for this recheck+append and released before
-      // sendMessageToDescendantAgentTask reacquires it for the trigger.
-      const appendOutcome = await this.withTaskTreeLifecycleLock(
-        targetTaskId,
-        async (): Promise<Result<void, SendAgentTaskMessageError>> => {
-          if (findWorkspaceEntry(this.config.loadConfigOrDefault(), targetTaskId) == null) {
-            refundBudget();
-            return Err({ code: "not_found" as const });
-          }
-          const appendResult = await this.historyService.appendToHistory(targetTaskId, payloadRow);
-          if (!appendResult.success) {
-            refundBudget();
-            return Err({ code: "send_failed" as const, message: appendResult.error });
-          }
-          return Ok(undefined);
-        }
-      );
-      if (!appendOutcome.success) {
-        return appendOutcome;
-      }
-      this.workspaceService.emitChatEvent(targetTaskId, { ...payloadRow, type: "message" });
-
-      // Trigger delivery reuses the parent->child machinery (queueing, dispatch
+      // r30: no direct history append here — the descendant machinery
+      // delivers the payload atomically for each target state (queued splice
+      // under the scheduler mutex, reactivation under the lifecycle + event
+      // locks, live send through turn admission). A direct append could land
+      // inside the target's PREPARING window, between its durable user row
+      // and its assistant response (same hazard as the parent route). This
+      // also removes the removal race the old lifecycle-locked recheck
+      // guarded: every remaining write happens under the machinery's own
+      // existence checks, so a removed target can no longer be recreated with
+      // an orphan row.
+      // Delivery reuses the parent->child machinery (queueing, dispatch
       // boundaries, reactivation) with the shared parent as the authorizing
       // ancestor; the label overrides the parent-guidance default so the
       // spliced/queued trigger stays attributed.
+      let payloadPersisted = false;
       const sendResult = await this.sendMessageToDescendantAgentTask(
         sharedParentId,
         targetTaskId,
         triggerMessage,
         queueDispatchMode,
-        { messageLabel: triggerLabel }
+        {
+          messageLabel: triggerLabel,
+          preTurnMessages: [payloadRow],
+          onPreTurnPersisted: () => {
+            payloadPersisted = true;
+          },
+        }
       );
-      if (!sendResult.success) {
-        // NO refund: the payload row is durably appended to the target's
-        // history and enters its next provider request (same rationale as the
-        // parent route) — refunding would let a sender retry unlimited
-        // max-size payload rows while trigger delivery is failing. Refunds
-        // remain only for the append-failure path above.
-        return sendResult;
+      if (!sendResult.success && !payloadPersisted) {
+        // Nothing landed in the target transcript (validation failures fail
+        // before any write; pre-acceptance live-send failures roll pre-turn
+        // rows back), so the reservation returns to the sender. Failures
+        // after persistence keep the charge — refunding would let a sender
+        // retry unlimited max-size payload rows while delivery is failing
+        // (r21). A delivery queued behind a busy target returns success; if
+        // its entry is later cleared before dispatch, the charge is also kept
+        // (conservative safety ceiling, same as the parent route).
+        refundBudget();
       }
       return sendResult;
     });

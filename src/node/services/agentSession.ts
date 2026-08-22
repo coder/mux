@@ -2671,6 +2671,16 @@ export class AgentSession {
       onCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
+      /**
+       * Synthetic assistant rows persisted immediately before this turn's user
+       * row (family-message payloads). Persisting them inside turn admission —
+       * instead of a direct history append from the sender — keeps them out of
+       * another turn's PREPARING window, where they could land between that
+       * turn's user row and its assistant response (consecutive assistant
+       * messages a tool-using response makes unmergeable) or silently enter an
+       * in-flight request without their trigger (r30).
+       */
+      preTurnMessages?: MuxMessage[];
     }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
@@ -3146,7 +3156,13 @@ export class AgentSession {
     // turn in model context (the compaction would otherwise summarize a transcript that already
     // contains the new prompt, then replay it again post-compaction).
     let autoCompactionMessage: MuxMessage | null = null;
-    if (!isCompactionRequest && !editMessageId) {
+    // Pre-turn rows cannot ride the on-send compaction follow-up (its durable
+    // metadata carries only text + send options), and compacting a payload row
+    // away would dangle the trigger's message-ID reference. Family sends are
+    // small and bounded, so skip on-send compaction for them; mid-stream
+    // forcing still protects the context limit.
+    const hasPreTurnMessages = (internal?.preTurnMessages?.length ?? 0) > 0;
+    if (!isCompactionRequest && !editMessageId && !hasPreTurnMessages) {
       // Seed usage state from persisted history on the first send after restart
       // so the compaction monitor can detect context limits even before any live
       // stream events have populated lastUsageState.
@@ -3350,6 +3366,35 @@ export class AgentSession {
       }
     }
 
+    // Pre-turn rows persist immediately before the user row so the payload and
+    // its trigger land as one uninterrupted transcript unit (see the internal
+    // option's doc comment). They join the rollback set: a failed or canceled
+    // turn must not leave an orphaned payload whose trigger never dispatched.
+    // hasPreTurnMessages implies autoCompactionMessage === null (exempted above).
+    if (internal?.preTurnMessages != null) {
+      for (const preTurnMessage of internal.preTurnMessages) {
+        // Family payloads are the only producer today: synthetic assistant rows
+        // only, so a future caller cannot smuggle user-role content past the
+        // provenance rules or non-synthetic rows past queue/restore projections.
+        assert(
+          preTurnMessage.role === "assistant" && preTurnMessage.metadata?.synthetic === true,
+          "sendMessage: preTurnMessages must be synthetic assistant rows"
+        );
+        const preTurnAppendResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          preTurnMessage
+        );
+        if (!preTurnAppendResult.success) {
+          await rollbackPersistedTurnRows();
+          return Err(createUnknownSendMessageError(preTurnAppendResult.error));
+        }
+        persistedCancelableMessageIds.push(preTurnMessage.id);
+        if (await cancelBeforeAcceptance()) {
+          return Ok(undefined);
+        }
+      }
+    }
+
     // When on-send compaction triggers, the user message is NOT persisted to history
     // (it's sent as follow-up after compaction). Otherwise, persist normally.
     if (!autoCompactionMessage) {
@@ -3418,6 +3463,13 @@ export class AgentSession {
     if (shouldPersistTurnSnapshots && mcpPromptSnapshotMessages.length > 0) {
       for (const snapshotMessage of mcpPromptSnapshotMessages) {
         this.emitChatEvent({ ...snapshotMessage, type: "message" });
+      }
+    }
+
+    // Pre-turn rows emit ahead of the user row, matching their persisted order.
+    if (internal?.preTurnMessages != null) {
+      for (const preTurnMessage of internal.preTurnMessages) {
+        this.emitChatEvent({ ...preTurnMessage, type: "message" });
       }
     }
 
@@ -5684,6 +5736,8 @@ export class AgentSession {
       onCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
+      /** Synthetic assistant rows persisted just before the dispatched turn's user row. */
+      preTurnMessages?: MuxMessage[];
     }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");

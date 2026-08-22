@@ -8666,6 +8666,13 @@ export class WorkspaceService extends EventEmitter {
       cancelState?: { canceledBeforeAcceptance: boolean };
       /** Cancels a synthetic send even after it has left MessageQueue for PREPARING. */
       cancelSignal?: AbortSignal;
+      /**
+       * Synthetic assistant rows persisted just before the turn's user row
+       * (family-message payloads). Delivered atomically with the message —
+       * queued alongside it when the workspace is busy — so they never land
+       * inside another turn's PREPARING window (see AgentSession.sendMessage).
+       */
+      preTurnMessages?: MuxMessage[];
       /** Return once the user message is accepted; stream startup continues asynchronously. */
       startStreamInBackground?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
@@ -8917,6 +8924,7 @@ export class WorkspaceService extends EventEmitter {
             onCanceled: continuationSendState.onCanceled,
             onAccepted: internal?.onAccepted,
             onAcceptedPreStreamFailure: continuationSendState.onAcceptedPreStreamFailure,
+            preTurnMessages: internal?.preTurnMessages,
           }
         );
 
@@ -8997,6 +9005,7 @@ export class WorkspaceService extends EventEmitter {
         onCanceled: continuationSendState.onCanceled,
         onAccepted: internal?.onAccepted,
         onAcceptedPreStreamFailure,
+        preTurnMessages: internal?.preTurnMessages,
       });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
