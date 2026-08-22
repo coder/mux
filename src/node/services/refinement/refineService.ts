@@ -412,6 +412,23 @@ export class RefineService {
         applyBaselineSeq: baselineSeq,
         attemptedToolCallIds: [...attempted],
       });
+    } else {
+      // CRASH RECOVERY (journal-first): the attempted-progress rewrite lands
+      // only AFTER a tool execution settles, so a crash in that window leaves
+      // a completed edit missing from attemptedToolCallIds while its
+      // refinement journal row (appended by the tool itself) survives. Union
+      // journaled IDs past the persisted baseline into the attempted set
+      // before invoking any tool again — replaying a non-idempotent memory
+      // insert would duplicate it. The residual window (mutation done,
+      // journal append failed) is accepted: journal appends are best-effort
+      // by design, so such an edit can still replay once.
+      const journaled = await this.listStagedRefinementRows(
+        sessionDir,
+        workspaceId,
+        baselineSeq,
+        staged.edits.map((edit) => edit.toolCallId)
+      );
+      for (const { toolCallId } of journaled) attempted.add(toolCallId);
     }
 
     let succeeded = 0;
@@ -712,16 +729,21 @@ export class RefineService {
     return events.reduce((max, event) => Math.max(max, event.seq), -1);
   }
 
-  private async collectAppliedEdits(
+  /**
+   * Journal refinement rows appended after baselineSeq whose evidence
+   * correlates to one of the given staged tool calls (see applyLocked's
+   * baseline comment for why both filters are required).
+   */
+  private async listStagedRefinementRows(
     sessionDir: string,
     workspaceId: string,
     baselineSeq: number,
     toolCallIds: string[]
-  ): Promise<RefineAppliedEdit[]> {
+  ): Promise<Array<{ row: RefinementEvent; toolCallId: string }>> {
     if (toolCallIds.length === 0) return [];
     const callIds = new Set(toolCallIds);
     const rows = await listRefinements(sessionDir);
-    const applied: RefineAppliedEdit[] = [];
+    const matched: Array<{ row: RefinementEvent; toolCallId: string }> = [];
     for (const row of rows) {
       if (row.seq <= baselineSeq || row.workspaceId !== workspaceId) continue;
       const evidence = RefinementEvidenceSchema.safeParse(row.data.evidence);
@@ -729,9 +751,27 @@ export class RefineService {
       if (evidence.data.toolCallId === undefined || !callIds.has(evidence.data.toolCallId)) {
         continue;
       }
-      applied.push({ refinementId: row.id, description: describeRefinementRow(row) });
+      matched.push({ row, toolCallId: evidence.data.toolCallId });
     }
-    return applied;
+    return matched;
+  }
+
+  private async collectAppliedEdits(
+    sessionDir: string,
+    workspaceId: string,
+    baselineSeq: number,
+    toolCallIds: string[]
+  ): Promise<RefineAppliedEdit[]> {
+    const matched = await this.listStagedRefinementRows(
+      sessionDir,
+      workspaceId,
+      baselineSeq,
+      toolCallIds
+    );
+    return matched.map(({ row }) => ({
+      refinementId: row.id,
+      description: describeRefinementRow(row),
+    }));
   }
 
   /**

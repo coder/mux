@@ -16,6 +16,7 @@ import { MemoryMetaService } from "@/node/services/memoryMeta";
 import { MemoryService } from "@/node/services/memoryService";
 import { attachLanguageModelCleanup } from "@/node/services/languageModelCleanup";
 import { sharedDurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import { loadStagedRefineSet, saveStagedRefineSet } from "./refineStaging";
 import { listRefinements, rollbackRefinement } from "./refinementRollback";
 import { RefineService } from "./refineService";
 import { TestTempDir } from "../tools/testHelpers";
@@ -695,6 +696,81 @@ describe("RefineService", () => {
       expect(createSpy).toHaveBeenCalledTimes(1);
       expect(await listRefinements(fixture.sessionDir)).toHaveLength(1);
       expect(result.data.applied).toHaveLength(1);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  it("recovers journaled edits into the attempted set instead of replaying them", async () => {
+    // Crash window: tool.execute completed (its refinement journal row is
+    // durable) but the process died before the attempted-progress rewrite
+    // persisted, so attemptedToolCallIds is stale. Resume must recover the
+    // completed ID from the journal rather than replay the non-idempotent
+    // memory insert.
+    const secondLesson = "/memories/workspace/lost-progress-second-lesson.md";
+    let crashOnce = true;
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "lost-edit-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "First lesson, journaled but progress rewrite lost.\n",
+              },
+            },
+            {
+              toolCallId: "lost-edit-2",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: secondLesson,
+                file_text: "Second lesson, applied after recovery.\n",
+              },
+            },
+          ],
+          "two lessons staged"
+        ),
+      onStagedEditAttempted: (toolCallId) => {
+        if (crashOnce && toolCallId === "lost-edit-1") {
+          crashOnce = false;
+          throw new Error("simulated crash between apply edits");
+        }
+      },
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    const realCreate = fixture.memoryService.create.bind(fixture.memoryService);
+    const createSpy = spyOn(fixture.memoryService, "create").mockImplementation(realCreate);
+    try {
+      try {
+        await fixture.service.apply(WORKSPACE_ID);
+        expect.unreachable("apply should have crashed");
+      } catch (error) {
+        expect(String(error)).toContain("simulated crash");
+      }
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(await listRefinements(fixture.sessionDir)).toHaveLength(1);
+
+      // Simulate the lost rewrite: keep the persisted baseline but erase the
+      // attempted list, as if the process died before that save landed.
+      const staged = await loadStagedRefineSet(fixture.sessionDir);
+      expect(staged?.applyBaselineSeq).toBeDefined();
+      if (staged === null) return;
+      await saveStagedRefineSet(fixture.sessionDir, { ...staged, attemptedToolCallIds: [] });
+
+      // Re-apply: edit 1 is recovered from its journal row (never replayed),
+      // edit 2 applies normally.
+      const result = await fixture.service.apply(WORKSPACE_ID);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(createSpy).toHaveBeenCalledTimes(2);
+      expect(await listRefinements(fixture.sessionDir)).toHaveLength(2);
+      expect(result.data.applied).toHaveLength(2);
     } finally {
       createSpy.mockRestore();
     }
