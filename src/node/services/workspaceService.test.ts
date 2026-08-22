@@ -14236,6 +14236,105 @@ describe("WorkspaceService.remove usage-rollup ordering", () => {
       await cleanup();
     }
   });
+
+  test("a failed non-forced deletion defers the one-shot rollups until removal commits", async () => {
+    // rollUpUsageIntoParent / rollUpTimingIntoParent record the child in the
+    // one-shot rolledUpFrom guard. Rolling up BEFORE runtime deletion meant a
+    // force=false deletion failure left the child usable, and the eventual
+    // successful removal skipped the rollup — permanently losing the child's
+    // post-failure spend from parent accounting. Rollups must run only after
+    // deletion can no longer fail, so a failed attempt rolls up nothing and
+    // the retry captures the child's full (including post-failure) usage.
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const projectDir = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-retry-"));
+    const parentId = "rollup-retry-parent-ws";
+    const childId = "rollup-retry-child-ws";
+    let deletionFails = true;
+    const deleteWorkspaceMock = mock(() =>
+      deletionFails
+        ? Promise.resolve({ success: false as const, error: "worktree has uncommitted changes" })
+        : Promise.resolve({ success: true as const, deletedPath: projectDir })
+    );
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+    try {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectDir, {
+          trusted: true,
+          workspaces: [
+            { path: projectDir, id: parentId, name: parentId },
+            { path: projectDir, id: childId, name: childId, parentWorkspaceId: parentId },
+          ],
+        });
+        return cfg;
+      });
+
+      const childUsage: Record<string, unknown> = {
+        "anthropic:claude-sonnet-4-5": { input: { tokens: 42, cost_usd: 0.01 } },
+      };
+      const usageRollups: Array<{ parent: string; child: string; byModel: object }> = [];
+      const sessionUsageService = {
+        getSessionUsage: () => Promise.resolve({ byModel: { ...childUsage } }),
+        rollUpUsageIntoParent: (parent: string, child: string, byModel: object) => {
+          usageRollups.push({ parent, child, byModel });
+          return Promise.resolve({ didRollUp: true });
+        },
+      } as unknown as SessionUsageService;
+      const timingRollups: string[] = [];
+      const sessionTimingService = {
+        waitForIdle: () => Promise.resolve(),
+        rollUpTimingIntoParent: (_parent: string, child: string) => {
+          timingRollups.push(child);
+          return Promise.resolve();
+        },
+      } as unknown as SessionTimingService;
+
+      const service = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        sessionUsageService,
+        sessionTimingService,
+        aiService: createMockAIService({
+          getWorkspaceMetadata: (async (workspaceId: string) => {
+            const metadata = (await config.getAllWorkspaceMetadata()).find(
+              (m) => m.id === workspaceId
+            );
+            return metadata ? Ok(metadata) : Err("workspace not found");
+          }) as AIService["getWorkspaceMetadata"],
+        }),
+      });
+
+      // Non-forced removal fails at runtime deletion: the child stays usable,
+      // so neither one-shot rollup may have been consumed.
+      const failedAttempt = await service.remove(childId);
+      expect(failedAttempt.success).toBe(false);
+      expect(deleteWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(usageRollups).toHaveLength(0);
+      expect(timingRollups).toHaveLength(0);
+
+      // The still-usable child accrues more spend before the retry.
+      childUsage["openai:gpt-5.2"] = { input: { tokens: 7, cost_usd: 0.002 } };
+
+      deletionFails = false;
+      const retry = await service.remove(childId);
+      expect(retry.success).toBe(true);
+
+      // The retry rolls up exactly once, with the full post-failure snapshot.
+      expect(timingRollups).toEqual([childId]);
+      expect(usageRollups).toHaveLength(1);
+      expect(usageRollups[0].parent).toBe(parentId);
+      expect(usageRollups[0].child).toBe(childId);
+      expect(Object.keys(usageRollups[0].byModel)).toEqual([
+        "anthropic:claude-sonnet-4-5",
+        "openai:gpt-5.2",
+      ]);
+    } finally {
+      createRuntimeSpy.mockRestore();
+      await fsPromises.rm(projectDir, { recursive: true, force: true });
+      await cleanup();
+    }
+  });
 });
 
 describe("WorkspaceService.remove checkout-deletion ordering", () => {

@@ -13311,6 +13311,94 @@ describe("TaskService", () => {
     );
   });
 
+  test("concurrent family messages to the same target serialize payload+trigger delivery", async () => {
+    // Each delivery appends the sender's payload row and then a fixed trigger
+    // that points at the "preceding assistant message". Two concurrent senders
+    // to the same target could interleave (payload1, payload2, trigger1,
+    // trigger2), making a trigger reference the wrong sender's payload — so
+    // payload+trigger must land as one atomic delivery per target.
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-family-race";
+    const childA = "child-family-race-a";
+    const childB = "child-family-race-b";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-a", childA, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          taskExperiments: { rlm: true },
+        }),
+        projectWorkspace(projectPath, "child-b", childB, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          taskExperiments: { rlm: true },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    // Ordered log of delivery halves; every payload/trigger names its sender.
+    const events: string[] = [];
+    const senderOf = (text: string) => (text.includes(childA) ? childA : childB);
+    // The FIRST trigger send stalls until released, holding delivery A open
+    // between its payload append and its trigger — the exact window a
+    // concurrent delivery could interleave into.
+    let releaseFirstTrigger!: () => void;
+    const firstTriggerGate = new Promise<void>((resolve) => {
+      releaseFirstTrigger = resolve;
+    });
+    const sendMessage = mock(
+      async (_workspaceId: string, content: string): Promise<Result<void>> => {
+        events.push(`trigger:${senderOf(content)}`);
+        if (events.filter((event) => event.startsWith("trigger:")).length === 1) {
+          await firstTriggerGate;
+        }
+        return Ok(undefined);
+      }
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService, historyService } = createTaskServiceHarness(config, {
+      workspaceService,
+    });
+    const realAppend = historyService.appendToHistory.bind(historyService);
+    spyOn(historyService, "appendToHistory").mockImplementation((workspaceId, message) => {
+      events.push(`payload:${senderOf(JSON.stringify(message))}`);
+      return realAppend(workspaceId, message);
+    });
+
+    const firstSend = taskService.sendMessageToParentFromAgentTask(childA, "update A", "tool-end");
+    // Let delivery A reach its (stalled) trigger before starting delivery B.
+    const start = Date.now();
+    while (!events.includes(`trigger:${childA}`)) {
+      if (Date.now() - start > 5_000) throw new Error("Timed out waiting for the first trigger");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    const secondSend = taskService.sendMessageToParentFromAgentTask(childB, "update B", "tool-end");
+    // Give delivery B every chance to (incorrectly) interleave into A's window.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(events).toEqual([`payload:${childA}`, `trigger:${childA}`]);
+
+    releaseFirstTrigger();
+    expect(await firstSend).toEqual(Ok({ parentWorkspaceId }));
+    expect(await secondSend).toEqual(Ok({ parentWorkspaceId }));
+
+    // Serialized: each payload is immediately followed by its own trigger.
+    expect(events).toEqual([
+      `payload:${childA}`,
+      `trigger:${childA}`,
+      `payload:${childB}`,
+      `trigger:${childB}`,
+    ]);
+  });
+
   test("sendMessageToParentFromAgentTask refuses oversized messages without delivering", async () => {
     // A kernel guest can synthesize huge strings cheaply; an unbounded family
     // message would be persisted into the parent transcript and sent to its

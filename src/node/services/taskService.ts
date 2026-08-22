@@ -1345,6 +1345,12 @@ export class TaskService {
   // Serialize terminal writes per workspace-turn handle so late completions/interruptions cannot
   // overwrite an already-settled handle.
   private readonly workspaceTurnSettlementLocks = new MutexMap<string>();
+  // Serialize family-message delivery per TARGET workspace. Each delivery appends
+  // the sender-controlled payload row and then a fixed trigger row that points at
+  // the "preceding assistant message"; two concurrent senders to the same target
+  // could otherwise interleave (payload1, payload2, trigger1, trigger2), making a
+  // trigger reference the wrong sender's payload.
+  private readonly familyMessageDeliveryLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private maybeStartQueuedTasksInFlight: Promise<void> | undefined;
   private maybeStartQueuedTasksRerunRequested = false;
@@ -7602,42 +7608,48 @@ export class TaskService {
       return Err(this.familyMessageBudgetExhaustedError());
     }
 
-    const payloadRow = createMuxMessage(createFamilyMessageId(), "assistant", payloadContent, {
-      timestamp: Date.now(),
-      synthetic: true,
-      uiVisible: true,
-      muxMetadata: { type: "family-message" },
-    });
-    // Appended BEFORE the trigger send so the triggered turn's request (which
-    // may start streaming in the background immediately, or dispatch later
-    // from the queue) always sees the payload in history.
-    const appendResult = await this.historyService.appendToHistory(parentWorkspaceId, payloadRow);
-    if (!appendResult.success) {
-      refundBudget();
-      return Err({ code: "send_failed" as const, message: appendResult.error });
-    }
-    this.workspaceService.emitChatEvent(parentWorkspaceId, { ...payloadRow, type: "message" });
+    // Payload append + trigger send are one atomic delivery per TARGET: the
+    // fixed trigger points at the "preceding assistant message", so another
+    // sender's payload appended between this payload and its trigger would
+    // make the trigger reference the wrong sender's row.
+    return this.familyMessageDeliveryLocks.withLock(parentWorkspaceId, async () => {
+      const payloadRow = createMuxMessage(createFamilyMessageId(), "assistant", payloadContent, {
+        timestamp: Date.now(),
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "family-message" },
+      });
+      // Appended BEFORE the trigger send so the triggered turn's request (which
+      // may start streaming in the background immediately, or dispatch later
+      // from the queue) always sees the payload in history.
+      const appendResult = await this.historyService.appendToHistory(parentWorkspaceId, payloadRow);
+      if (!appendResult.success) {
+        refundBudget();
+        return Err({ code: "send_failed" as const, message: appendResult.error });
+      }
+      this.workspaceService.emitChatEvent(parentWorkspaceId, { ...payloadRow, type: "message" });
 
-    const wakeResult = await this.wakeParentWorkspaceWithSyntheticMessage({
-      parentWorkspaceId,
-      parentEntry,
-      content: triggerContent,
-      queueDispatchMode,
+      const wakeResult = await this.wakeParentWorkspaceWithSyntheticMessage({
+        parentWorkspaceId,
+        parentEntry,
+        content: triggerContent,
+        queueDispatchMode,
+      });
+      if (!wakeResult.success) {
+        // NO refund: the payload row is durably appended and enters the next
+        // provider request, so the budget charge stays with it. Refunding here
+        // let a child that catches the tool error retry unlimited max-size
+        // payload rows while the wake path was down — bypassing the budget
+        // entirely. The stray attributed context row is durably labeled
+        // untrusted, harmless without its trigger, and removing durable
+        // history rows is not a supported operation (append-only log); its
+        // charge is the cost of the bytes that actually landed in the parent
+        // transcript. Refunds remain only for the append-failure path above,
+        // where nothing was persisted.
+        return Err({ code: "send_failed" as const, message: wakeResult.error });
+      }
+      return Ok({ parentWorkspaceId });
     });
-    if (!wakeResult.success) {
-      // NO refund: the payload row is durably appended and enters the next
-      // provider request, so the budget charge stays with it. Refunding here
-      // let a child that catches the tool error retry unlimited max-size
-      // payload rows while the wake path was down — bypassing the budget
-      // entirely. The stray attributed context row is durably labeled
-      // untrusted, harmless without its trigger, and removing durable
-      // history rows is not a supported operation (append-only log); its
-      // charge is the cost of the bytes that actually landed in the parent
-      // transcript. Refunds remain only for the append-failure path above,
-      // where nothing was persisted.
-      return Err({ code: "send_failed" as const, message: wakeResult.error });
-    }
-    return Ok({ parentWorkspaceId });
   }
 
   /**
@@ -7736,39 +7748,44 @@ export class TaskService {
       return Err(this.familyMessageBudgetExhaustedError());
     }
 
-    const payloadRow = createMuxMessage(createFamilyMessageId(), "assistant", payloadContent, {
-      timestamp: Date.now(),
-      synthetic: true,
-      uiVisible: true,
-      muxMetadata: { type: "family-message" },
-    });
-    const appendResult = await this.historyService.appendToHistory(targetTaskId, payloadRow);
-    if (!appendResult.success) {
-      refundBudget();
-      return Err({ code: "send_failed" as const, message: appendResult.error });
-    }
-    this.workspaceService.emitChatEvent(targetTaskId, { ...payloadRow, type: "message" });
+    // Same atomic payload+trigger delivery per TARGET as the parent route:
+    // the trigger points at the "preceding assistant message", so a concurrent
+    // sender's payload must not interleave between this payload and its trigger.
+    return this.familyMessageDeliveryLocks.withLock(targetTaskId, async () => {
+      const payloadRow = createMuxMessage(createFamilyMessageId(), "assistant", payloadContent, {
+        timestamp: Date.now(),
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "family-message" },
+      });
+      const appendResult = await this.historyService.appendToHistory(targetTaskId, payloadRow);
+      if (!appendResult.success) {
+        refundBudget();
+        return Err({ code: "send_failed" as const, message: appendResult.error });
+      }
+      this.workspaceService.emitChatEvent(targetTaskId, { ...payloadRow, type: "message" });
 
-    // Trigger delivery reuses the parent->child machinery (queueing, dispatch
-    // boundaries, reactivation) with the shared parent as the authorizing
-    // ancestor; the label overrides the parent-guidance default so the
-    // spliced/queued trigger stays attributed.
-    const sendResult = await this.sendMessageToDescendantAgentTask(
-      sharedParentId,
-      targetTaskId,
-      triggerMessage,
-      queueDispatchMode,
-      { messageLabel: triggerLabel }
-    );
-    if (!sendResult.success) {
-      // NO refund: the payload row is durably appended to the target's
-      // history and enters its next provider request (same rationale as the
-      // parent route) — refunding would let a sender retry unlimited
-      // max-size payload rows while trigger delivery is failing. Refunds
-      // remain only for the append-failure path above.
+      // Trigger delivery reuses the parent->child machinery (queueing, dispatch
+      // boundaries, reactivation) with the shared parent as the authorizing
+      // ancestor; the label overrides the parent-guidance default so the
+      // spliced/queued trigger stays attributed.
+      const sendResult = await this.sendMessageToDescendantAgentTask(
+        sharedParentId,
+        targetTaskId,
+        triggerMessage,
+        queueDispatchMode,
+        { messageLabel: triggerLabel }
+      );
+      if (!sendResult.success) {
+        // NO refund: the payload row is durably appended to the target's
+        // history and enters its next provider request (same rationale as the
+        // parent route) — refunding would let a sender retry unlimited
+        // max-size payload rows while trigger delivery is failing. Refunds
+        // remain only for the append-failure path above.
+        return sendResult;
+      }
       return sendResult;
-    }
-    return sendResult;
+    });
   }
 
   async requestAgentFinalReportForTimeout(
