@@ -48,6 +48,7 @@ import { ensurePathContained } from "@/node/services/tools/skillFileUtils";
 import {
   computeAgentPluginContainers,
   discoverAgentPlugins,
+  MAX_PLUGIN_HOOK_SOURCE_BYTES,
   type AgentPluginContainer,
   type AgentPluginInfo,
 } from "./discovery";
@@ -326,7 +327,7 @@ export class AgentPluginHookService {
       }
       let source: string;
       try {
-        source = await fsPromises.readFile(plugin.hooksPath, "utf8");
+        source = await readHookSourceCapped(plugin.hooksPath);
       } catch (error) {
         log.warn(`Agent plugin hooks: failed to read ${plugin.hooksPath}; skipping`, { error });
         continue;
@@ -622,6 +623,39 @@ function annotateResult(result: unknown, annotation: string, pluginName: string)
   }
   log.debug(`Agent plugin hooks: '${pluginName}' annotation skipped (non-object tool result)`);
   return result;
+}
+
+/**
+ * Read hooks.js through one file handle with a same-handle size check.
+ * Discovery's stat-based cap and this read are separated by an update-sized
+ * TOCTOU window — a managed update can promote a replacement tree between
+ * them, making the canonical path name a file discovery never measured — so
+ * the ceiling must be enforced at the read itself. Reading exactly the
+ * fstat-reported byte count through the same handle also bounds the read if
+ * the file grows mid-read. Exported for tests.
+ */
+export async function readHookSourceCapped(hooksPath: string): Promise<string> {
+  const handle = await fsPromises.open(hooksPath, "r");
+  try {
+    const stat = await handle.stat();
+    if (stat.size > MAX_PLUGIN_HOOK_SOURCE_BYTES) {
+      throw new Error(
+        `hooks.js is too large (${stat.size} bytes; max ${MAX_PLUGIN_HOOK_SOURCE_BYTES})`
+      );
+    }
+    const buffer = Buffer.alloc(Number(stat.size));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) {
+        break; // Truncated since the fstat: return what exists.
+      }
+      offset += bytesRead;
+    }
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Process-wide singleton (mirrors eventSpine/sandboxHostService). */

@@ -28,7 +28,7 @@ import {
 } from "@/node/services/replay/replayFixture";
 import { collectFullHistory, replayVerifySession } from "@/node/services/replay/replayVerify";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
-import { AgentPluginHookService } from "./hookService";
+import { AgentPluginHookService, readHookSourceCapped } from "./hookService";
 import { AGENT_PLUGIN_SCHEMA_ID_1_0_0 } from "./manifest";
 
 const WORKSPACE_ID = "plugin-hooks-test";
@@ -146,6 +146,31 @@ function blockedError(ctx: ToolExecuteContext): string {
   expect(typeof result.error).toBe("string");
   return result.error as string;
 }
+
+describe("readHookSourceCapped", () => {
+  test("enforces the hook size ceiling at the read itself", async () => {
+    // Discovery's stat-based cap and the consuming read are separated by an
+    // update-sized TOCTOU window (a managed update can promote a replacement
+    // hooks.js between them), so the ceiling must hold at read time: an
+    // oversized source is refused, a normal one round-trips byte-exact.
+    using tmp = new DisposableTempDir("hook-source-cap");
+    const smallPath = path.join(tmp.path, "hooks.js");
+    await fs.writeFile(smallPath, "({ 'tool.execute.before': () => undefined })", "utf8");
+    expect(await readHookSourceCapped(smallPath)).toBe(
+      "({ 'tool.execute.before': () => undefined })"
+    );
+
+    const bigPath = path.join(tmp.path, "big-hooks.js");
+    await fs.writeFile(bigPath, `// ${"x".repeat(2 * 1024 * 1024)}\n({})`, "utf8");
+    // try/catch instead of .rejects: bun:test types trip await-thenable.
+    try {
+      await readHookSourceCapped(bigPath);
+      expect.unreachable("an oversized hooks.js must be refused at read time");
+    } catch (error) {
+      expect((error as Error).message).toContain("too large");
+    }
+  });
+});
 
 describe("AgentPluginHookService", () => {
   test("tool.execute.before blocks .env reads with a clear model-visible error", async () => {

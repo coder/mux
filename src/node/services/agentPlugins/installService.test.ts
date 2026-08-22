@@ -1705,6 +1705,86 @@ describe("AgentPluginInstallService", () => {
     );
   });
 
+  test("a failed trash deletion after update releases the dir for staging reclamation", async () => {
+    // The journal is consumed before the replaced tree is deleted, so a
+    // failed deletion (e.g. a file locked on Windows) has no other cleaner
+    // than stale-staging reclamation — the transaction must release the dir
+    // from the active set or every later purge in this process skips it,
+    // accumulating a full checkout per failed update deletion.
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+    await writePluginFixture(remoteDir, { version: "2.0.0" });
+    await commitAll(remoteDir, "v2");
+
+    const internals = service as unknown as {
+      removeDir: (dir: string) => Promise<void>;
+      activeStagingPaths: Set<string>;
+    };
+    const realRemoveDir = internals.removeDir.bind(internals);
+    const removeSpy = spyOn(internals, "removeDir").mockImplementation((dir: string) =>
+      path.basename(dir).startsWith("trash-")
+        ? Promise.reject(new Error("EBUSY: resource busy"))
+        : realRemoveDir(dir)
+    );
+    try {
+      await service.update({ name: "demo-plugin" });
+    } finally {
+      removeSpy.mockRestore();
+    }
+    const pinnedTrash = [...internals.activeStagingPaths].filter((entry) =>
+      path.basename(entry).startsWith("trash-")
+    );
+    expect(pinnedTrash).toEqual([]);
+  });
+
+  test("a missing-tree update fails when the mutation epoch cannot be published", async () => {
+    // With no old tree there is no journal, so the explicit epoch bump is
+    // the ONLY cross-process publication of the swap. Swallowing its failure
+    // would let a sibling process keep serving a server from the removed
+    // tree indefinitely; the update must fail (old lockedSha retained) and
+    // the retry self-heals through the journaled swap path.
+    //
+    // A bare plugin: against the missing tree's EMPTY capability surface,
+    // any capability would be an addition and block before the promote.
+    await fsPromises.rm(path.join(remoteDir, "skills"), { recursive: true, force: true });
+    await fsPromises.rm(path.join(remoteDir, "mcp.json"), { force: true });
+    await commitAll(remoteDir, "bare v1");
+    const preview = await service.preview({ input: remoteDir });
+    const entry = await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+    await fsPromises.rm(path.join(pluginsDir(), "demo-plugin"), { recursive: true, force: true });
+    const manifestPath = path.join(remoteDir, "plugin.json");
+    const manifest = JSON.parse(await fsPromises.readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    manifest.version = "2.0.0";
+    await fsPromises.writeFile(manifestPath, JSON.stringify(manifest));
+    const newSha = await commitAll(remoteDir, "bare v2 while tree missing");
+
+    const realRename = fsPromises.rename;
+    const renameSpy = spyOn(fsPromises, "rename").mockImplementation((from, to) => {
+      if (path.basename(String(to)) === "mutation-epoch") {
+        return Promise.reject(new Error("EACCES: permission denied"));
+      }
+      return realRename(from, to);
+    });
+    try {
+      await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(
+        /publishing the change/
+      );
+    } finally {
+      renameSpy.mockRestore();
+    }
+    // Old lockedSha retained: the update badge stays visible for the retry.
+    const entries = (await registry()) as Array<{ lockedSha: string }>;
+    expect(entries[0].lockedSha).toBe(entry.lockedSha);
+
+    // Retry: the promoted tree now exists, so the journaled swap path runs
+    // and republishes the epoch through the journal lifecycle.
+    const updated = await service.update({ name: "demo-plugin" });
+    expect(updated.lockedSha).toBe(newSha);
+  });
+
   test("repositories shipping the reserved recovery marker name are rejected", async () => {
     // install/update write a nonce file at this path pre-rename; a repo
     // shipping it would get that file clobbered then deleted, making the

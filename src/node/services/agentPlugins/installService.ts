@@ -3565,6 +3565,12 @@ export class AgentPluginInstallService {
             // Best-effort: the trash dir sits under the staging root, where
             // stale-dir reclamation cleans up leftovers.
             await this.removeDir(trashDir).catch((error: unknown) => {
+              // The update transaction no longer owns this dir (journal
+              // consumed above) — release it from the active set or every
+              // later purgeStaleStaging in this process skips the very dir
+              // this catch defers to reclamation, accumulating a full
+              // checkout per failed deletion until restart.
+              this.activeStagingPaths.delete(trashDir);
               log.warn(
                 "Failed to delete replaced plugin tree; leaving it for staging reclamation",
                 { trashDir, error: getErrorMessage(error) }
@@ -3577,13 +3583,22 @@ export class AgentPluginInstallService {
           // above bumped the mutation epoch. Bump it explicitly: sibling
           // processes' MCPServerManagers key their cross-process plugin
           // invalidation off this token, and a server launched before the
-          // old tree went missing may still be running there.
-          await bumpContainerMutationEpoch(this.stagingRoot).catch((error: unknown) => {
-            log.warn("Failed to bump the plugin mutation epoch after update", {
-              name: entry.name,
-              error: getErrorMessage(error),
-            });
-          });
+          // old tree went missing may still be running there. This bump is
+          // the ONLY cross-process publication on this path (no journal, no
+          // consume), so a failure must FAIL the update rather than commit
+          // success — a sibling would otherwise observe neither a journal
+          // nor a token change and keep serving the removed tree's server
+          // indefinitely. The registry still holds the old lockedSha, the
+          // update badge stays visible, and the retry runs the journaled
+          // swap path (the promoted tree now exists), whose journal
+          // lifecycle republishes the epoch or retains a durable record.
+          try {
+            await bumpContainerMutationEpoch(this.stagingRoot);
+          } catch (error) {
+            throw new Error(
+              `The new plugin tree is in place, but publishing the change to other Mux processes failed (${getErrorMessage(error)}). Retry the update.`
+            );
+          }
         }
 
         const updated: AgentPluginInstallEntry = {
