@@ -3293,7 +3293,7 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.create.input)
         .output(schemas.projects.create.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.create(input.projectPath);
+          return context.projectService.create(input.projectPath, { initGit: input.initGit });
         }),
       getDefaultProjectDir: t
         .input(schemas.projects.getDefaultProjectDir.input)

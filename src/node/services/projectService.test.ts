@@ -152,6 +152,83 @@ describe("ProjectService", () => {
   });
 
   describe("create", () => {
+    it("creates and registers a git project at a new path", async () => {
+      const projectPath = path.join(tempDir, "new-git-project");
+
+      const result = await service.create(projectPath, { initGit: true });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+      expect(result.data.normalizedPath).toBe(projectPath);
+      expect((await fs.stat(path.join(projectPath, ".git"))).isDirectory()).toBe(true);
+      expect(
+        execSync("git branch --show-current", { cwd: projectPath, encoding: "utf-8" }).trim()
+      ).toBe("main");
+      expect(
+        execSync("git rev-list --count HEAD", { cwd: projectPath, encoding: "utf-8" }).trim()
+      ).toBe("1");
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
+    });
+
+    it("initializes and registers an existing empty directory", async () => {
+      const projectPath = path.join(tempDir, "empty-git-project");
+      await fs.mkdir(projectPath);
+
+      const result = await service.create(projectPath, { initGit: true });
+
+      expect(result.success).toBe(true);
+      expect((await fs.stat(path.join(projectPath, ".git"))).isDirectory()).toBe(true);
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
+    });
+
+    it("rejects an existing non-empty directory without modifying it", async () => {
+      const projectPath = path.join(tempDir, "non-empty-project");
+      const existingFile = path.join(projectPath, "README.md");
+      await fs.mkdir(projectPath);
+      await fs.writeFile(existingFile, "existing content", "utf-8");
+
+      const result = await service.create(projectPath, { initGit: true });
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain("already exists and is not empty");
+      expect(await fs.readFile(existingFile, "utf-8")).toBe("existing content");
+      expect(fs.stat(path.join(projectPath, ".git"))).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+    });
+
+    it("rejects invalid paths without registering a project", async () => {
+      const filePath = path.join(tempDir, "not-a-directory");
+      await fs.writeFile(filePath, "content", "utf-8");
+
+      const fileResult = await service.create(filePath, { initGit: true });
+      const emptyResult = await service.create("", { initGit: true });
+
+      expect(fileResult.success).toBe(false);
+      expect(emptyResult.success).toBe(false);
+      expect(await fs.readFile(filePath, "utf-8")).toBe("content");
+      expect(config.loadConfigOrDefault().projects.size).toBe(0);
+    });
+
+    it("removes a newly created directory when git initialization fails", async () => {
+      if (process.platform === "win32") return;
+
+      const projectPath = path.join(tempDir, "failed-git-project");
+      const fakeGit = await installFakeGit(
+        tempDir,
+        "create-init-failure",
+        "#!/bin/sh\nprintf 'git failed' >&2\nexit 1\n"
+      );
+
+      const result = await withEnv(fakeGit.env, () =>
+        service.create(projectPath, { initGit: true })
+      );
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain("git failed");
+      expect(fs.stat(projectPath)).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+    });
+
     // Regression (PR #3694 Codex P1): two concurrent create() calls for the same
     // not-yet-existing path both compute createdDirectory === true before either
     // registration is serialized. The loser hits the duplicate re-check inside the

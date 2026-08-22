@@ -449,7 +449,8 @@ export class ProjectService {
   }
 
   async create(
-    projectPath: string
+    projectPath: string,
+    options?: { initGit?: boolean }
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
     try {
       // Validate input
@@ -500,6 +501,13 @@ export class ProjectService {
 
       if (existingStat && !existingStat.isDirectory()) {
         return Err("Project path is not a directory");
+      }
+
+      if (options?.initGit && existingStat) {
+        const entries = await fsPromises.readdir(normalizedPath);
+        if (entries.length > 0) {
+          return Err("Directory already exists and is not empty");
+        }
       }
 
       if (config.projects.has(normalizedPath)) {
@@ -565,6 +573,14 @@ export class ProjectService {
               "Cannot register a parent project above an existing project from a different git repository"
             );
           }
+        }
+      }
+
+      if (options?.initGit) {
+        const gitInitResult = await this.initializeGitRepository(normalizedPath);
+        if (!gitInitResult.success) {
+          await cleanupCreatedDirectory();
+          return gitInitResult;
         }
       }
 
@@ -1382,40 +1398,22 @@ export class ProjectService {
     }
   }
 
-  /**
-   * Initialize a git repository in the project directory.
-   * Runs `git init` and creates an initial commit so branches exist.
-   * Also handles "unborn" repos (git init already run but no commits yet).
-   */
-  async gitInit(projectPath: string): Promise<Result<void>> {
-    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
-      return Err("Project path is required");
-    }
+  private async initializeGitRepository(normalizedPath: string): Promise<Result<void>> {
     try {
-      const validation = await validateProjectPath(projectPath);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid project path");
-      }
-      const normalizedPath = validation.expandedPath!;
-
       const isGitRepo = await isGitRepository(normalizedPath);
 
       if (isGitRepo) {
-        // Check if repo is "unborn" (git init but no commits yet)
         const branches = await listLocalBranches(normalizedPath);
         if (branches.length > 0) {
           return Err("Directory is already a git repository with commits");
         }
-        // Repo exists but is unborn - just create the initial commit
       } else {
-        // Initialize git repository with main as default branch
         using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"]);
         await initProc.result;
       }
 
-      // Create an initial empty commit so the branch exists and worktree/SSH can work
-      // Without a commit, the repo is "unborn" and has no branches
-      // Use -c flags to set identity only for this commit (don't persist to repo config)
+      // A born branch is required by worktree and SSH runtimes. Keep the fallback
+      // identity scoped to this initial commit instead of changing repository config.
       using commitProc = execFileAsync("git", [
         "-C",
         normalizedPath,
@@ -1430,10 +1428,30 @@ export class ProjectService {
       ]);
       await commitProc.result;
 
-      // Invalidate file completions cache since the repo state changed
       this.fileCompletionsCache.delete(normalizedPath);
-
       return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      log.error("Failed to initialize git repository:", error);
+      return Err(`Failed to initialize git repository: ${message}`);
+    }
+  }
+
+  /**
+   * Initialize a git repository in the project directory.
+   * Runs `git init` and creates an initial commit so branches exist.
+   * Also handles "unborn" repos (git init already run but no commits yet).
+   */
+  async gitInit(projectPath: string): Promise<Result<void>> {
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      return Err("Project path is required");
+    }
+    try {
+      const validation = await validateProjectPath(projectPath);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid project path");
+      }
+      return this.initializeGitRepository(validation.expandedPath!);
     } catch (error) {
       const message = getErrorMessage(error);
       log.error("Failed to initialize git repository:", error);

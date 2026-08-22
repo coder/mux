@@ -690,7 +690,7 @@ export const mcpOauth = {
 // Projects
 export const projects = {
   create: {
-    input: z.object({ projectPath: z.string() }),
+    input: z.object({ projectPath: z.string(), initGit: z.boolean().optional() }),
     output: ResultSchema(
       z.object({
         projectConfig: ProjectConfigSchema,
