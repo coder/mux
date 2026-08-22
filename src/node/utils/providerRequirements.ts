@@ -19,7 +19,7 @@ import type {
   BaseProviderConfig,
   BedrockProviderConfig,
   CoderProviderConfig,
-  MuxGatewayProviderConfig,
+  XumGatewayProviderConfig,
   OpenAIProviderConfig,
 } from "@/common/config/schemas/providersConfig";
 import type { ProviderConfig, ProvidersConfig } from "@/node/config";
@@ -123,7 +123,7 @@ type ProviderSpecificCredentialFields = Partial<
     BedrockProviderConfig,
     "region" | "profile" | "bearerToken" | "accessKeyId" | "secretAccessKey"
   > &
-    Pick<MuxGatewayProviderConfig, "couponCode" | "voucher"> &
+    Pick<XumGatewayProviderConfig, "couponCode" | "voucher"> &
     Pick<OpenAIProviderConfig, "organization"> &
     Pick<CoderProviderConfig, "deploymentUrl"> & {
       // Wider than the schema type: callers pass raw (unvalidated) config.

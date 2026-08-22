@@ -64,7 +64,7 @@ import {
   estimatePersistedChatAttachmentsChars,
   MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS,
 } from "@/browser/features/ChatInput/draftAttachmentsStorage";
-import type { MuxMessageMetadata } from "@/common/types/message";
+import type { XumMessageMetadata } from "@/common/types/message";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { processSlashCommand, type SlashCommandContext } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -706,12 +706,12 @@ export function useCreationWorkspace({
         // SendMessageOptions.muxMetadata is a black box (z.any); the creation
         // caller only ever passes XumMessageMetadata built in ChatInput.
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const overrideMuxMetadata: MuxMessageMetadata | undefined = optionsOverride?.muxMetadata;
+        const overrideXumMetadata: XumMessageMetadata | undefined = optionsOverride?.muxMetadata;
         const overrideRawCommand =
-          overrideMuxMetadata &&
-          "rawCommand" in overrideMuxMetadata &&
-          typeof overrideMuxMetadata.rawCommand === "string"
-            ? overrideMuxMetadata.rawCommand
+          overrideXumMetadata &&
+          "rawCommand" in overrideXumMetadata &&
+          typeof overrideXumMetadata.rawCommand === "string"
+            ? overrideXumMetadata.rawCommand
             : null;
 
         if (stagingFailed) {
@@ -794,12 +794,12 @@ export function useCreationWorkspace({
         // over message text for transcript display) lacks the notice; patch it
         // so the displayed message keeps the staged attachment chips.
         const muxMetadataWithNotice =
-          stagingOutcome.staged.length > 0 && overrideMuxMetadata && overrideRawCommand !== null
+          stagingOutcome.staged.length > 0 && overrideXumMetadata && overrideRawCommand !== null
             ? {
-                ...overrideMuxMetadata,
+                ...overrideXumMetadata,
                 rawCommand: appendStagedAttachmentNotice(overrideRawCommand, stagingOutcome.staged),
               }
-            : overrideMuxMetadata;
+            : overrideXumMetadata;
 
         // A transport-level rejection (e.g. oRPC disconnect) must flow through
         // the same failure branch as success:false: the outer catch would skip

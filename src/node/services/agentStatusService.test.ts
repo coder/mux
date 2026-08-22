@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type { ProjectsConfig, ProjectConfig, Workspace } from "@/common/types/project";
 import { Ok, Err } from "@/common/types/result";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import {
   AGENT_STATUS_PROVIDER_FAILURE_IDLE_COOLDOWN_MS,
   AGENT_STATUS_PROVIDER_FAILURE_RETRY_ATTEMPTS,
@@ -164,11 +164,11 @@ describe("AgentStatusService", () => {
   test("generates and persists a fresh AI status when chat history exists", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Please run the test suite")
+      createXumMessage("u1", "user", "Please run the test suite")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "Running tests now")
+      createXumMessage("a1", "assistant", "Running tests now")
     );
 
     const service = createService();
@@ -190,7 +190,7 @@ describe("AgentStatusService", () => {
     // "Frozen chat" behavior: identical hash → no further LLM calls.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Idle workspace")
+      createXumMessage("u1", "user", "Idle workspace")
     );
 
     const service = createService();
@@ -210,14 +210,14 @@ describe("AgentStatusService", () => {
     // suppress the very updates the feature exists to surface.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "kick off a long task")
+      createXumMessage("u1", "user", "kick off a long task")
     );
 
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(1);
 
-    const partial = createMuxMessage("a-partial", "assistant", "Reading config files");
+    const partial = createXumMessage("a-partial", "assistant", "Reading config files");
     await historyHandle.historyService.writePartial(workspaceId, partial);
 
     // Dedup would have suppressed this second call if the partial was missing
@@ -237,11 +237,11 @@ describe("AgentStatusService", () => {
     // bring back the historical past-tense-while-deploying bug.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "deploy the service")
+      createXumMessage("u1", "user", "deploy the service")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "Kicking off deploy", undefined, [
+      createXumMessage("a1", "assistant", "Kicking off deploy", undefined, [
         {
           type: "dynamic-tool",
           toolCallId: "call-running",
@@ -278,11 +278,11 @@ describe("AgentStatusService", () => {
     // for.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "deploy the service")
+      createXumMessage("u1", "user", "deploy the service")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "Deploying now")
+      createXumMessage("a1", "assistant", "Deploying now")
     );
 
     const service = createService();
@@ -306,11 +306,11 @@ describe("AgentStatusService", () => {
     // stale "Deploying service" sidebar bug this PR exists to fix.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "deploy the service")
+      createXumMessage("u1", "user", "deploy the service")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "Deploying now")
+      createXumMessage("a1", "assistant", "Deploying now")
     );
 
     const service = createService();
@@ -328,7 +328,7 @@ describe("AgentStatusService", () => {
   test("re-generates after the trailing transcript changes", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Initial request")
+      createXumMessage("u1", "user", "Initial request")
     );
     const service = createService();
     await getInternals(service).runForWorkspace(workspaceId);
@@ -336,7 +336,7 @@ describe("AgentStatusService", () => {
 
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "Second request")
+      createXumMessage("u2", "user", "Second request")
     );
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
@@ -360,7 +360,7 @@ describe("AgentStatusService", () => {
     ]);
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Populated workspace")
+      createXumMessage("u1", "user", "Populated workspace")
     );
     getAllSnapshotsMock.mockImplementation(() =>
       Promise.resolve(
@@ -387,11 +387,11 @@ describe("AgentStatusService", () => {
   test("idle workspaces regenerate at the idle focused/unfocused intervals", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Hello")
+      createXumMessage("u1", "user", "Hello")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "Hi")
+      createXumMessage("a1", "assistant", "Hi")
     );
 
     let now = 1_000_000;
@@ -405,7 +405,7 @@ describe("AgentStatusService", () => {
     await internals.runTick();
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "follow-up A")
+      createXumMessage("u2", "user", "follow-up A")
     );
     expect(generateSpy).toHaveBeenCalledTimes(1);
 
@@ -424,7 +424,7 @@ describe("AgentStatusService", () => {
     isFocused = false;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u3", "user", "follow-up B")
+      createXumMessage("u3", "user", "follow-up B")
     );
     now += 60_000;
     await internals.runTick();
@@ -443,7 +443,7 @@ describe("AgentStatusService", () => {
     // direction.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Initial request")
+      createXumMessage("u1", "user", "Initial request")
     );
 
     let recency = 100;
@@ -464,7 +464,7 @@ describe("AgentStatusService", () => {
     recency = 200;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "Pivot to new task")
+      createXumMessage("u2", "user", "Pivot to new task")
     );
     await internals.runTick();
 
@@ -476,7 +476,7 @@ describe("AgentStatusService", () => {
     now += 5_000;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "Acknowledged")
+      createXumMessage("a1", "assistant", "Acknowledged")
     );
     await internals.runTick();
 
@@ -487,7 +487,7 @@ describe("AgentStatusService", () => {
   test("does not consume a user recency bump until the pivot message reaches history", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Initial request")
+      createXumMessage("u1", "user", "Initial request")
     );
 
     let recency = 100;
@@ -516,7 +516,7 @@ describe("AgentStatusService", () => {
 
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "Pivot after recency")
+      createXumMessage("u2", "user", "Pivot after recency")
     );
     now += 10_000;
     await internals.runTick();
@@ -534,7 +534,7 @@ describe("AgentStatusService", () => {
     // against the still-old transcript and consume the recency bump.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Initial request")
+      createXumMessage("u1", "user", "Initial request")
     );
 
     let recency = 100;
@@ -569,7 +569,7 @@ describe("AgentStatusService", () => {
   test("defers a first recent recency bump so startup cannot settle on stale pre-pivot history", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Old request before restart")
+      createXumMessage("u1", "user", "Old request before restart")
     );
 
     let now = 1_000_000;
@@ -592,7 +592,7 @@ describe("AgentStatusService", () => {
 
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "Pivot after restart")
+      createXumMessage("u2", "user", "Pivot after restart")
     );
     now += 10_000;
     await internals.runTick();
@@ -609,11 +609,11 @@ describe("AgentStatusService", () => {
     ]);
     await historyHandle.historyService.appendToHistory(
       staleWorkspaceId,
-      createMuxMessage("u-stale", "user", "Already summarized")
+      createXumMessage("u-stale", "user", "Already summarized")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u-good", "user", "Waiting behind stale recency")
+      createXumMessage("u-good", "user", "Waiting behind stale recency")
     );
 
     let now = 1_000_000;
@@ -654,7 +654,7 @@ describe("AgentStatusService", () => {
     // versus the slower 30s/120s cadence for chats that aren't moving.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "kick off a long task")
+      createXumMessage("u1", "user", "kick off a long task")
     );
     // Mark the workspace as currently streaming so dispatch picks the
     // active intervals.
@@ -674,7 +674,7 @@ describe("AgentStatusService", () => {
     now += 5_000;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a1", "assistant", "step one")
+      createXumMessage("a1", "assistant", "step one")
     );
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(1);
@@ -683,7 +683,7 @@ describe("AgentStatusService", () => {
     now += 5_000;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a2", "assistant", "step two")
+      createXumMessage("a2", "assistant", "step two")
     );
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(2);
@@ -694,7 +694,7 @@ describe("AgentStatusService", () => {
     now += 10_000;
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("a3", "assistant", "step three")
+      createXumMessage("a3", "assistant", "step three")
     );
     await internals.runTick();
     expect(generateSpy).toHaveBeenCalledTimes(2);
@@ -721,7 +721,7 @@ describe("AgentStatusService", () => {
     for (const id of ids) {
       await historyHandle.historyService.appendToHistory(
         id,
-        createMuxMessage(`u1-${id}`, "user", `prompt for ${id}`)
+        createXumMessage(`u1-${id}`, "user", `prompt for ${id}`)
       );
     }
 
@@ -750,7 +750,7 @@ describe("AgentStatusService", () => {
     // declared lifecycle.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "long-running task")
+      createXumMessage("u1", "user", "long-running task")
     );
 
     let releaseCandidates!: () => void;
@@ -779,7 +779,7 @@ describe("AgentStatusService", () => {
     // past the declared lifecycle.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "long-running task")
+      createXumMessage("u1", "user", "long-running task")
     );
 
     // Two-stage gate: signal when the generator actually starts (so the
@@ -818,7 +818,7 @@ describe("AgentStatusService", () => {
   test("drops a generated status if workspace recency advances while provider call is in flight", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Old task")
+      createXumMessage("u1", "user", "Old task")
     );
 
     let recency = 100;
@@ -875,7 +875,7 @@ describe("AgentStatusService", () => {
     // never made it to disk, silently dropping subsequent retries.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "kick off a task")
+      createXumMessage("u1", "user", "kick off a task")
     );
 
     setSidebarStatusMock.mockImplementationOnce(() => Promise.reject(new Error("disk full")));
@@ -943,7 +943,7 @@ describe("AgentStatusService", () => {
     // same placeholder back and burn provider budget.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "kick off a task")
+      createXumMessage("u1", "user", "kick off a task")
     );
 
     generateSpy.mockResolvedValueOnce(
@@ -971,7 +971,7 @@ describe("AgentStatusService", () => {
     // After a genuine transcript change, we try again with a fresh result.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "follow-up message")
+      createXumMessage("u2", "user", "follow-up message")
     );
     await getInternals(service).runForWorkspace(workspaceId);
     expect(generateSpy).toHaveBeenCalledTimes(2);
@@ -986,7 +986,7 @@ describe("AgentStatusService", () => {
     // and even repeated transient provider misses must eventually recover.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "kick off a task")
+      createXumMessage("u1", "user", "kick off a task")
     );
 
     generateSpy.mockReset();
@@ -1050,7 +1050,7 @@ describe("AgentStatusService", () => {
     // recovers without requiring a new user message.
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "kick off a task")
+      createXumMessage("u1", "user", "kick off a task")
     );
 
     generateSpy.mockResolvedValueOnce(
@@ -1105,11 +1105,11 @@ describe("AgentStatusService", () => {
     ]);
     await historyHandle.historyService.appendToHistory(
       misconfiguredWorkspaceId,
-      createMuxMessage("u-bad", "user", "Misconfigured workspace")
+      createXumMessage("u-bad", "user", "Misconfigured workspace")
     );
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u-good", "user", "Healthy workspace")
+      createXumMessage("u-good", "user", "Healthy workspace")
     );
     getAllSnapshotsMock.mockImplementation(() =>
       Promise.resolve(
@@ -1147,7 +1147,7 @@ describe("AgentStatusService", () => {
   test("pre-provider retry state does not consume a recency bump before history catches up", async () => {
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Old misconfigured request")
+      createXumMessage("u1", "user", "Old misconfigured request")
     );
     let recency = 100;
     getAllSnapshotsMock.mockImplementation(() =>
@@ -1180,7 +1180,7 @@ describe("AgentStatusService", () => {
 
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u2", "user", "Pivot after config failure")
+      createXumMessage("u2", "user", "Pivot after config failure")
     );
     now += 10_000;
     await internals.runTick();
@@ -1195,7 +1195,7 @@ describe("AgentStatusService", () => {
     ]);
     await historyHandle.historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("u1", "user", "Archived chat")
+      createXumMessage("u1", "user", "Archived chat")
     );
 
     const service = createService();

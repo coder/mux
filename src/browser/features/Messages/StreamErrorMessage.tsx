@@ -87,10 +87,10 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
   const isModelRefusalError = message.errorType === "model_refusal";
   // Gateway quota failures need explicit attribution so users know mux gateway credits,
   // not a provider quota, are blocking the request.
-  const isMuxGatewayQuotaError =
+  const isXumGatewayQuotaError =
     message.errorType === "quota" && message.routedThroughGateway === true;
 
-  const title = isMuxGatewayQuotaError
+  const title = isXumGatewayQuotaError
     ? "Xum Gateway credits depleted"
     : isAnthropicOverloaded
       ? "Service overloaded"
@@ -102,11 +102,11 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
             ? "Model refused to respond"
             : "Stream Error";
   const pill = isAnthropicOverloaded ? "overloaded" : message.errorType;
-  const body = isMuxGatewayQuotaError
+  const body = isXumGatewayQuotaError
     ? "Your Xum Gateway credits have been depleted. Add credits or configure another provider to continue."
     : message.error;
 
-  const ctaAction = isMuxGatewayQuotaError ? (
+  const ctaAction = isXumGatewayQuotaError ? (
     <Button
       asChild
       variant="ghost"

@@ -109,9 +109,9 @@ import * as path from "node:path";
 
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { WorkflowRunStreamEvent } from "@/common/types/workflow";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
-import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { normalizeLegacyXumMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
 import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
@@ -613,7 +613,7 @@ function mergeTaskSettingsForConfigSave(current: unknown, input: unknown) {
   return normalizeTaskSettings({ ...normalizeTaskSettings(current), ...definedInput });
 }
 
-function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
+function normalizeXumMessageFromDisk(value: unknown): XumMessage | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -629,22 +629,22 @@ function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
     }
   }
 
-  return normalizeLegacyMuxMetadata(value as MuxMessage);
+  return normalizeLegacyXumMetadata(value as XumMessage);
 }
 
 async function readChatJsonlAllowMissing(params: {
   chatPath: string;
   logLabel: string;
-}): Promise<MuxMessage[] | null> {
+}): Promise<XumMessage[] | null> {
   try {
     const data = await fsPromises.readFile(params.chatPath, "utf-8");
     const lines = data.split("\n").filter((line) => line.trim());
-    const messages: MuxMessage[] = [];
+    const messages: XumMessage[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       try {
         const parsed = JSON.parse(lines[i]) as unknown;
-        const message = normalizeMuxMessageFromDisk(parsed);
+        const message = normalizeXumMessageFromDisk(parsed);
         if (message) {
           messages.push(message);
         }
@@ -668,11 +668,11 @@ async function readChatJsonlAllowMissing(params: {
   }
 }
 
-async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessage | null> {
+async function readPartialJsonBestEffort(partialPath: string): Promise<XumMessage | null> {
   try {
     const raw = await fsPromises.readFile(partialPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    return normalizeMuxMessageFromDisk(parsed);
+    return normalizeXumMessageFromDisk(parsed);
   } catch (error: unknown) {
     if (isErrnoWithCode(error, "ENOENT")) {
       return null;
@@ -687,7 +687,7 @@ async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessag
   }
 }
 
-function mergePartialIntoHistory(messages: MuxMessage[], partial: MuxMessage | null): MuxMessage[] {
+function mergePartialIntoHistory(messages: XumMessage[], partial: XumMessage | null): XumMessage[] {
   if (!partial) {
     return messages;
   }
@@ -1234,9 +1234,9 @@ export const router = (authToken?: string) => {
             };
           });
         }),
-      updateMuxGatewayPrefs: t
-        .input(schemas.config.updateMuxGatewayPrefs.input)
-        .output(schemas.config.updateMuxGatewayPrefs.output)
+      updateXumGatewayPrefs: t
+        .input(schemas.config.updateXumGatewayPrefs.input)
+        .output(schemas.config.updateXumGatewayPrefs.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
             const nextModels = Array.from(new Set(input.muxGatewayModels));
@@ -1555,9 +1555,9 @@ export const router = (authToken?: string) => {
             return config;
           });
         }),
-      unenrollMuxGovernor: t
-        .input(schemas.config.unenrollMuxGovernor.input)
-        .output(schemas.config.unenrollMuxGovernor.output)
+      unenrollXumGovernor: t
+        .input(schemas.config.unenrollXumGovernor.input)
+        .output(schemas.config.unenrollXumGovernor.output)
         .handler(async ({ context }) => {
           await context.config.editConfig((config) => {
             const { muxGovernorUrl: _url, muxGovernorToken: _token, ...rest } = config;
@@ -2546,13 +2546,13 @@ export const router = (authToken?: string) => {
         .input(schemas.muxGatewayOauth.startDesktopFlow.input)
         .output(schemas.muxGatewayOauth.startDesktopFlow.output)
         .handler(({ context }) => {
-          return context.muxGatewayOauthService.startDesktopFlow();
+          return context.xumGatewayOauthService.startDesktopFlow();
         }),
       waitForDesktopFlow: t
         .input(schemas.muxGatewayOauth.waitForDesktopFlow.input)
         .output(schemas.muxGatewayOauth.waitForDesktopFlow.output)
         .handler(({ context, input }) => {
-          return context.muxGatewayOauthService.waitForDesktopFlow(input.flowId, {
+          return context.xumGatewayOauthService.waitForDesktopFlow(input.flowId, {
             timeoutMs: input.timeoutMs,
           });
         }),
@@ -2560,7 +2560,7 @@ export const router = (authToken?: string) => {
         .input(schemas.muxGatewayOauth.cancelDesktopFlow.input)
         .output(schemas.muxGatewayOauth.cancelDesktopFlow.output)
         .handler(async ({ context, input }) => {
-          await context.muxGatewayOauthService.cancelDesktopFlow(input.flowId);
+          await context.xumGatewayOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
     copilotOauth: {
@@ -2590,7 +2590,7 @@ export const router = (authToken?: string) => {
         .input(schemas.muxGovernorOauth.startDesktopFlow.input)
         .output(schemas.muxGovernorOauth.startDesktopFlow.output)
         .handler(({ context, input }) => {
-          return context.muxGovernorOauthService.startDesktopFlow({
+          return context.xumGovernorOauthService.startDesktopFlow({
             governorOrigin: input.governorOrigin,
           });
         }),
@@ -2598,7 +2598,7 @@ export const router = (authToken?: string) => {
         .input(schemas.muxGovernorOauth.waitForDesktopFlow.input)
         .output(schemas.muxGovernorOauth.waitForDesktopFlow.output)
         .handler(({ context, input }) => {
-          return context.muxGovernorOauthService.waitForDesktopFlow(input.flowId, {
+          return context.xumGovernorOauthService.waitForDesktopFlow(input.flowId, {
             timeoutMs: input.timeoutMs,
           });
         }),
@@ -2606,7 +2606,7 @@ export const router = (authToken?: string) => {
         .input(schemas.muxGovernorOauth.cancelDesktopFlow.input)
         .output(schemas.muxGovernorOauth.cancelDesktopFlow.output)
         .handler(async ({ context, input }) => {
-          await context.muxGovernorOauthService.cancelDesktopFlow(input.flowId);
+          await context.xumGovernorOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
     codexOauth: {
@@ -4768,7 +4768,7 @@ export const router = (authToken?: string) => {
             chatArchivePath?: string;
             partialPath?: string;
             logLabel: string;
-          }): Promise<MuxMessage[]> => {
+          }): Promise<XumMessage[]> => {
             const workspaceSessionDir = context.config.getSessionDir(params.workspaceId);
 
             // Defense-in-depth: refuse path traversal from a corrupted index file.

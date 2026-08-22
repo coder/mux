@@ -7,9 +7,9 @@ import type {
   WorkspaceChatMessage,
 } from "@/common/orpc/types";
 import {
-  createMuxMessage,
+  createXumMessage,
   type CompactionFollowUpRequest,
-  type MuxMessage,
+  type XumMessage,
 } from "@/common/types/message";
 import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { Ok, Err } from "@/common/types/result";
@@ -48,14 +48,14 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
   test("does not persist or emit snapshots before forced on-send compaction", async () => {
     const workspaceId = "ws-auto-compaction-snapshot-deferral";
 
-    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const streamMessage = mock((_history: XumMessage[]) => Promise.resolve(Ok(undefined)));
     const { session, historyService, events } = await createSessionHarness({
       workspaceId,
       streamMessage: streamMessage as unknown as AIService["streamMessage"],
       captureEvents: true,
     });
 
-    const syntheticSnapshot = createMuxMessage(
+    const syntheticSnapshot = createXumMessage(
       "file-snapshot-1",
       "user",
       "<snapshot>@foo.ts</snapshot>",
@@ -69,7 +69,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     const internals = session as unknown as {
       materializeFileAtMentionsSnapshot: (
         text: string
-      ) => Promise<{ snapshotMessage: MuxMessage; materializedTokens: string[] } | null>;
+      ) => Promise<{ snapshotMessage: XumMessage; materializedTokens: string[] } | null>;
       compactionMonitor: CompactionMonitor;
     };
 
@@ -142,7 +142,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       parsed: {},
       source: "auto-compaction" as const,
     };
-    const compactionRequest = createMuxMessage(
+    const compactionRequest = createXumMessage(
       "compaction-request",
       "user",
       "Summarize the conversation",
@@ -151,12 +151,12 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
         muxMetadata: compactionMetadata,
       }
     );
-    const snapshot = createMuxMessage("file-change", "user", "<file-change />", {
+    const snapshot = createXumMessage("file-change", "user", "<file-change />", {
       synthetic: true,
     });
     const internals = session as unknown as {
       resolveCompactionRequest: (
-        history: MuxMessage[],
+        history: XumMessage[],
         modelString: string,
         options: SendMessageOptions
       ) => { id: string; source?: string } | undefined;
@@ -179,14 +179,14 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
   test("does not materialize skill snapshots (or run their directives) on deferred on-send compaction turns", async () => {
     const workspaceId = "ws-auto-compaction-skill-snapshot-deferral";
 
-    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const streamMessage = mock((_history: XumMessage[]) => Promise.resolve(Ok(undefined)));
     const { session } = await createSessionHarness({
       workspaceId,
       streamMessage: streamMessage as unknown as AIService["streamMessage"],
     });
 
     const internals = session as unknown as {
-      materializeAgentSkillSnapshots: (...args: unknown[]) => Promise<MuxMessage[]>;
+      materializeAgentSkillSnapshots: (...args: unknown[]) => Promise<XumMessage[]>;
       compactionMonitor: CompactionMonitor;
     };
 
@@ -285,7 +285,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     expect(result.success).toBe(true);
     expect(streamMessage).toHaveBeenCalledTimes(1);
 
-    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const firstRequest = streamRequests[0] as { messages?: XumMessage[] } | undefined;
     const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
     const hasCompactionRequest = requestMessages.some(
       (message) => message.metadata?.muxMetadata?.type === "compaction-request"
@@ -338,7 +338,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     expect(result.success).toBe(true);
     expect(streamMessage).toHaveBeenCalledTimes(1);
 
-    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const firstRequest = streamRequests[0] as { messages?: XumMessage[] } | undefined;
     const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
     const compactionRequestMessage = requestMessages.find(
       (message) => message.metadata?.muxMetadata?.type === "compaction-request"
@@ -364,7 +364,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     const appendSeedUsage = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-1m-routing-usage", "assistant", "existing context", {
+      createXumMessage("assistant-1m-routing-usage", "assistant", "existing context", {
         timestamp: Date.now() - 1_000,
         model: "anthropic:claude-sonnet-4-5",
         contextUsage: {
@@ -391,7 +391,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     expect(result.success).toBe(true);
     expect(streamMessage).toHaveBeenCalledTimes(1);
 
-    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const firstRequest = streamRequests[0] as { messages?: XumMessage[] } | undefined;
     const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
     const hasCompactionRequest = requestMessages.some(
       (message) => message.metadata?.muxMetadata?.type === "compaction-request"
@@ -427,7 +427,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     const appendSeedUsage = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-disabled-beta-usage", "assistant", "existing context", {
+      createXumMessage("assistant-disabled-beta-usage", "assistant", "existing context", {
         timestamp: Date.now() - 1_000,
         model: "anthropic:claude-sonnet-4-5",
         contextUsage: {
@@ -453,7 +453,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     expect(result.success).toBe(true);
     expect(streamMessage).toHaveBeenCalledTimes(1);
 
-    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const firstRequest = streamRequests[0] as { messages?: XumMessage[] } | undefined;
     const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
     const hasCompactionRequest = requestMessages.some(
       (message) => message.metadata?.muxMetadata?.type === "compaction-request"
@@ -692,7 +692,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     } as unknown as ProvidersConfigMap;
 
     const aiEmitter = new EventEmitter();
-    const streamMessage = mock((_history: MuxMessage[]) => {
+    const streamMessage = mock((_history: XumMessage[]) => {
       const usage = {
         inputTokens: 42,
         outputTokens: 1,
@@ -802,7 +802,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     const appendOldUser = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-old-before-boundary", "user", "old prompt", {
+      createXumMessage("user-old-before-boundary", "user", "old prompt", {
         timestamp: Date.now() - 4_000,
       })
     );
@@ -810,7 +810,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     const appendOldAssistant = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-old-before-boundary", "assistant", "old reply", {
+      createXumMessage("assistant-old-before-boundary", "assistant", "old reply", {
         timestamp: Date.now() - 3_000,
         model: "openai:gpt-4o",
         contextUsage: oldUsage,
@@ -820,7 +820,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     const appendBoundary = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("assistant-compaction-boundary", "assistant", "compacted summary", {
+      createXumMessage("assistant-compaction-boundary", "assistant", "compacted summary", {
         timestamp: Date.now() - 2_000,
         compacted: "user",
         compactionBoundary: true,
@@ -831,14 +831,14 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     const appendCurrentEpochUser = await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-after-boundary", "user", "fresh prompt after compaction", {
+      createXumMessage("user-after-boundary", "user", "fresh prompt after compaction", {
         timestamp: Date.now() - 1_000,
       })
     );
     expect(appendCurrentEpochUser.success).toBe(true);
 
     const aiEmitter = new EventEmitter();
-    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const streamMessage = mock((_history: XumMessage[]) => Promise.resolve(Ok(undefined)));
     const aiService = Object.assign(aiEmitter, {
       isStreaming: mock((_workspaceId: string) => false),
       stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
@@ -1047,14 +1047,14 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     historyCleanup = cleanup;
 
     const aiEmitter = new EventEmitter();
-    const streamHistories: MuxMessage[][] = [];
+    const streamHistories: XumMessage[][] = [];
     let streamCallCount = 0;
     const streamMessage = mock((request: unknown) => {
       const requestMessages =
         typeof request === "object" && request !== null && "messages" in request
           ? (request as { messages?: unknown }).messages
           : undefined;
-      streamHistories.push(Array.isArray(requestMessages) ? (requestMessages as MuxMessage[]) : []);
+      streamHistories.push(Array.isArray(requestMessages) ? (requestMessages as XumMessage[]) : []);
       streamCallCount += 1;
 
       if (streamCallCount === 1) {

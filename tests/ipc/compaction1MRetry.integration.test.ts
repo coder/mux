@@ -13,7 +13,7 @@
 import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import { createStreamCollector, resolveOrpcClient } from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
-import { createMuxMessage } from "../../src/common/types/message";
+import { createXumMessage } from "../../src/common/types/message";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -75,13 +75,13 @@ describeIntegration("compaction 1M context retry", () => {
         const charsPerMessage = Math.ceil(CHARS_NEEDED / pairsNeeded);
 
         for (let i = 0; i < pairsNeeded; i++) {
-          const userMsg = createMuxMessage(
+          const userMsg = createXumMessage(
             `filler-user-${i}`,
             "user",
             buildFillerText(charsPerMessage),
             {}
           );
-          const assistantMsg = createMuxMessage(
+          const assistantMsg = createXumMessage(
             `filler-asst-${i}`,
             "assistant",
             buildFillerText(charsPerMessage),

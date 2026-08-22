@@ -1,4 +1,4 @@
-import type { MuxMessage, MuxReasoningPart } from "@/common/types/message";
+import type { XumMessage, XumReasoningPart } from "@/common/types/message";
 
 export interface ReasoningProviderMetadata {
   anthropic?: {
@@ -40,11 +40,11 @@ function nonEmptyString(value: unknown): string | undefined {
  */
 export function sanitizeReasoningReplayMetadata(
   value: unknown
-): MuxReasoningPart["providerOptions"] | undefined {
+): XumReasoningPart["providerOptions"] | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
 
-  const options: NonNullable<MuxReasoningPart["providerOptions"]> = {};
+  const options: NonNullable<XumReasoningPart["providerOptions"]> = {};
 
   const anthropicSignature = nonEmptyString(asRecord(record.anthropic)?.signature);
   if (anthropicSignature) {
@@ -84,18 +84,18 @@ export function sanitizeReasoningReplayMetadata(
  */
 export function reasoningProviderOptionsFromMetadata(
   providerMetadata: ReasoningProviderMetadata | undefined
-): MuxReasoningPart["providerOptions"] | undefined {
+): XumReasoningPart["providerOptions"] | undefined {
   return sanitizeReasoningReplayMetadata(providerMetadata);
 }
 
 export function mergeReasoningProviderOptions(
-  existing: MuxReasoningPart["providerOptions"] | undefined,
-  incoming: MuxReasoningPart["providerOptions"] | undefined
-): MuxReasoningPart["providerOptions"] | undefined {
+  existing: XumReasoningPart["providerOptions"] | undefined,
+  incoming: XumReasoningPart["providerOptions"] | undefined
+): XumReasoningPart["providerOptions"] | undefined {
   if (!existing) return incoming;
   if (!incoming) return existing;
 
-  const merged: NonNullable<MuxReasoningPart["providerOptions"]> = { ...existing };
+  const merged: NonNullable<XumReasoningPart["providerOptions"]> = { ...existing };
 
   if (incoming.anthropic) {
     merged.anthropic = { ...existing.anthropic, ...incoming.anthropic };
@@ -116,8 +116,8 @@ export function mergeReasoningProviderOptions(
  * `providerMetadata` into ModelMessage `providerOptions` and ignores any
  * `providerOptions` field on the input part. Never persisted to history.
  */
-type ReasoningPartWithReplayMetadata = MuxReasoningPart & {
-  providerMetadata?: MuxReasoningPart["providerOptions"];
+type ReasoningPartWithReplayMetadata = XumReasoningPart & {
+  providerMetadata?: XumReasoningPart["providerOptions"];
 };
 
 /**
@@ -127,7 +127,7 @@ type ReasoningPartWithReplayMetadata = MuxReasoningPart & {
  * this bridge, prior-turn reasoning is silently dropped for every provider.
  * Non-mutating: history objects are reused elsewhere (e.g. debug logging).
  */
-export function attachReasoningReplayMetadata(messages: MuxMessage[]): MuxMessage[] {
+export function attachReasoningReplayMetadata(messages: XumMessage[]): XumMessage[] {
   return messages.map((message) => {
     if (message.role !== "assistant") return message;
 

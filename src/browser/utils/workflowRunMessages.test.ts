@@ -7,7 +7,7 @@ import {
   getWorkflowRunCardProjection,
   hasWorkflowRunToolCallMessage,
 } from "./workflowRunMessages";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 
 function parseWorkflowResultPayload(message: string): Record<string, unknown> {
@@ -173,7 +173,7 @@ describe("buildWorkflowRunCardMessage", () => {
   });
 
   test("filters durable workflow UI-only rows while preserving workflow results", () => {
-    const trigger: MuxMessage = {
+    const trigger: XumMessage = {
       id: "workflow-command",
       role: "user",
       parts: [{ type: "text", text: "/deep-research mux" }],
@@ -195,7 +195,7 @@ describe("buildWorkflowRunCardMessage", () => {
       historySequence: 2,
       muxMetadata: { type: "workflow-run-card-display", runId: "wfr_1" },
     };
-    const result: MuxMessage = {
+    const result: XumMessage = {
       id: "workflow-result",
       role: "user",
       parts: [{ type: "text", text: "/deep-research mux\n\n<mux_workflow_result />" }],
@@ -228,7 +228,7 @@ describe("buildWorkflowRunCardMessage", () => {
       { runId: run.id, status: "completed", result: { reportMarkdown: "done" } },
       123
     );
-    const inFlightMessage: MuxMessage = {
+    const inFlightMessage: XumMessage = {
       id: "assistant_1",
       role: "assistant",
       parts: [
@@ -268,7 +268,7 @@ describe("buildWorkflowRunCardMessage", () => {
       args: { value: "ok" },
       status: "running" as const,
     };
-    const inFlightMessage: MuxMessage = {
+    const inFlightMessage: XumMessage = {
       id: "assistant_inline",
       role: "assistant",
       parts: [
@@ -365,7 +365,7 @@ describe("buildWorkflowRunCardMessage", () => {
       args: { topic: "trigger" },
       status: "completed" as const,
     };
-    const trigger: MuxMessage = {
+    const trigger: XumMessage = {
       id: "workflow-run-command-wfr_trigger_anchor",
       role: "user",
       parts: [{ type: "text", text: "/deep-research trigger" }],
@@ -428,7 +428,7 @@ describe("buildWorkflowRunCardMessage", () => {
       args: { topic: "reload" },
       status: "running" as const,
     };
-    const inFlightMessage: MuxMessage = {
+    const inFlightMessage: XumMessage = {
       id: "assistant_1",
       role: "assistant",
       parts: [
@@ -441,7 +441,7 @@ describe("buildWorkflowRunCardMessage", () => {
         },
       ],
     };
-    const completedAssistantMessage: MuxMessage = {
+    const completedAssistantMessage: XumMessage = {
       id: "assistant_2",
       role: "assistant",
       parts: [

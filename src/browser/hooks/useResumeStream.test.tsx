@@ -9,7 +9,7 @@ import {
   useWorkspaceStoreRaw,
   workspaceStore,
 } from "@/browser/stores/WorkspaceStore";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useResumeStream } from "./useResumeStream";
 
@@ -46,7 +46,7 @@ function createWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata
 function seedWorkspaceWithUserMessage(workspaceId: string): void {
   workspaceStore.addWorkspace(createWorkspaceMetadata(workspaceId));
 
-  const userMessage: MuxMessage = {
+  const userMessage: XumMessage = {
     id: `${workspaceId}-user-1`,
     role: "user",
     parts: [{ type: "text", text: "Hi" }],

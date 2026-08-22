@@ -1439,7 +1439,7 @@ export class ProviderService {
         const providersConfig = this.config.loadProvidersConfig() ?? {};
 
         // Track if this is first time setting couponCode for mux-gateway
-        const isFirstMuxGatewayCoupon =
+        const isFirstXumGatewayCoupon =
           provider === "mux-gateway" &&
           keyPath.length === 1 &&
           keyPath[0] === "couponCode" &&
@@ -1487,7 +1487,7 @@ export class ProviderService {
         }
 
         // Add default models when setting up mux-gateway for the first time
-        if (isFirstMuxGatewayCoupon) {
+        if (isFirstXumGatewayCoupon) {
           const providerConfig = providersConfig[provider] as Record<string, unknown>;
           const existingModels = normalizeProviderModelEntries(providerConfig.models);
           if (existingModels.length === 0) {

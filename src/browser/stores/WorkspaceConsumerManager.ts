@@ -1,7 +1,7 @@
 import type { WorkspaceConsumersState } from "./WorkspaceStore";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { ChatStats } from "@/common/types/chatStats";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 
 const TOKENIZER_CANCELLED_MESSAGE = "Cancelled by newer request";
@@ -11,7 +11,7 @@ const latestRequestByWorkspace = new Map<string, number>();
 
 async function calculateTokenStatsLatest(
   workspaceId: string,
-  messages: MuxMessage[],
+  messages: XumMessage[],
   model: string
 ): Promise<ChatStats> {
   const orpcClient = window.__ORPC_CLIENT__;

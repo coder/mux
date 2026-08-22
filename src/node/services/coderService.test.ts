@@ -3,7 +3,7 @@ import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
 import * as childProcess from "child_process";
-import * as muxSshConfigWriter from "@/node/runtime/muxSshConfigWriter";
+import * as xumSshConfigWriter from "@/node/runtime/xumSshConfigWriter";
 import * as disposableExec from "@/node/utils/disposableExec";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -1401,26 +1401,26 @@ describe("deleteWorkspaceEventually", () => {
   });
 });
 
-describe("CoderService.ensureMuxCoderSSHConfig", () => {
+describe("CoderService.ensureXumCoderSSHConfig", () => {
   it("skips SSH config writes when coder binary is unavailable", async () => {
     const service = new CoderService();
     const resolveCoderBinaryPathSpy = spyOn(
       service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
       "resolveCoderBinaryPath"
     ).mockResolvedValue(null);
-    const ensureMuxCoderSSHConfigFileSpy = spyOn(
-      muxSshConfigWriter,
-      "ensureMuxCoderSSHConfigFile"
+    const ensureXumCoderSSHConfigFileSpy = spyOn(
+      xumSshConfigWriter,
+      "ensureXumCoderSSHConfigFile"
     ).mockResolvedValue();
 
     try {
-      await service.ensureMuxCoderSSHConfig();
+      await service.ensureXumCoderSSHConfig();
 
       expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
-      expect(ensureMuxCoderSSHConfigFileSpy).not.toHaveBeenCalled();
+      expect(ensureXumCoderSSHConfigFileSpy).not.toHaveBeenCalled();
     } finally {
       resolveCoderBinaryPathSpy.mockRestore();
-      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+      ensureXumCoderSSHConfigFileSpy.mockRestore();
     }
   });
 
@@ -1430,21 +1430,21 @@ describe("CoderService.ensureMuxCoderSSHConfig", () => {
       service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
       "resolveCoderBinaryPath"
     ).mockResolvedValue("/usr/local/bin/coder");
-    const ensureMuxCoderSSHConfigFileSpy = spyOn(
-      muxSshConfigWriter,
-      "ensureMuxCoderSSHConfigFile"
+    const ensureXumCoderSSHConfigFileSpy = spyOn(
+      xumSshConfigWriter,
+      "ensureXumCoderSSHConfigFile"
     ).mockResolvedValue();
 
     try {
-      await service.ensureMuxCoderSSHConfig();
+      await service.ensureXumCoderSSHConfig();
 
       expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
-      expect(ensureMuxCoderSSHConfigFileSpy).toHaveBeenCalledWith({
+      expect(ensureXumCoderSSHConfigFileSpy).toHaveBeenCalledWith({
         coderBinaryPath: "/usr/local/bin/coder",
       });
     } finally {
       resolveCoderBinaryPathSpy.mockRestore();
-      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+      ensureXumCoderSSHConfigFileSpy.mockRestore();
     }
   });
 
@@ -1454,21 +1454,21 @@ describe("CoderService.ensureMuxCoderSSHConfig", () => {
       service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
       "resolveCoderBinaryPath"
     ).mockResolvedValue("C:\\Users\\me\\bin\\coder.exe");
-    const ensureMuxCoderSSHConfigFileSpy = spyOn(
-      muxSshConfigWriter,
-      "ensureMuxCoderSSHConfigFile"
+    const ensureXumCoderSSHConfigFileSpy = spyOn(
+      xumSshConfigWriter,
+      "ensureXumCoderSSHConfigFile"
     ).mockResolvedValue();
 
     try {
-      await service.ensureMuxCoderSSHConfig();
+      await service.ensureXumCoderSSHConfig();
 
       expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
-      expect(ensureMuxCoderSSHConfigFileSpy).toHaveBeenCalledWith({
+      expect(ensureXumCoderSSHConfigFileSpy).toHaveBeenCalledWith({
         coderBinaryPath: "C:\\Users\\me\\bin\\coder.exe",
       });
     } finally {
       resolveCoderBinaryPathSpy.mockRestore();
-      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+      ensureXumCoderSSHConfigFileSpy.mockRestore();
     }
   });
 });

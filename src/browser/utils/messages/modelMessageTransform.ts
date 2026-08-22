@@ -4,7 +4,7 @@
  */
 
 import type { ModelMessage, AssistantModelMessage, ToolModelMessage } from "ai";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
 import { hasProviderReplayableContent } from "@/common/utils/messages/providerEligibility";
@@ -32,9 +32,9 @@ import { renderAttachmentsToContentWithBudget } from "./attachmentRenderer";
  * @param preserveReasoningOnly - If true, keep reasoning-only messages (for Extended Thinking)
  */
 export function filterEmptyAssistantMessages(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   preserveReasoningOnly = false
-): MuxMessage[] {
+): XumMessage[] {
   return messages.filter((msg) => {
     // Keep all non-assistant messages
     if (msg.role !== "assistant") {
@@ -59,8 +59,8 @@ export function filterEmptyAssistantMessages(
  * filtered out, and we'd lose the interruption context. A user message always
  * survives filtering.
  */
-export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
-  const result: MuxMessage[] = [];
+export function addInterruptedSentinel(messages: XumMessage[]): XumMessage[] {
+  const result: XumMessage[] = [];
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
@@ -106,12 +106,12 @@ export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
  * @returns Messages with agent transition context injected if needed
  */
 export function injectAgentTransition(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   currentAgentId?: string,
   toolNames?: string[],
   planContent?: string,
   planFilePath?: string
-): MuxMessage[] {
+): XumMessage[] {
   // No agent specified, nothing to do
   if (!currentAgentId) {
     return messages;
@@ -148,7 +148,7 @@ export function injectAgentTransition(
     return messages;
   }
 
-  const result: MuxMessage[] = [];
+  const result: XumMessage[] = [];
 
   // Add all messages up to (but not including) the last user message
   for (let i = 0; i < lastUserIndex; i++) {
@@ -181,7 +181,7 @@ ${planContent}
 </plan>`;
   }
 
-  const transitionMessage: MuxMessage = {
+  const transitionMessage: XumMessage = {
     id: `agent-transition-${Date.now()}`,
     role: "user",
     parts: [
@@ -210,7 +210,7 @@ ${planContent}
 // turn start (see createFileChangeNotificationMessage in fileChangeTracker.ts),
 // keeping the provider request a pure function of the session log.
 
-function findLatestLegacyCompactionSummaryIndex(messages: MuxMessage[]): number {
+function findLatestLegacyCompactionSummaryIndex(messages: XumMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (message.role !== "assistant") {
@@ -241,9 +241,9 @@ function findLatestLegacyCompactionSummaryIndex(messages: MuxMessage[]): number 
  * @returns Messages with attachments injected after compaction summary
  */
 export function injectPostCompactionAttachments(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   attachments?: PostCompactionAttachment[] | null
-): MuxMessage[] {
+): XumMessage[] {
   if (!attachments || attachments.length === 0) {
     return messages;
   }
@@ -259,7 +259,7 @@ export function injectPostCompactionAttachments(
   if (compactionIndex === -1) {
     // No compaction message found - this shouldn't happen if attachments are provided,
     // but append at end as a fallback
-    const syntheticMessage: MuxMessage = {
+    const syntheticMessage: XumMessage = {
       id: `post-compaction-${Date.now()}`,
       role: "user",
       parts: [
@@ -279,7 +279,7 @@ export function injectPostCompactionAttachments(
   }
 
   // Insert the synthetic message immediately after the compaction summary
-  const syntheticMessage: MuxMessage = {
+  const syntheticMessage: XumMessage = {
     id: `post-compaction-${Date.now()}`,
     role: "user",
     parts: [

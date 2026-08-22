@@ -3,9 +3,9 @@ import type {
   CompactionRequestData,
   DisplayedMessage,
   InlineSkillSnapshotMap,
-  MuxFilePart,
-  MuxMessage,
-  MuxMessageMetadata,
+  XumFilePart,
+  XumMessage,
+  XumMessageMetadata,
 } from "@/common/types/message";
 import {
   getCompactionFollowUpContent,
@@ -54,7 +54,7 @@ export function resolveRouteProvider(
   return routeProvider ?? (routedThroughGateway === true ? "mux-gateway" : undefined);
 }
 
-export function normalizeMessageRouteProvider(message: MuxMessage): MuxMessage {
+export function normalizeMessageRouteProvider(message: XumMessage): XumMessage {
   const routeProvider = resolveRouteProvider(
     message.metadata?.routeProvider,
     message.metadata?.routedThroughGateway
@@ -78,10 +78,10 @@ export function normalizeMessageRouteProvider(message: MuxMessage): MuxMessage {
  * Avoids O(n²) string allocations from repeated concatenation.
  * Tool parts are preserved as-is between merged text/reasoning runs.
  */
-export function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
+export function mergeAdjacentParts(parts: XumMessage["parts"]): XumMessage["parts"] {
   if (parts.length <= 1) return parts;
 
-  const merged: MuxMessage["parts"] = [];
+  const merged: XumMessage["parts"] = [];
   let pendingTexts: string[] = [];
   let pendingTextTimestamp: number | undefined;
   let pendingReasonings: string[] = [];
@@ -133,7 +133,7 @@ export function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["part
   return merged;
 }
 
-export function getTextPartContent(parts: ReadonlyArray<MuxMessage["parts"][number]>): string {
+export function getTextPartContent(parts: ReadonlyArray<XumMessage["parts"][number]>): string {
   const content: string[] = [];
   for (const part of parts) {
     if (part.type === "text") {
@@ -144,7 +144,7 @@ export function getTextPartContent(parts: ReadonlyArray<MuxMessage["parts"][numb
 }
 
 function createCompactionBoundaryRow(
-  message: MuxMessage,
+  message: XumMessage,
   historySequence: number
 ): Extract<DisplayedMessage, { type: "compaction-boundary" }> {
   assert(message.role === "assistant", "compaction boundaries must belong to assistant summaries");
@@ -169,19 +169,19 @@ function createCompactionBoundaryRow(
 }
 
 export interface BuildDisplayedMessagesForMessageOptions {
-  message: MuxMessage;
+  message: XumMessage;
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   hasActiveStream: boolean;
   streamIsReplay?: boolean;
-  isContextBoundaryMessage: (message: MuxMessage) => boolean;
+  isContextBoundaryMessage: (message: XumMessage) => boolean;
 }
 
 type ToolDisplayStatus = Extract<DisplayedMessage, { type: "tool" }>["status"];
 type NestedToolCalls = NonNullable<DynamicToolPart["nestedCalls"]>;
 
 function buildPlanDisplayMessages(
-  message: MuxMessage,
+  message: XumMessage,
   historySequence: number
 ): DisplayedMessage[] | undefined {
   const muxMeta = message.metadata?.muxMetadata;
@@ -209,7 +209,7 @@ function buildPlanDisplayMessages(
  * transcript (see AGENTS.md self-healing rule).
  */
 function getValidBashMonitorWakeRecords(
-  muxMeta: MuxMessageMetadata | undefined
+  muxMeta: XumMessageMetadata | undefined
 ): BashMonitorWakeDisplayRecord[] | undefined {
   if (muxMeta?.type !== "bash-monitor-wake") return undefined;
   const records: unknown = muxMeta.records;
@@ -243,7 +243,7 @@ function getRawCommand(muxMetadata: unknown): string | undefined {
 }
 
 function buildUserDisplayedMessages(options: {
-  message: MuxMessage;
+  message: XumMessage;
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   baseTimestamp?: number;
@@ -255,7 +255,7 @@ function buildUserDisplayedMessages(options: {
   const partsContent = getTextPartContent(message.parts);
 
   const fileParts = message.parts
-    .filter((p): p is MuxFilePart => p.type === "file")
+    .filter((p): p is XumFilePart => p.type === "file")
     .map((p) => ({
       url: typeof p.url === "string" ? p.url : "",
       mediaType: p.mediaType,
@@ -331,7 +331,7 @@ function buildUserDisplayedMessages(options: {
   ];
 }
 
-function isRenderableDisplayPart(part: MuxMessage["parts"][number]): boolean {
+function isRenderableDisplayPart(part: XumMessage["parts"][number]): boolean {
   return (
     part.type === "reasoning" ||
     (part.type === "text" && Boolean(part.text)) ||
@@ -339,7 +339,7 @@ function isRenderableDisplayPart(part: MuxMessage["parts"][number]): boolean {
   );
 }
 
-function getRenderablePartStats(parts: MuxMessage["parts"]): {
+function getRenderablePartStats(parts: XumMessage["parts"]): {
   lastPartIndex: number;
   isReasoningOnlyMessage: boolean;
 } {
@@ -364,8 +364,8 @@ function getRenderablePartStats(parts: MuxMessage["parts"]): {
 function appendReasoningRow(
   displayedMessages: DisplayedMessage[],
   options: {
-    message: MuxMessage;
-    part: Extract<MuxMessage["parts"][number], { type: "reasoning" }>;
+    message: XumMessage;
+    part: Extract<XumMessage["parts"][number], { type: "reasoning" }>;
     partIndex: number;
     historySequence: number;
     isStreaming: boolean;
@@ -396,8 +396,8 @@ function appendReasoningRow(
 function appendAssistantTextRow(
   displayedMessages: DisplayedMessage[],
   options: {
-    message: MuxMessage;
-    part: Extract<MuxMessage["parts"][number], { type: "text" }>;
+    message: XumMessage;
+    part: Extract<XumMessage["parts"][number], { type: "text" }>;
     partIndex: number;
     historySequence: number;
     isStreaming: boolean;
@@ -500,7 +500,7 @@ function getNestedCallsForDisplay(part: DynamicToolPart): NestedToolCalls | unde
 function appendToolRows(
   displayedMessages: DisplayedMessage[],
   options: {
-    message: MuxMessage;
+    message: XumMessage;
     part: DynamicToolPart;
     partIndex: number;
     historySequence: number;
@@ -545,7 +545,7 @@ function getNestedString(value: unknown, path: string[]): string | undefined {
 
 // @ai-sdk/anthropic >=3.0.82 maps refusal stop details to this providerMetadata
 // shape; older persisted turns simply omit it and fall back to the generic row.
-function getProviderRefusalExplanation(message: MuxMessage): string | undefined {
+function getProviderRefusalExplanation(message: XumMessage): string | undefined {
   return getNestedString(message.metadata?.providerMetadata, [
     "anthropic",
     "stopDetails",
@@ -553,7 +553,7 @@ function getProviderRefusalExplanation(message: MuxMessage): string | undefined 
   ]);
 }
 
-function buildRefusalFinishMessage(message: MuxMessage): string {
+function buildRefusalFinishMessage(message: XumMessage): string {
   const finishReason = message.metadata?.finishReason ?? "content-filter";
   const explanation = getProviderRefusalExplanation(message);
   const base =
@@ -565,7 +565,7 @@ function buildRefusalFinishMessage(message: MuxMessage): string {
 function appendStreamErrorRows(
   displayedMessages: DisplayedMessage[],
   options: {
-    message: MuxMessage;
+    message: XumMessage;
     historySequence: number;
     hasActiveStream: boolean;
     baseTimestamp?: number;
@@ -619,12 +619,12 @@ function appendStreamErrorRows(
 }
 
 function buildAssistantDisplayedMessages(options: {
-  message: MuxMessage;
+  message: XumMessage;
   baseTimestamp?: number;
   historySequence: number;
   hasActiveStream: boolean;
   streamIsReplay?: boolean;
-  isContextBoundaryMessage: (message: MuxMessage) => boolean;
+  isContextBoundaryMessage: (message: XumMessage) => boolean;
 }): DisplayedMessage[] {
   const {
     message,

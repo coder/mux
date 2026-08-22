@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import { asSchema, type FlexibleSchema, type Tool } from "ai";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { BlobRef } from "@/common/types/durableEvent";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { stableStringify } from "@/common/utils/stableStringify";
 import { log } from "@/node/services/log";
 import type { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
@@ -165,7 +165,7 @@ export async function emitTurnEnvelope(params: {
    * Partial-output continuation a refusal fallback appended to its request
    * (model-visible but never persisted to chat.jsonl at this sequence).
    */
-  partialContinuationMessage?: MuxMessage | null;
+  partialContinuationMessage?: XumMessage | null;
 }): Promise<void> {
   try {
     // Content-addressed: unchanged prompts across turns dedupe to one blob.

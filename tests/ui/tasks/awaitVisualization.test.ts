@@ -18,7 +18,7 @@ import {
 } from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 
 import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
@@ -39,9 +39,9 @@ async function waitForWorkspaceChatToRender(container: HTMLElement): Promise<voi
 async function seedHistory(historyService: HistoryService, workspaceId: string): Promise<void> {
   const awaitedTaskIds = ["task-a", "task-b"];
 
-  const userMessage = createMuxMessage("user-1", "user", "Wait for tasks");
+  const userMessage = createXumMessage("user-1", "user", "Wait for tasks");
 
-  const taskAwaitToolMessage = createMuxMessage(
+  const taskAwaitToolMessage = createXumMessage(
     "assistant-task-await",
     "assistant",
     "",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { AgentSkillScope } from "@/common/types/agentSkill";
 import {
-  createMuxMessage,
+  createXumMessage,
   type AgentSkillReference,
   type DisplayedUserMessage,
   type MCPPromptReference,
@@ -131,7 +131,7 @@ const createSkillSnapshotMessage = ({
   body?: string;
   frontmatterYaml?: string;
 }) =>
-  createMuxMessage(
+  createXumMessage(
     id,
     "user",
     `<agent-skill name="${skillName}" scope="${scope}">\n${body}\n</agent-skill>`,
@@ -160,7 +160,7 @@ const createSkillInvocationMessage = ({
   historySequence: number;
 }) => {
   const command = `/${skillName}`;
-  return createMuxMessage(id, "user", command, {
+  return createXumMessage(id, "user", command, {
     historySequence,
     timestamp: 0,
     muxMetadata: {
@@ -184,7 +184,7 @@ const createInlineSkillMessage = ({
   historySequence: number;
   refs: AgentSkillReference[];
 }) =>
-  createMuxMessage(id, "user", content, {
+  createXumMessage(id, "user", content, {
     historySequence,
     timestamp: 0,
     muxMetadata: {
@@ -476,7 +476,7 @@ describe("Skill load error tracking", () => {
     const aggregator = createAggregator();
 
     aggregator.loadHistoricalMessages([
-      createMuxMessage("msg-1", "assistant", "", undefined, [
+      createXumMessage("msg-1", "assistant", "", undefined, [
         {
           type: "dynamic-tool",
           toolCallId: "tc-1",
@@ -525,7 +525,7 @@ describe("Agent skill snapshot association", () => {
 
   it("attaches MCP prompt snapshots to slash and inline invocation surfaces", () => {
     const aggregator = createAggregator();
-    const snapshot = createMuxMessage("prompt-snapshot", "user", "Expanded prompt body", {
+    const snapshot = createXumMessage("prompt-snapshot", "user", "Expanded prompt body", {
       historySequence: 1,
       timestamp: 0,
       synthetic: true,
@@ -536,7 +536,7 @@ describe("Agent skill snapshot association", () => {
         invokingMessageId: "prompt-slash",
       },
     });
-    const slash = createMuxMessage("prompt-slash", "user", "Using MCP prompt coder/review", {
+    const slash = createXumMessage("prompt-slash", "user", "Using MCP prompt coder/review", {
       historySequence: 2,
       timestamp: 0,
       muxMetadata: {
@@ -554,7 +554,7 @@ describe("Agent skill snapshot association", () => {
         agentSkillRefs: [{ skillName: "tdd", scope: "global", source: "inline" }],
       },
     });
-    const inlineSnapshot = createMuxMessage("prompt-snapshot-2", "user", "Expanded prompt body", {
+    const inlineSnapshot = createXumMessage("prompt-snapshot-2", "user", "Expanded prompt body", {
       historySequence: 3,
       timestamp: 0,
       synthetic: true,
@@ -565,7 +565,7 @@ describe("Agent skill snapshot association", () => {
         invokingMessageId: "prompt-inline",
       },
     });
-    const inline = createMuxMessage("prompt-inline", "user", "Use $mcp__coder__review", {
+    const inline = createXumMessage("prompt-inline", "user", "Use $mcp__coder__review", {
       historySequence: 4,
       timestamp: 0,
       muxMetadata: {
@@ -605,7 +605,7 @@ describe("Agent skill snapshot association", () => {
     // Simulates corrupted chat.jsonl rows; muxMetadata persists untyped.
     const corruptMcpRefs: unknown = [null, {}, { serverName: "coder" }, 42];
     const corruptSkillRefs: unknown = [null, { skillName: "tdd" }];
-    const corrupted = createMuxMessage("prompt-corrupted", "user", "Corrupted refs", {
+    const corrupted = createXumMessage("prompt-corrupted", "user", "Corrupted refs", {
       historySequence: 1,
       timestamp: 0,
       muxMetadata: {
@@ -623,7 +623,7 @@ describe("Agent skill snapshot association", () => {
         source: "slash",
       },
     ];
-    const valid = createMuxMessage("prompt-valid", "user", "Using MCP prompt coder/review", {
+    const valid = createXumMessage("prompt-valid", "user", "Using MCP prompt coder/review", {
       historySequence: 2,
       timestamp: 0,
       muxMetadata: {
@@ -653,7 +653,7 @@ describe("Agent skill snapshot association", () => {
       commandKey: "mcp__coder__review",
       source: "slash" as const,
     };
-    const snapshot = createMuxMessage("prompt-snapshot", "user", "Expanded prompt body", {
+    const snapshot = createXumMessage("prompt-snapshot", "user", "Expanded prompt body", {
       historySequence: 1,
       timestamp: 0,
       synthetic: true,
@@ -664,7 +664,7 @@ describe("Agent skill snapshot association", () => {
         invokingMessageId: "prompt-first",
       },
     });
-    const first = createMuxMessage("prompt-first", "user", "Using MCP prompt coder/review", {
+    const first = createXumMessage("prompt-first", "user", "Using MCP prompt coder/review", {
       historySequence: 2,
       timestamp: 0,
       muxMetadata: {
@@ -674,7 +674,7 @@ describe("Agent skill snapshot association", () => {
         mcpPromptRefs: [promptRef],
       },
     });
-    const second = createMuxMessage("prompt-second", "user", "Using MCP prompt coder/review", {
+    const second = createXumMessage("prompt-second", "user", "Using MCP prompt coder/review", {
       historySequence: 3,
       timestamp: 0,
       muxMetadata: {
@@ -698,7 +698,7 @@ describe("Agent skill snapshot association", () => {
 
   it("does not attach a crash-orphaned snapshot to a later same-prompt turn", () => {
     const aggregator = createAggregator();
-    const orphan = createMuxMessage("orphan-snapshot", "user", "Stale expansion", {
+    const orphan = createXumMessage("orphan-snapshot", "user", "Stale expansion", {
       historySequence: 1,
       timestamp: 0,
       synthetic: true,
@@ -709,7 +709,7 @@ describe("Agent skill snapshot association", () => {
         invokingMessageId: "user-crashed",
       },
     });
-    const later = createMuxMessage("prompt-later", "user", "Use $mcp__coder__review", {
+    const later = createXumMessage("prompt-later", "user", "Use $mcp__coder__review", {
       historySequence: 2,
       timestamp: 0,
       muxMetadata: {
@@ -975,7 +975,7 @@ describe("Agent skill snapshot association", () => {
       frontmatterYaml: "name: tdd\ndescription: Test-first changes",
     });
     const command = "/pull-requests use $tdd";
-    const invocation = createMuxMessage("mixed-invoke", "user", command, {
+    const invocation = createXumMessage("mixed-invoke", "user", command, {
       historySequence: 3,
       timestamp: 0,
       muxMetadata: {

@@ -12,13 +12,13 @@ export const FilePartSchema = z.object({
   filename: z.string().optional(),
 });
 
-export const MuxTextPartSchema = z.object({
+export const XumTextPartSchema = z.object({
   type: z.literal("text"),
   text: z.string(),
   timestamp: z.number().optional(),
 });
 
-export const MuxReasoningPartSchema = z.object({
+export const XumReasoningPartSchema = z.object({
   type: z.literal("reasoning"),
   text: z.string(),
   timestamp: z.number().optional(),
@@ -33,7 +33,7 @@ export const WorkflowRunToolAttachmentSchema = z.object({
 export type WorkflowRunToolAttachment = z.infer<typeof WorkflowRunToolAttachmentSchema>;
 
 // Base schema for tool parts - shared fields
-const MuxToolPartBase = z.object({
+const XumToolPartBase = z.object({
   type: z.literal("dynamic-tool"),
   toolCallId: z.string(),
   toolName: z.string(),
@@ -70,17 +70,17 @@ export const NestedToolCallSchema = z.object({
 export type NestedToolCall = z.infer<typeof NestedToolCallSchema>;
 
 // Discriminated tool part schemas - output required only when state is "output-available"
-export const DynamicToolPartPendingSchema = MuxToolPartBase.extend({
+export const DynamicToolPartPendingSchema = XumToolPartBase.extend({
   state: z.literal("input-available"),
   nestedCalls: z.array(NestedToolCallSchema).optional(),
 });
 
-export const DynamicToolPartAvailableSchema = MuxToolPartBase.extend({
+export const DynamicToolPartAvailableSchema = XumToolPartBase.extend({
   state: z.literal("output-available"),
   output: z.unknown(),
   nestedCalls: z.array(NestedToolCallSchema).optional(),
 });
-export const DynamicToolPartRedactedSchema = MuxToolPartBase.extend({
+export const DynamicToolPartRedactedSchema = XumToolPartBase.extend({
   state: z.literal("output-redacted"),
   failed: z.boolean().optional(),
   nestedCalls: z.array(NestedToolCallSchema).optional(),
@@ -93,15 +93,15 @@ export const DynamicToolPartSchema = z.discriminatedUnion("state", [
 ]);
 
 // Alias for message schemas
-export const MuxToolPartSchema = DynamicToolPartSchema;
+export const XumToolPartSchema = DynamicToolPartSchema;
 
-export const MuxFilePartSchema = FilePartSchema.extend({
+export const XumFilePartSchema = FilePartSchema.extend({
   type: z.literal("file"),
 });
 
 // Export types inferred from schemas for reuse across app/test code.
 export type FilePart = z.infer<typeof FilePartSchema>;
-export type MuxFilePart = z.infer<typeof MuxFilePartSchema>;
+export type XumFilePart = z.infer<typeof XumFilePartSchema>;
 
 const CompactionEpochSchema = z.optional(
   z.preprocess(
@@ -128,15 +128,15 @@ const TranscriptAnchorSchema = z.object({
 });
 
 // XumMessage (simplified)
-export const MuxMessageSchema = z.object({
+export const XumMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["system", "user", "assistant"]),
   parts: z.array(
     z.discriminatedUnion("type", [
-      MuxTextPartSchema,
-      MuxReasoningPartSchema,
-      MuxToolPartSchema,
-      MuxFilePartSchema,
+      XumTextPartSchema,
+      XumReasoningPartSchema,
+      XumToolPartSchema,
+      XumFilePartSchema,
     ])
   ),
   createdAt: z.date().optional(),

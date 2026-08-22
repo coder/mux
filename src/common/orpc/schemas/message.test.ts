@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MuxMessageSchema } from "./message";
+import { XumMessageSchema } from "./message";
 
 function createMessage() {
   return {
@@ -9,12 +9,12 @@ function createMessage() {
   };
 }
 
-describe("MuxMessageSchema mcpPromptSnapshot parsing", () => {
+describe("XumMessageSchema mcpPromptSnapshot parsing", () => {
   test("strips malformed snapshot metadata instead of failing the history parse", () => {
     const malformedSnapshotValues: unknown[] = [null, {}, { serverName: 42 }, "snapshot", []];
 
     for (const malformed of malformedSnapshotValues) {
-      const parsed = MuxMessageSchema.parse({
+      const parsed = XumMessageSchema.parse({
         ...createMessage(),
         role: "user" as const,
         metadata: {
@@ -30,7 +30,7 @@ describe("MuxMessageSchema mcpPromptSnapshot parsing", () => {
   });
 
   test("preserves invokingMessageId across boundary parsing", () => {
-    const parsed = MuxMessageSchema.parse({
+    const parsed = XumMessageSchema.parse({
       ...createMessage(),
       role: "user" as const,
       metadata: {
@@ -48,9 +48,9 @@ describe("MuxMessageSchema mcpPromptSnapshot parsing", () => {
   });
 });
 
-describe("MuxMessageSchema compactionEpoch parsing", () => {
+describe("XumMessageSchema compactionEpoch parsing", () => {
   test("preserves valid positive integer compactionEpoch", () => {
-    const parsed = MuxMessageSchema.parse({
+    const parsed = XumMessageSchema.parse({
       ...createMessage(),
       metadata: {
         compactionEpoch: 7,
@@ -61,7 +61,7 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
   });
 
   test("preserves acpPromptId metadata", () => {
-    const parsed = MuxMessageSchema.parse({
+    const parsed = XumMessageSchema.parse({
       ...createMessage(),
       metadata: {
         acpPromptId: "acp-prompt-123",
@@ -72,7 +72,7 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
   });
 
   test("preserves routeProvider metadata", () => {
-    const parsed = MuxMessageSchema.parse({
+    const parsed = XumMessageSchema.parse({
       ...createMessage(),
       metadata: {
         routeProvider: "openai",
@@ -83,7 +83,7 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
   });
 
   test("preserves modelFallback metadata", () => {
-    const parsed = MuxMessageSchema.parse({
+    const parsed = XumMessageSchema.parse({
       ...createMessage(),
       metadata: {
         modelFallback: {
@@ -105,7 +105,7 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
       rawCommand: "/removed legacy command",
       nested: { version: 1 },
     };
-    const parsed = MuxMessageSchema.parse({
+    const parsed = XumMessageSchema.parse({
       ...createMessage(),
       metadata: { muxMetadata: legacyMetadata },
     });
@@ -127,7 +127,7 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
     ];
 
     for (const malformedModelFallback of malformedModelFallbackValues) {
-      const parsed = MuxMessageSchema.parse({
+      const parsed = XumMessageSchema.parse({
         ...createMessage(),
         metadata: {
           modelFallback: malformedModelFallback,
@@ -153,7 +153,7 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
     ];
 
     for (const malformedCompactionEpoch of malformedCompactionEpochValues) {
-      const parsed = MuxMessageSchema.parse({
+      const parsed = XumMessageSchema.parse({
         ...createMessage(),
         metadata: {
           compactionEpoch: malformedCompactionEpoch,

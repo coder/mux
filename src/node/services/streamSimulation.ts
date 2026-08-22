@@ -9,8 +9,8 @@
  * - `simulateToolPolicyNoop`: OpenAI SDK testing of tool-policy-disabled handling
  */
 
-import type { MuxMessage, MuxTextPart } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
+import type { XumMessage, XumTextPart } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamDeltaEvent, StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
@@ -72,7 +72,7 @@ export async function simulateContextLimitError(
   const errorMessage =
     "Context length exceeded: the conversation is too long to send to this OpenAI model. Please shorten the history and try again.";
 
-  const errorPartialMessage: MuxMessage = {
+  const errorPartialMessage: XumMessage = {
     id: ctx.assistantMessageId,
     role: "assistant",
     metadata: {
@@ -120,7 +120,7 @@ export async function simulateToolPolicyNoop(
   effectiveToolPolicy: ToolPolicy | undefined,
   historyService: HistoryService
 ): Promise<void> {
-  const noopMessage = createMuxMessage(ctx.assistantMessageId, "assistant", "", {
+  const noopMessage = createXumMessage(ctx.assistantMessageId, "assistant", "", {
     timestamp: Date.now(),
     model: ctx.canonicalModelString,
     routedThroughGateway: ctx.routedThroughGateway,
@@ -141,7 +141,7 @@ export async function simulateToolPolicyNoop(
 
   ctx.emit("stream-start", createSimulatedStreamStart(ctx));
 
-  const textParts = parts.filter((part): part is MuxTextPart => part.type === "text");
+  const textParts = parts.filter((part): part is XumTextPart => part.type === "text");
   if (textParts.length === 0) {
     throw new Error("simulateToolPolicyNoop requires at least one text part");
   }
@@ -179,7 +179,7 @@ export async function simulateToolPolicyNoop(
   };
   ctx.emit("stream-end", streamEndEvent);
 
-  const finalAssistantMessage: MuxMessage = {
+  const finalAssistantMessage: XumMessage = {
     ...noopMessage,
     metadata: {
       ...noopMessage.metadata,

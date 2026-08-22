@@ -150,7 +150,7 @@ function migrateLocalGatewayPrefsToBackend(
 
   if (shouldMigrateEnabled || shouldMigrateModels) {
     api.config
-      .updateMuxGatewayPrefs({
+      .updateXumGatewayPrefs({
         muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
         muxGatewayModels: cfg.muxGatewayModels ?? localModels,
       })

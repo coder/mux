@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { SessionUsageService, type SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import {
   getTotalCost,
   sumUsageHistory,
@@ -701,14 +701,14 @@ describe("SessionUsageService", () => {
       // Seed messages via real historyService
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("msg1", "assistant", "Hello", {
+        createXumMessage("msg1", "assistant", "Hello", {
           model: "claude-sonnet-4-20250514",
           usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
         })
       );
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("msg2", "assistant", "World", {
+        createXumMessage("msg2", "assistant", "World", {
           model: "claude-sonnet-4-20250514",
           usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },
         })
@@ -732,7 +732,7 @@ describe("SessionUsageService", () => {
       // Seed messages via real historyService
       await historyService.appendToHistory(
         workspaceId,
-        createMuxMessage("msg1", "assistant", "Hello", {
+        createXumMessage("msg1", "assistant", "Hello", {
           model: "claude-sonnet-4-20250514",
           usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
         })
@@ -778,7 +778,7 @@ describe("SessionUsageService", () => {
         },
       };
 
-      const assistantMessage = createMuxMessage("msg-tool-usage", "assistant", "Hello", {
+      const assistantMessage = createXumMessage("msg-tool-usage", "assistant", "Hello", {
         historySequence: 1,
         timestamp: Date.now(),
         model,
@@ -838,7 +838,7 @@ describe("SessionUsageService", () => {
         metadataModel,
         usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
       };
-      const assistantMessage = createMuxMessage("msg-coder-rebuild", "assistant", "Hello", {
+      const assistantMessage = createXumMessage("msg-coder-rebuild", "assistant", "Hello", {
         historySequence: 1,
         timestamp: Date.now(),
         model: rawModel,
@@ -892,7 +892,7 @@ describe("SessionUsageService", () => {
         },
       };
 
-      const assistantMessage = createMuxMessage("msg-tool-usage-malformed", "assistant", "Hello", {
+      const assistantMessage = createXumMessage("msg-tool-usage-malformed", "assistant", "Hello", {
         historySequence: 1,
         timestamp: 1_700_000_000_000,
       });
@@ -944,7 +944,7 @@ describe("SessionUsageService", () => {
       const workspaceId = "test-workspace";
 
       // Create a compaction summary with historicalUsage (legacy format)
-      const compactionSummary = createMuxMessage("summary-1", "assistant", "Compacted summary", {
+      const compactionSummary = createXumMessage("summary-1", "assistant", "Compacted summary", {
         historySequence: 1,
         compacted: true,
         model: "anthropic:claude-sonnet-4-5",
@@ -959,7 +959,7 @@ describe("SessionUsageService", () => {
       );
 
       // Add a post-compaction message
-      const postCompactionMsg = createMuxMessage("msg2", "assistant", "New response", {
+      const postCompactionMsg = createXumMessage("msg2", "assistant", "New response", {
         historySequence: 2,
         model: "anthropic:claude-sonnet-4-5",
         usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },

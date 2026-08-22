@@ -3,7 +3,7 @@
  */
 
 import type { z } from "zod";
-import type { MuxReasoningPart, MuxTextPart, MuxToolPart } from "./message";
+import type { XumReasoningPart, XumTextPart, XumToolPart } from "./message";
 import type {
   AutoCompactionCompletedEventSchema,
   AutoCompactionTriggeredEventSchema,
@@ -39,7 +39,7 @@ import type {
  * Completed message part (reasoning, text, or tool) suitable for serialization
  * Used in StreamEndEvent and partial message storage
  */
-export type CompletedMessagePart = MuxReasoningPart | MuxTextPart | MuxToolPart;
+export type CompletedMessagePart = XumReasoningPart | XumTextPart | XumToolPart;
 
 export type StreamStartEvent = z.infer<typeof StreamStartEventSchema>;
 export type StreamDeltaEvent = z.infer<typeof StreamDeltaEventSchema>;

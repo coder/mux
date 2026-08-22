@@ -24,7 +24,7 @@ import {
 
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 import { installDom } from "../dom";
@@ -50,8 +50,8 @@ async function seedBestOfParentHistory(
   historyService: HistoryService,
   workspaceId: string
 ): Promise<void> {
-  const userMessage = createMuxMessage("user-best-of", "user", "Compare the best options");
-  const taskToolMessage = createMuxMessage(
+  const userMessage = createXumMessage("user-best-of", "user", "Compare the best options");
+  const taskToolMessage = createXumMessage(
     "assistant-best-of",
     "assistant",
     "",
@@ -290,12 +290,12 @@ async function renderCompletedBestOfParentWorkspace(params: {
   }
 
   const historyService = new HistoryService(env.config);
-  const userMessage = createMuxMessage(
+  const userMessage = createXumMessage(
     "user-best-of-completed",
     "user",
     "Compare the best options"
   );
-  const taskToolMessage = createMuxMessage(
+  const taskToolMessage = createXumMessage(
     "assistant-best-of-completed",
     "assistant",
     "",
@@ -374,8 +374,8 @@ async function renderPartiallySpawnedBestOfParentWorkspace(params: {
   }
 
   const historyService = new HistoryService(env.config);
-  const userMessage = createMuxMessage("user-best-of-partial", "user", "Compare the best options");
-  const taskToolMessage = createMuxMessage(
+  const userMessage = createXumMessage("user-best-of-partial", "user", "Compare the best options");
+  const taskToolMessage = createXumMessage(
     "assistant-best-of-partial",
     "assistant",
     "",
@@ -528,12 +528,12 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
     }
 
     const historyService = new HistoryService(env.config);
-    const userMessage = createMuxMessage(
+    const userMessage = createXumMessage(
       "user-best-of-historical",
       "user",
       "Compare the best options"
     );
-    const taskToolMessage = createMuxMessage(
+    const taskToolMessage = createXumMessage(
       "assistant-best-of-historical",
       "assistant",
       "",

@@ -8,7 +8,7 @@ import {
   MUX_CODER_SSH_BLOCK_START,
 } from "@/constants/coder";
 
-interface EnsureMuxCoderSSHConfigFileOptions {
+interface EnsureXumCoderSSHConfigFileOptions {
   coderBinaryPath: string;
   sshConfigPath?: string;
 }
@@ -219,8 +219,8 @@ async function writeConfigAtomically(
   }
 }
 
-export async function ensureMuxCoderSSHConfigFile(
-  opts: EnsureMuxCoderSSHConfigFileOptions
+export async function ensureXumCoderSSHConfigFile(
+  opts: EnsureXumCoderSSHConfigFileOptions
 ): Promise<void> {
   const configuredSSHConfigPath = opts.sshConfigPath ?? path.join(os.homedir(), ".ssh", "config");
   // Preserve users' symlinked ~/.ssh/config setups by writing to the symlink target,

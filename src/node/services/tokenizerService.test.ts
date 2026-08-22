@@ -4,7 +4,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import * as tokenizerUtils from "@/node/utils/main/tokenizer";
 import * as statsUtils from "@/common/utils/tokens/tokenStatsCalculator";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 const GLOBAL_WORKSPACE_ID = "workspace-global";
 
 describe("TokenizerService", () => {
@@ -57,8 +57,8 @@ describe("TokenizerService", () => {
   describe("calculateStats", () => {
     test("delegates to underlying function and persists token stats cache", async () => {
       const messages = [
-        createMuxMessage("msg1", "user", "Hello", { historySequence: 1 }),
-        createMuxMessage("msg2", "assistant", "World", { historySequence: 2 }),
+        createXumMessage("msg1", "user", "Hello", { historySequence: 1 }),
+        createXumMessage("msg2", "assistant", "World", { historySequence: 2 }),
       ];
 
       const mockResult = {
@@ -103,13 +103,13 @@ describe("TokenizerService", () => {
     });
 
     test("excludes a leading reset boundary from token stats", async () => {
-      const resetBoundary = createMuxMessage("reset", "assistant", "", {
+      const resetBoundary = createXumMessage("reset", "assistant", "", {
         historySequence: 2,
         contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
       });
       const messages = [
         resetBoundary,
-        createMuxMessage("msg1", "user", "Hello", { historySequence: 3 }),
+        createXumMessage("msg1", "user", "Hello", { historySequence: 3 }),
       ];
       const mockResult = {
         consumers: [{ name: "User", tokens: 1, percentage: 100 }],
@@ -139,7 +139,7 @@ describe("TokenizerService", () => {
     });
 
     test("passes tool availability options to calculateTokenStats", async () => {
-      const messages = [createMuxMessage("msg1", "user", "Hello")];
+      const messages = [createXumMessage("msg1", "user", "Hello")];
       const mockResult = {
         consumers: [{ name: "User", tokens: 1, percentage: 100 }],
         totalTokens: 1,
@@ -170,7 +170,7 @@ describe("TokenizerService", () => {
     });
 
     test("passes enableAgentReport true when parentWorkspaceId is provided", async () => {
-      const messages = [createMuxMessage("msg1", "user", "Hello")];
+      const messages = [createXumMessage("msg1", "user", "Hello")];
       const mockResult = {
         consumers: [{ name: "User", tokens: 1, percentage: 100 }],
         totalTokens: 1,
@@ -193,13 +193,13 @@ describe("TokenizerService", () => {
 
     test("skips persisting stale token stats cache when calculations overlap", async () => {
       const messagesV1 = [
-        createMuxMessage("msg1", "user", "Hello", { historySequence: 1 }),
-        createMuxMessage("msg2", "assistant", "World", { historySequence: 2 }),
+        createXumMessage("msg1", "user", "Hello", { historySequence: 1 }),
+        createXumMessage("msg2", "assistant", "World", { historySequence: 2 }),
       ];
 
       const messagesV2 = [
         ...messagesV1,
-        createMuxMessage("msg3", "assistant", "!!!", { historySequence: 3 }),
+        createXumMessage("msg3", "assistant", "!!!", { historySequence: 3 }),
       ];
 
       const deferred = <T>() => {

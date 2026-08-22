@@ -1,6 +1,6 @@
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 
 export interface ExperimentValues {
@@ -17,7 +17,7 @@ export interface SendMessageOptionsInput {
   thinkingLevel: ThinkingLevel;
   reasoningMode: OpenAIReasoningMode;
   agentId: string;
-  providerOptions: MuxProviderOptions;
+  providerOptions: XumProviderOptions;
   experiments: ExperimentValues;
   disableWorkspaceAgents?: boolean;
 }

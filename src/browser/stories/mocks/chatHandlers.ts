@@ -1,4 +1,4 @@
-import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, ChatXumMessage } from "@/common/orpc/types";
 import { STABLE_TIMESTAMP } from "./workspaces";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -9,7 +9,7 @@ import { STABLE_TIMESTAMP } from "./workspaces";
 type ChatHandler = (callback: (event: WorkspaceChatMessage) => void) => () => void;
 
 /** Creates a chat handler that sends messages then caught-up */
-export function createStaticChatHandler(messages: ChatMuxMessage[]): ChatHandler {
+export function createStaticChatHandler(messages: ChatXumMessage[]): ChatHandler {
   return (callback) => {
     setTimeout(() => {
       for (const msg of messages) {
@@ -24,7 +24,7 @@ export function createStaticChatHandler(messages: ChatMuxMessage[]): ChatHandler
 
 /** Creates a chat handler with streaming state */
 export function createStreamingChatHandler(opts: {
-  messages: ChatMuxMessage[];
+  messages: ChatXumMessage[];
   streamingMessageId: string;
   model: string;
   historySequence: number;

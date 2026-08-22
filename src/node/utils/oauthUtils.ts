@@ -4,7 +4,7 @@ import type http from "node:http";
  * Shared OAuth utility functions extracted from the individual OAuth service files.
  *
  * These are verbatim-duplicated across codexOauthService, copilotOauthService,
- * muxGatewayOauthService, muxGovernorOauthService, and mcpOauthService.
+ * xumGatewayOauthService, xumGovernorOauthService, and mcpOauthService.
  */
 
 /** A deferred promise with an externally-accessible `resolve` handle. */

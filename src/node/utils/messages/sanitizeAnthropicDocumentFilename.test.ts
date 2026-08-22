@@ -3,7 +3,7 @@ import {
   sanitizeAnthropicDocumentFilename,
   sanitizeAnthropicPdfFilenames,
 } from "./sanitizeAnthropicDocumentFilename";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 describe("sanitizeAnthropicDocumentFilename", () => {
   it("replaces periods with spaces", () => {
@@ -50,7 +50,7 @@ describe("sanitizeAnthropicDocumentFilename", () => {
 });
 
 describe("sanitizeAnthropicPdfFilenames", () => {
-  const createUserMessageWithPdf = (filename: string): MuxMessage => ({
+  const createUserMessageWithPdf = (filename: string): XumMessage => ({
     id: "msg-1",
     role: "user",
     parts: [
@@ -65,7 +65,7 @@ describe("sanitizeAnthropicPdfFilenames", () => {
   });
 
   it("sanitizes PDF filenames in user messages", () => {
-    const messages: MuxMessage[] = [createUserMessageWithPdf("report.pdf")];
+    const messages: XumMessage[] = [createUserMessageWithPdf("report.pdf")];
 
     const result = sanitizeAnthropicPdfFilenames(messages);
 
@@ -78,7 +78,7 @@ describe("sanitizeAnthropicPdfFilenames", () => {
   });
 
   it("does not mutate original messages", () => {
-    const messages: MuxMessage[] = [createUserMessageWithPdf("original.pdf")];
+    const messages: XumMessage[] = [createUserMessageWithPdf("original.pdf")];
     const originalFilename = (messages[0].parts[1] as { filename: string }).filename;
 
     sanitizeAnthropicPdfFilenames(messages);
@@ -87,7 +87,7 @@ describe("sanitizeAnthropicPdfFilenames", () => {
   });
 
   it("passes through assistant messages unchanged", () => {
-    const assistantMessage: MuxMessage = {
+    const assistantMessage: XumMessage = {
       id: "msg-2",
       role: "assistant",
       parts: [{ type: "text", text: "Response" }],
@@ -100,7 +100,7 @@ describe("sanitizeAnthropicPdfFilenames", () => {
   });
 
   it("does not sanitize non-PDF files", () => {
-    const imageMessage: MuxMessage = {
+    const imageMessage: XumMessage = {
       id: "msg-3",
       role: "user",
       parts: [
@@ -119,7 +119,7 @@ describe("sanitizeAnthropicPdfFilenames", () => {
   });
 
   it("handles case-insensitive media type matching", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "msg-4",
         role: "user",
@@ -140,7 +140,7 @@ describe("sanitizeAnthropicPdfFilenames", () => {
   });
 
   it("returns original array if no changes needed", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "msg-5",
         role: "user",

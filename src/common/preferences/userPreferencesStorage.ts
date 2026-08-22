@@ -39,7 +39,7 @@ import {
   type LaunchBehavior,
   type TranscriptDensity,
 } from "@/common/constants/storage";
-import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
+import { XumProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import {
   isRecord,
   parseAgentId,
@@ -346,7 +346,7 @@ export function applyStoredUserPreference(
   }
 
   if (key === PROVIDER_OPTIONS_ANTHROPIC_KEY) {
-    const parsed = MuxProviderOptionsSchema.shape.anthropic.safeParse(value);
+    const parsed = XumProviderOptionsSchema.shape.anthropic.safeParse(value);
     if (!parsed.success || !parsed.data || Object.keys(parsed.data).length === 0) {
       return removeStoredUserPreference(next, key);
     }
@@ -355,7 +355,7 @@ export function applyStoredUserPreference(
   }
 
   if (key === PROVIDER_OPTIONS_GOOGLE_KEY) {
-    const parsed = MuxProviderOptionsSchema.shape.google.safeParse(value);
+    const parsed = XumProviderOptionsSchema.shape.google.safeParse(value);
     if (!parsed.success || !parsed.data || Object.keys(parsed.data).length === 0) {
       return removeStoredUserPreference(next, key);
     }

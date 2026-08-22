@@ -19,7 +19,7 @@ import type {
   ToolModelMessage,
   ToolResultPart,
 } from "ai";
-import type { ModelMessage, MuxMessage } from "@/common/types/message";
+import type { ModelMessage, XumMessage } from "@/common/types/message";
 import { buildRequiredToolPatterns, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 export const TOOL_SEARCH_TOOL_NAME = "tool_catalog_search";
@@ -596,7 +596,7 @@ function renameLegacyToolSearchResultPart(part: ToolResultPart): ToolResultPart 
  * conversion runs. Callers intersect the result with the current deferred set.
  */
 export function extractPreActivatedToolNames(
-  messages: ReadonlyArray<ModelMessage | MuxMessage>
+  messages: ReadonlyArray<ModelMessage | XumMessage>
 ): Set<string> {
   const names = new Set<string>();
   for (const message of messages) {
@@ -692,7 +692,7 @@ export function normalizeLegacyToolSearchMessages(messages: ModelMessage[]): Mod
  */
 export function seedToolSearchActivationsFromMessages(
   state: ToolSearchStreamState,
-  messages: ReadonlyArray<ModelMessage | MuxMessage>
+  messages: ReadonlyArray<ModelMessage | XumMessage>
 ): void {
   for (const name of extractPreActivatedToolNames(messages)) {
     if (state.deferredToolNames.has(name)) {

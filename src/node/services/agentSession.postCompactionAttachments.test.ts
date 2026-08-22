@@ -9,7 +9,7 @@ import type {
   TodoListAttachment,
 } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 
 import type { AIService } from "./aiService";
@@ -21,7 +21,7 @@ import { DisposableTempDir } from "./tempDir";
 import { createTestHistoryService } from "./testHistoryService";
 import { createLoadedSkillSnapshot } from "@/node/services/agentSkills/loadedSkillSnapshots";
 
-function createSuccessfulFileEditMessage(id: string, filePath: string, diff: string): MuxMessage {
+function createSuccessfulFileEditMessage(id: string, filePath: string, diff: string): XumMessage {
   return {
     id,
     role: "assistant",
@@ -204,13 +204,13 @@ describe("AgentSession post-compaction attachments", () => {
   test("extracts edited file diffs from the latest durable compaction boundary slice", async () => {
     using sessionDir = new DisposableTempDir("agent-session-latest-boundary");
 
-    const history: MuxMessage[] = [
+    const history: XumMessage[] = [
       createSuccessfulFileEditMessage(
         "stale-before-boundary",
         "/tmp/stale-before-boundary.ts",
         "@@ -1 +1 @@\n-old\n+older\n"
       ),
-      createMuxMessage("boundary-1", "assistant", "epoch 1 summary", {
+      createXumMessage("boundary-1", "assistant", "epoch 1 summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
@@ -220,7 +220,7 @@ describe("AgentSession post-compaction attachments", () => {
         "/tmp/stale-epoch-1.ts",
         "@@ -1 +1 @@\n-old\n+stale\n"
       ),
-      createMuxMessage("boundary-2", "assistant", "epoch 2 summary", {
+      createXumMessage("boundary-2", "assistant", "epoch 2 summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 2,
@@ -252,9 +252,9 @@ describe("AgentSession post-compaction attachments", () => {
   test("falls back safely when boundary markers are malformed", async () => {
     using sessionDir = new DisposableTempDir("agent-session-malformed-boundary");
 
-    const history: MuxMessage[] = [
+    const history: XumMessage[] = [
       createSuccessfulFileEditMessage("stale-edit", "/tmp/stale.ts", "@@ -1 +1 @@\n-old\n+stale\n"),
-      createMuxMessage("malformed-boundary", "assistant", "malformed summary", {
+      createXumMessage("malformed-boundary", "assistant", "malformed summary", {
         compacted: "user",
         compactionBoundary: true,
         // Missing compactionEpoch: marker should be ignored without crashing.
@@ -331,8 +331,8 @@ describe("AgentSession post-compaction attachments", () => {
   test("reinjects cached loaded skills on later turns even after pending state is acknowledged", async () => {
     using sessionDir = new DisposableTempDir("agent-session-periodic-loaded-skills");
 
-    const history: MuxMessage[] = [
-      createMuxMessage("boundary-1", "assistant", "epoch 1 summary", {
+    const history: XumMessage[] = [
+      createXumMessage("boundary-1", "assistant", "epoch 1 summary", {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,

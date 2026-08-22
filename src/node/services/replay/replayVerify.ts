@@ -23,7 +23,7 @@ import type {
 } from "@/common/types/devtools";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { DurableEvent } from "@/common/types/durableEvent";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -210,7 +210,7 @@ export interface ReplayVerifySessionResult {
 }
 
 export interface AssistantTurn {
-  message: MuxMessage;
+  message: XumMessage;
   requestHistorySequence: number;
 }
 
@@ -219,7 +219,7 @@ export interface AssistantTurn {
  * streamMessage call) — the chat.jsonl side of the pairing with turn-envelope
  * rows and recorded devtools runs.
  */
-export function collectAssistantTurns(historyMessages: MuxMessage[]): AssistantTurn[] {
+export function collectAssistantTurns(historyMessages: XumMessage[]): AssistantTurn[] {
   const turns: AssistantTurn[] = [];
   for (const message of historyMessages) {
     const requestHistorySequence = message.metadata?.requestHistorySequence;
@@ -240,8 +240,8 @@ export function collectAssistantTurns(historyMessages: MuxMessage[]): AssistantT
 export async function collectFullHistory(
   historyService: HistoryService,
   workspaceId: string
-): Promise<Result<MuxMessage[]>> {
-  const messages: MuxMessage[] = [];
+): Promise<Result<XumMessage[]>> {
+  const messages: XumMessage[] = [];
   const result = await historyService.iterateFullHistory(workspaceId, "forward", (chunk) => {
     messages.push(...chunk);
   });
@@ -257,9 +257,9 @@ export async function collectFullHistory(
  * (compaction summaries are included, reset markers are not).
  */
 export function sliceEpochForTurn(
-  historyMessages: MuxMessage[],
+  historyMessages: XumMessage[],
   requestHistorySequence: number
-): MuxMessage[] {
+): XumMessage[] {
   const prefix = historyMessages.filter((message) => {
     const sequence = message.metadata?.historySequence;
     assert(sequence != null, `history row ${message.id} is missing historySequence`);
@@ -477,7 +477,7 @@ function parseAnthropicCacheTtl(value: string | undefined): AnthropicCacheTtl | 
 export async function replayVerifySession(params: {
   sessionDir: string;
   workspaceId: string;
-  historyMessages: MuxMessage[];
+  historyMessages: XumMessage[];
   providersConfig?: ProvidersConfigMap | null;
 }): Promise<ReplayVerifySessionResult> {
   const journal = new DurableEventJournal(params.sessionDir);
@@ -556,7 +556,7 @@ export async function replayVerifySession(params: {
         postCompactionAttachments = JSON.parse(attachmentsJson) as PostCompactionAttachment[];
       }
 
-      let partialContinuation: MuxMessage | undefined;
+      let partialContinuation: XumMessage | undefined;
       if (envelope.data.partialContinuationHash != null) {
         const continuationJson = await journal.blobs.getText(envelope.data.partialContinuationHash);
         if (continuationJson == null) {
@@ -565,7 +565,7 @@ export async function replayVerifySession(params: {
           );
           continue;
         }
-        partialContinuation = JSON.parse(continuationJson) as MuxMessage;
+        partialContinuation = JSON.parse(continuationJson) as XumMessage;
       }
 
       // 1) System prompt: blob bytes vs the wire's system message.

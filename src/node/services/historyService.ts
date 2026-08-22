@@ -8,8 +8,8 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import {
   isCompactionSummaryMetadata,
-  type MuxMessage,
-  type MuxMetadata,
+  type XumMessage,
+  type XumMetadata,
 } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { ensurePrivateDir } from "@/node/utils/fs";
@@ -18,7 +18,7 @@ import { log } from "./log";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
-import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { normalizeLegacyXumMetadata } from "@/node/utils/messages/legacy";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   findLatestContextBoundaryIndex,
@@ -33,7 +33,7 @@ import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReas
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 
-function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolean {
+function hasDurableCompactionBoundary(metadata: XumMetadata | undefined): boolean {
   if (metadata?.compactionBoundary !== true) {
     return false;
   }
@@ -46,7 +46,7 @@ function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolea
   return isPositiveInteger(metadata.compactionEpoch);
 }
 
-function prefixCutChangesActiveContext(messages: MuxMessage[], removeCount: number): boolean {
+function prefixCutChangesActiveContext(messages: XumMessage[], removeCount: number): boolean {
   const boundaryIndex = findLatestContextBoundaryIndex(messages);
   const activeStart =
     boundaryIndex < 0
@@ -59,7 +59,7 @@ function prefixCutChangesActiveContext(messages: MuxMessage[], removeCount: numb
   );
 }
 
-function stripContextUsage(message: MuxMessage): MuxMessage {
+function stripContextUsage(message: XumMessage): XumMessage {
   if (!message.metadata) {
     return message;
   }
@@ -75,9 +75,9 @@ function stripContextUsage(message: MuxMessage): MuxMessage {
 
 function getCompactionMetadataToPreserve(
   workspaceId: string,
-  existingMessage: MuxMessage,
-  incomingMessage: MuxMessage
-): Partial<MuxMetadata> | null {
+  existingMessage: XumMessage,
+  incomingMessage: XumMessage
+): Partial<XumMetadata> | null {
   const existingMetadata = existingMessage.metadata;
   if (existingMetadata?.compactionBoundary !== true) {
     return null;
@@ -111,7 +111,7 @@ function getCompactionMetadataToPreserve(
     return null;
   }
 
-  const preserved: Partial<MuxMetadata> = {
+  const preserved: Partial<XumMetadata> = {
     compacted: existingMetadata.compacted,
     compactionBoundary: true,
     compactionEpoch: existingMetadata.compactionEpoch,
@@ -135,7 +135,7 @@ function getCompactionMetadataToPreserve(
  * through the headless-usage sidecar instead — exactly one of {chat row,
  * sidecar row} may carry a turn's usage.
  */
-export function hasCommitWorthyParts(parts: MuxMessage["parts"] | undefined): boolean {
+export function hasCommitWorthyParts(parts: XumMessage["parts"] | undefined): boolean {
   return (parts ?? []).some((part) => {
     if (part.type === "text" || part.type === "reasoning") {
       return part.text.trim().length > 0;
@@ -506,7 +506,7 @@ export class HistoryService {
           const line = buffer.subarray(lineStart, lineEnd).toString("utf-8");
           if (HistoryService.BOUNDARY_NEEDLES.some((needle) => line.includes(needle))) {
             try {
-              const msg = JSON.parse(line) as MuxMessage;
+              const msg = JSON.parse(line) as XumMessage;
               if (isDurableContextBoundaryMarker(msg)) {
                 if (skipped < skip) {
                   skipped++;
@@ -528,7 +528,7 @@ export class HistoryService {
         const line = carryoverBytes.toString("utf-8");
         if (HistoryService.BOUNDARY_NEEDLES.some((needle) => line.includes(needle))) {
           try {
-            const msg = JSON.parse(line) as MuxMessage;
+            const msg = JSON.parse(line) as XumMessage;
             if (isDurableContextBoundaryMarker(msg)) {
               if (skipped < skip) {
                 // Not enough boundaries in the file to satisfy skip
@@ -552,7 +552,7 @@ export class HistoryService {
    * Read and parse messages from a byte offset to the end of a history file.
    * Self-healing: skips malformed JSON lines the same way readChatHistory does.
    */
-  private async readHistoryFromOffset(filePath: string, byteOffset: number): Promise<MuxMessage[]> {
+  private async readHistoryFromOffset(filePath: string, byteOffset: number): Promise<XumMessage[]> {
     const stat = await fs.stat(filePath);
     const tailSize = stat.size - byteOffset;
     if (tailSize <= 0) return [];
@@ -565,10 +565,10 @@ export class HistoryService {
         .toString("utf-8")
         .split("\n")
         .filter((l) => l.trim());
-      const messages: MuxMessage[] = [];
+      const messages: XumMessage[] = [];
       for (const line of lines) {
         try {
-          messages.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+          messages.push(normalizeLegacyXumMetadata(JSON.parse(line) as XumMessage));
         } catch {
           // Skip malformed lines — same self-healing behavior as readChatHistory
         }
@@ -586,7 +586,7 @@ export class HistoryService {
    * Uses raw byte scanning for \n positions (same approach as findLastBoundaryByteOffset)
    * so that chunk boundaries splitting multi-byte UTF-8 sequences don't corrupt lines.
    */
-  private async readLastMessagesFromFile(filePath: string, n: number): Promise<MuxMessage[]> {
+  private async readLastMessagesFromFile(filePath: string, n: number): Promise<XumMessage[]> {
     let fileSize: number;
     try {
       const stat = await fs.stat(filePath);
@@ -598,7 +598,7 @@ export class HistoryService {
 
     const fh = await fs.open(filePath, "r");
     try {
-      const collected: MuxMessage[] = [];
+      const collected: XumMessage[] = [];
       let readEnd = fileSize;
       let carryoverBytes = Buffer.alloc(0);
 
@@ -636,7 +636,7 @@ export class HistoryService {
           const line = buffer.subarray(lineStart, lineEnd).toString("utf-8").trim();
           if (line.length === 0) continue;
           try {
-            collected.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+            collected.push(normalizeLegacyXumMetadata(JSON.parse(line) as XumMessage));
           } catch {
             // Skip malformed lines
           }
@@ -650,7 +650,7 @@ export class HistoryService {
         const line = carryoverBytes.toString("utf-8").trim();
         if (line.length > 0) {
           try {
-            collected.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+            collected.push(normalizeLegacyXumMetadata(JSON.parse(line) as XumMessage));
           } catch {
             // skip
           }
@@ -670,16 +670,16 @@ export class HistoryService {
    * Returns empty array if the file doesn't exist.
    * Skips malformed JSON lines to prevent data loss from corruption.
    */
-  private async readMessagesFromFile(filePath: string, logLabel: string): Promise<MuxMessage[]> {
+  private async readMessagesFromFile(filePath: string, logLabel: string): Promise<XumMessage[]> {
     try {
       const data = await fs.readFile(filePath, "utf-8");
       const lines = data.split("\n").filter((line) => line.trim());
-      const messages: MuxMessage[] = [];
+      const messages: XumMessage[] = [];
 
       for (let i = 0; i < lines.length; i++) {
         try {
-          const message = JSON.parse(lines[i]) as MuxMessage;
-          messages.push(normalizeLegacyMuxMetadata(message));
+          const message = JSON.parse(lines[i]) as XumMessage;
+          messages.push(normalizeLegacyXumMetadata(message));
         } catch (parseError) {
           // Skip malformed lines but log error for debugging
           log.warn(
@@ -704,7 +704,7 @@ export class HistoryService {
    * Read raw messages from the active chat.jsonl (does not include partial.json
    * or the sealed archive).
    */
-  private async readChatHistory(workspaceId: string): Promise<MuxMessage[]> {
+  private async readChatHistory(workspaceId: string): Promise<XumMessage[]> {
     return this.readMessagesFromFile(
       this.getChatHistoryPath(workspaceId),
       `${workspaceId}/${this.CHAT_FILE}`
@@ -714,7 +714,7 @@ export class HistoryService {
   /**
    * Read raw messages from the sealed chat-archive.jsonl (pre-boundary history).
    */
-  private async readArchivedHistory(workspaceId: string): Promise<MuxMessage[]> {
+  private async readArchivedHistory(workspaceId: string): Promise<XumMessage[]> {
     return this.readMessagesFromFile(
       this.getChatArchivePath(workspaceId),
       `${workspaceId}/${this.CHAT_ARCHIVE_FILE}`
@@ -736,7 +736,7 @@ export class HistoryService {
    */
   private async iterateForward(
     filePath: string,
-    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+    visitor: (messages: XumMessage[]) => boolean | void | Promise<boolean | void>
   ): Promise<boolean> {
     let fileSize: number;
     try {
@@ -787,12 +787,12 @@ export class HistoryService {
         const completeText = buffer.subarray(0, lastNewline).toString("utf-8");
         carryoverBytes = Buffer.from(buffer.subarray(lastNewline + 1));
 
-        const messages: MuxMessage[] = [];
+        const messages: XumMessage[] = [];
         for (const line of completeText.split("\n")) {
           const trimmed = line.trim();
           if (trimmed.length === 0) continue;
           try {
-            messages.push(normalizeLegacyMuxMetadata(JSON.parse(trimmed) as MuxMessage));
+            messages.push(normalizeLegacyXumMetadata(JSON.parse(trimmed) as XumMessage));
           } catch {
             // Skip malformed lines — same self-healing behavior as readChatHistory
           }
@@ -809,7 +809,7 @@ export class HistoryService {
         const line = carryoverBytes.toString("utf-8").trim();
         if (line.length > 0) {
           try {
-            const msg = normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage);
+            const msg = normalizeLegacyXumMetadata(JSON.parse(line) as XumMessage);
             const shouldContinue = await visitor([msg]);
             if (shouldContinue === false) return false;
           } catch {
@@ -832,7 +832,7 @@ export class HistoryService {
    */
   private async iterateBackward(
     filePath: string,
-    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+    visitor: (messages: XumMessage[]) => boolean | void | Promise<boolean | void>
   ): Promise<boolean> {
     let fileSize: number;
     try {
@@ -876,7 +876,7 @@ export class HistoryService {
         carryoverBytes = Buffer.from(buffer.subarray(0, newlinePositions[0]));
 
         // Parse complete lines in reverse (newest → oldest for backward iteration)
-        const messages: MuxMessage[] = [];
+        const messages: XumMessage[] = [];
         for (let nl = newlinePositions.length - 1; nl >= 0; nl--) {
           const lineStart = newlinePositions[nl] + 1;
           const lineEnd =
@@ -886,7 +886,7 @@ export class HistoryService {
           const line = buffer.subarray(lineStart, lineEnd).toString("utf-8").trim();
           if (line.length === 0) continue;
           try {
-            messages.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+            messages.push(normalizeLegacyXumMetadata(JSON.parse(line) as XumMessage));
           } catch {
             // Skip malformed lines
           }
@@ -905,7 +905,7 @@ export class HistoryService {
         const line = carryoverBytes.toString("utf-8").trim();
         if (line.length > 0) {
           try {
-            const msg = normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage);
+            const msg = normalizeLegacyXumMetadata(JSON.parse(line) as XumMessage);
             const shouldContinue = await visitor([msg]);
             if (shouldContinue === false) return false;
           } catch {
@@ -937,7 +937,7 @@ export class HistoryService {
   async iterateFullHistory(
     workspaceId: string,
     direction: "forward" | "backward",
-    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+    visitor: (messages: XumMessage[]) => boolean | void | Promise<boolean | void>
   ): Promise<Result<void>> {
     return this.withRecoveredHistoryResultLock(workspaceId, "Failed to iterate history", () =>
       this.iterateFullHistoryUnlocked(workspaceId, direction, visitor)
@@ -948,7 +948,7 @@ export class HistoryService {
   async iterateFullHistoryUnderLock(
     workspaceId: string,
     direction: "forward" | "backward",
-    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+    visitor: (messages: XumMessage[]) => boolean | void | Promise<boolean | void>
   ): Promise<Result<void>> {
     try {
       await this.recoverTruncateTransactionUnlocked(workspaceId);
@@ -1000,7 +1000,7 @@ export class HistoryService {
   private async iterateFullHistoryUnlocked(
     workspaceId: string,
     direction: "forward" | "backward",
-    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+    visitor: (messages: XumMessage[]) => boolean | void | Promise<boolean | void>
   ): Promise<Result<void>> {
     const chatPath = this.getChatHistoryPath(workspaceId);
     const archivePath = this.getChatArchivePath(workspaceId);
@@ -1024,7 +1024,7 @@ export class HistoryService {
     }
   }
 
-  private getOldestHistorySequence(messages: readonly MuxMessage[]): number | undefined {
+  private getOldestHistorySequence(messages: readonly XumMessage[]): number | undefined {
     let oldest: number | undefined;
 
     for (const message of messages) {
@@ -1041,7 +1041,7 @@ export class HistoryService {
     return oldest;
   }
 
-  private getNewestHistorySequence(messages: readonly MuxMessage[]): number | undefined {
+  private getNewestHistorySequence(messages: readonly XumMessage[]): number | undefined {
     let newest: number | undefined;
 
     for (const message of messages) {
@@ -1117,7 +1117,7 @@ export class HistoryService {
     beforeHistorySequence: number
   ): Promise<boolean> {
     let hasOlder = false;
-    const visitor = (messages: MuxMessage[]): boolean | void => {
+    const visitor = (messages: XumMessage[]): boolean | void => {
       for (const message of messages) {
         const sequence = message.metadata?.historySequence;
         if (!isNonNegativeInteger(sequence)) {
@@ -1148,7 +1148,7 @@ export class HistoryService {
   async getHistoryBoundaryWindow(
     workspaceId: string,
     beforeHistorySequence: number
-  ): Promise<Result<{ messages: MuxMessage[]; hasOlder: boolean }>> {
+  ): Promise<Result<{ messages: XumMessage[]; hasOlder: boolean }>> {
     assert(
       typeof workspaceId === "string" && workspaceId.trim().length > 0,
       "workspaceId is required"
@@ -1158,7 +1158,7 @@ export class HistoryService {
       "getHistoryBoundaryWindow requires beforeHistorySequence to be a non-negative integer"
     );
 
-    const operation = async (): Promise<Result<{ messages: MuxMessage[]; hasOlder: boolean }>> => {
+    const operation = async (): Promise<Result<{ messages: XumMessage[]; hasOlder: boolean }>> => {
       // Scan boundaries newest→oldest and pick the first window that has rows older
       // than the cursor. Boundaries newer than the rotation point live in chat.jsonl;
       // older ones live in the sealed archive.
@@ -1234,7 +1234,7 @@ export class HistoryService {
   async getMessagesForCompactionEpoch(
     workspaceId: string,
     metadata: CompactionCompletionMetadata
-  ): Promise<Result<{ messages: MuxMessage[]; summary: MuxMessage }>> {
+  ): Promise<Result<{ messages: XumMessage[]; summary: XumMessage }>> {
     assert(
       typeof workspaceId === "string" && workspaceId.trim().length > 0,
       "workspaceId is required"
@@ -1249,8 +1249,8 @@ export class HistoryService {
     );
 
     try {
-      const messages: MuxMessage[] = [];
-      let summary: MuxMessage | undefined;
+      const messages: XumMessage[] = [];
+      let summary: XumMessage | undefined;
       const lowerBound = metadata.previousBoundaryHistorySequence;
       const seenHistorySequences = new Set<number>();
 
@@ -1308,8 +1308,8 @@ export class HistoryService {
    * Prefer this over iterateFullHistory() for provider-request assembly and any path
    * that only needs the active compaction epoch.
    */
-  async getHistoryFromLatestBoundary(workspaceId: string, skip = 0): Promise<Result<MuxMessage[]>> {
-    const operation = async (): Promise<Result<MuxMessage[]>> => {
+  async getHistoryFromLatestBoundary(workspaceId: string, skip = 0): Promise<Result<XumMessage[]>> {
+    const operation = async (): Promise<Result<XumMessage[]>> => {
       // One-time lazy migration: seal any pre-boundary prefix left in chat.jsonl
       // by older builds so this read (and every later one) stays O(active epoch).
       await this.ensureSealedHistoryRotatedUnlocked(workspaceId);
@@ -1431,7 +1431,7 @@ export class HistoryService {
         continue;
       }
       try {
-        const message = JSON.parse(trimmed) as MuxMessage;
+        const message = JSON.parse(trimmed) as XumMessage;
         const sequence = message.metadata?.historySequence;
         if (isNonNegativeInteger(sequence) && sequence <= archivedMaxSequence) {
           continue; // Already archived by a rotation that crashed before the chat rewrite.
@@ -1468,7 +1468,7 @@ export class HistoryService {
    * Much cheaper than iterateFullHistory() when only the tail is needed.
    * Continues into the sealed archive when the active epoch has fewer than N rows.
    */
-  async getLastMessages(workspaceId: string, n: number): Promise<Result<MuxMessage[]>> {
+  async getLastMessages(workspaceId: string, n: number): Promise<Result<XumMessage[]>> {
     return this.withRecoveredHistoryResultLock(
       workspaceId,
       `Failed to read last ${n} messages`,
@@ -1520,12 +1520,12 @@ export class HistoryService {
   /**
    * Read the partial message for a workspace, if it exists.
    */
-  async readPartial(workspaceId: string): Promise<MuxMessage | null> {
+  async readPartial(workspaceId: string): Promise<XumMessage | null> {
     try {
       const partialPath = this.getPartialPath(workspaceId);
       const data = await fs.readFile(partialPath, "utf-8");
-      const message = JSON.parse(data) as MuxMessage;
-      return normalizeLegacyMuxMetadata(message);
+      const message = JSON.parse(data) as XumMessage;
+      return normalizeLegacyXumMetadata(message);
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
         return null;
@@ -1539,14 +1539,14 @@ export class HistoryService {
   /**
    * Write a partial message to disk.
    */
-  async writePartial(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
+  async writePartial(workspaceId: string, message: XumMessage): Promise<Result<void>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
         const workspaceDir = this.config.getSessionDir(workspaceId);
         await ensurePrivateDir(workspaceDir);
         const partialPath = this.getPartialPath(workspaceId);
 
-        const partialMessage: MuxMessage = {
+        const partialMessage: XumMessage = {
           ...message,
           metadata: {
             ...message.metadata,
@@ -1597,7 +1597,7 @@ export class HistoryService {
       try {
         const partialPath = this.getPartialPath(workspaceId);
         const data = await fs.readFile(partialPath, "utf-8");
-        const partialMessage = normalizeLegacyMuxMetadata(JSON.parse(data) as MuxMessage);
+        const partialMessage = normalizeLegacyXumMetadata(JSON.parse(data) as XumMessage);
         if (partialMessage.id !== messageId) {
           return Ok(false);
         }
@@ -1747,7 +1747,7 @@ export class HistoryService {
    */
   private async _appendToHistoryUnlocked(
     workspaceId: string,
-    message: MuxMessage
+    message: XumMessage
   ): Promise<Result<void>> {
     try {
       const workspaceDir = this.config.getSessionDir(workspaceId);
@@ -1831,7 +1831,7 @@ export class HistoryService {
   }
 
   /** Serialize messages as JSONL rows tagged with workspace context. */
-  private serializeHistoryEntries(messages: readonly MuxMessage[], workspaceId: string): string {
+  private serializeHistoryEntries(messages: readonly XumMessage[], workspaceId: string): string {
     return messages.map((msg) => JSON.stringify({ ...msg, workspaceId }) + "\n").join("");
   }
 
@@ -1842,7 +1842,7 @@ export class HistoryService {
    */
   private async rotateAfterBoundaryWriteUnlocked(
     workspaceId: string,
-    message: MuxMessage
+    message: XumMessage
   ): Promise<void> {
     if (!isDurableContextBoundaryMarker(message)) {
       return;
@@ -1858,7 +1858,7 @@ export class HistoryService {
     }
   }
 
-  async appendToHistory(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
+  async appendToHistory(workspaceId: string, message: XumMessage): Promise<Result<void>> {
     return this.withRecoveredHistoryResultLock(
       workspaceId,
       "Failed to append history",
@@ -1882,7 +1882,7 @@ export class HistoryService {
    * always in the active epoch (stream placeholders, compaction summaries),
    * never in the sealed archive.
    */
-  async updateHistory(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
+  async updateHistory(workspaceId: string, message: XumMessage): Promise<Result<void>> {
     return this.withRecoveredHistoryResultLock(
       workspaceId,
       "Failed to update history",
@@ -1905,7 +1905,7 @@ export class HistoryService {
 
           // Find and replace the message with matching historySequence
           let found = false;
-          let persistedMessage: MuxMessage | undefined;
+          let persistedMessage: XumMessage | undefined;
           for (let i = 0; i < messages.length; i++) {
             if (messages[i].metadata?.historySequence === targetSequence) {
               const existingMessage = messages[i];
@@ -2309,7 +2309,7 @@ export class HistoryService {
 
           // Count tokens for each message
           // We stringify the entire message for simplicity - only relative weights matter
-          const messageTokens: Array<{ message: MuxMessage; tokens: number }> = await Promise.all(
+          const messageTokens: Array<{ message: XumMessage; tokens: number }> = await Promise.all(
             messages.map(async (msg) => {
               const tokens = await tokenizer.countTokens(safeStringifyForCounting(msg));
               return { message: msg, tokens };
@@ -2348,7 +2348,7 @@ export class HistoryService {
           const activeContextChanged = prefixCutChangesActiveContext(messages, removeCount);
           const sanitize = activeContextChanged
             ? stripContextUsage
-            : (message: MuxMessage) => message;
+            : (message: XumMessage) => message;
           const remainingMessages = messages.slice(removeCount).map(sanitize);
           const deletedMessages = messages.slice(0, removeCount);
           const deletedSequences = deletedMessages

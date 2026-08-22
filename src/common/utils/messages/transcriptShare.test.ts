@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { buildChatJsonlForSharing } from "./transcriptShare";
 
 function splitJsonlLines(jsonl: string): string[] {
@@ -8,7 +8,7 @@ function splitJsonlLines(jsonl: string): string[] {
 
 describe("buildChatJsonlForSharing", () => {
   it("strips tool output and sets state to output-redacted when includeToolOutput=false", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -28,7 +28,7 @@ describe("buildChatJsonlForSharing", () => {
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
     expect(jsonl.endsWith("\n")).toBe(true);
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
     expect(part.type).toBe("dynamic-tool");
 
@@ -49,7 +49,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("strips nestedCalls output and sets nestedCalls state to output-redacted when includeToolOutput=false", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -75,7 +75,7 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool") {
@@ -96,7 +96,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("leaves messages unchanged when includeToolOutput=true", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -123,13 +123,13 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: true });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
 
     expect(parsed).toEqual(messages[0]);
   });
 
   it("inlines planContent into propose_plan tool output when planSnapshot matches", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -153,7 +153,7 @@ describe("buildChatJsonlForSharing", () => {
       planSnapshot,
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool" || part.state !== "output-available") {
@@ -182,7 +182,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("inlines planContent even when propose_plan planPath uses ~ but planSnapshot.path is resolved", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -213,7 +213,7 @@ describe("buildChatJsonlForSharing", () => {
       planSnapshot,
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool" || part.state !== "output-available") {
@@ -229,7 +229,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("inlines planContent even when propose_plan planPath uses Windows-style slashes", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -260,7 +260,7 @@ describe("buildChatJsonlForSharing", () => {
       planSnapshot,
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool" || part.state !== "output-available") {
@@ -276,7 +276,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("inlines planContent even when planSnapshot.path differs from propose_plan planPath", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -303,7 +303,7 @@ describe("buildChatJsonlForSharing", () => {
       planSnapshot,
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool" || part.state !== "output-available") {
@@ -319,7 +319,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("preserves propose_plan output (with planContent) while stripping other tool outputs when includeToolOutput=false", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -351,7 +351,7 @@ describe("buildChatJsonlForSharing", () => {
       planSnapshot,
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
 
     const planPart = parsed.parts[0];
     if (planPart.type !== "dynamic-tool" || planPart.state !== "output-available") {
@@ -395,7 +395,7 @@ describe("buildChatJsonlForSharing", () => {
     expect(originalStrippedPart).toHaveProperty("output");
   });
   it("preserves task tool outputs while stripping other tool outputs when includeToolOutput=false", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -428,7 +428,7 @@ describe("buildChatJsonlForSharing", () => {
       includeToolOutput: false,
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
 
     // task output should be preserved
     const taskPart = parsed.parts[0];
@@ -456,7 +456,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("does not overwrite propose_plan planContent when already present", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -483,7 +483,7 @@ describe("buildChatJsonlForSharing", () => {
       planSnapshot: { path: "/tmp/plan.md", content: "# New Plan" },
     });
 
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool" || part.state !== "output-available") {
@@ -501,7 +501,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("injects workspaceId into each message when provided", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -510,10 +510,10 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { workspaceId: "ws-123" });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage & { workspaceId?: string };
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage & { workspaceId?: string };
 
     expect(parsed.workspaceId).toBe("ws-123");
-    expect((messages[0] as MuxMessage & { workspaceId?: string }).workspaceId).toBeUndefined();
+    expect((messages[0] as XumMessage & { workspaceId?: string }).workspaceId).toBeUndefined();
   });
 
   it("returns empty string for empty messages array", () => {
@@ -521,7 +521,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("merges adjacent text/reasoning parts to keep transcripts small", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -543,7 +543,7 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: true });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
 
     expect(parsed.parts).toEqual([
       { type: "reasoning", text: "ab", timestamp: 1 },
@@ -563,7 +563,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("produces valid JSONL (each line parses, trailing newline)", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -582,12 +582,12 @@ describe("buildChatJsonlForSharing", () => {
     const lines = splitJsonlLines(jsonl);
     expect(lines).toHaveLength(messages.length);
 
-    const parsed = lines.map((line) => JSON.parse(line) as MuxMessage);
+    const parsed = lines.map((line) => JSON.parse(line) as XumMessage);
     expect(parsed).toEqual(messages);
   });
 
   it("sets failed: true on stripped tool part when output indicates failure", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -605,7 +605,7 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool") {
@@ -619,7 +619,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("does NOT set failed on stripped tool part when output indicates success", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -637,7 +637,7 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool") {
@@ -650,7 +650,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("sets failed: true on stripped nested call when output indicates failure", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -676,7 +676,7 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool") {
@@ -690,7 +690,7 @@ describe("buildChatJsonlForSharing", () => {
   });
 
   it("does NOT set failed on stripped nested call when output indicates success", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -716,7 +716,7 @@ describe("buildChatJsonlForSharing", () => {
     ];
 
     const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
-    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as XumMessage;
     const part = parsed.parts[0];
 
     if (part.type !== "dynamic-tool") {

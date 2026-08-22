@@ -5,12 +5,12 @@ import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatew
 import { formatCostWithDollar } from "@/common/utils/tokens/usageAggregator";
 import { getErrorMessage } from "@/common/utils/errors";
 
-export interface MuxGatewayAccountStatus {
+export interface XumGatewayAccountStatus {
   remaining_microdollars: number;
   ai_gateway_concurrent_requests_per_user: number;
 }
 
-export function formatMuxGatewayBalance(remainingMicrodollars: number | null | undefined): string {
+export function formatXumGatewayBalance(remainingMicrodollars: number | null | undefined): string {
   if (remainingMicrodollars === null || remainingMicrodollars === undefined) {
     return "—";
   }
@@ -18,13 +18,13 @@ export function formatMuxGatewayBalance(remainingMicrodollars: number | null | u
   return formatCostWithDollar(remainingMicrodollars / 1_000_000);
 }
 
-export function useMuxGatewayAccountStatus() {
+export function useXumGatewayAccountStatus() {
   const { api } = useAPI();
-  const [data, setData] = useState<MuxGatewayAccountStatus | null>(null);
+  const [data, setData] = useState<XumGatewayAccountStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const refresh = useCallback(async (): Promise<MuxGatewayAccountStatus | null> => {
+  const refresh = useCallback(async (): Promise<XumGatewayAccountStatus | null> => {
     if (!api) {
       return null;
     }

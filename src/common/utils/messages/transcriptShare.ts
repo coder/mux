@@ -1,4 +1,4 @@
-import type { MuxMessage, MuxToolPart } from "@/common/types/message";
+import type { XumMessage, XumToolPart } from "@/common/types/message";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
 
 function isFailedOutput(output: unknown): boolean {
@@ -17,7 +17,7 @@ export interface BuildChatJsonlForSharingOptions {
   planSnapshot?: { path: string; content: string };
 }
 
-interface ChatJsonlEntry extends MuxMessage {
+interface ChatJsonlEntry extends XumMessage {
   workspaceId?: string;
 }
 
@@ -29,11 +29,11 @@ interface ChatJsonlEntry extends MuxMessage {
  * reduce file size.
  */
 function mergeAdjacentTextAndReasoningPartsForSharing(
-  parts: MuxMessage["parts"]
-): MuxMessage["parts"] {
+  parts: XumMessage["parts"]
+): XumMessage["parts"] {
   if (parts.length <= 1) return parts;
 
-  const merged: MuxMessage["parts"] = [];
+  const merged: XumMessage["parts"] = [];
   let pendingTexts: string[] = [];
   let pendingTextTimestamp: number | undefined;
   let pendingReasonings: string[] = [];
@@ -94,7 +94,7 @@ function mergeAdjacentTextAndReasoningPartsForSharing(
   return merged;
 }
 
-function compactMessagePartsForSharing(messages: MuxMessage[]): MuxMessage[] {
+function compactMessagePartsForSharing(messages: XumMessage[]): XumMessage[] {
   return messages.map((msg) => {
     const parts = mergeAdjacentTextAndReasoningPartsForSharing(msg.parts);
     if (parts === msg.parts) {
@@ -135,7 +135,7 @@ const PRESERVE_OUTPUT_TOOLS = new Set([
   "task_apply_git_patch",
 ]);
 
-function stripToolPartOutput(part: MuxToolPart): MuxToolPart {
+function stripToolPartOutput(part: XumToolPart): XumToolPart {
   const nestedCalls = part.nestedCalls?.map(stripNestedToolCallOutput);
 
   if (PRESERVE_OUTPUT_TOOLS.has(part.toolName)) {
@@ -156,7 +156,7 @@ function stripToolPartOutput(part: MuxToolPart): MuxToolPart {
   };
 }
 
-function stripToolOutputsForSharing(messages: MuxMessage[]): MuxMessage[] {
+function stripToolOutputsForSharing(messages: XumMessage[]): XumMessage[] {
   return messages.map((msg) => {
     if (msg.role !== "assistant") {
       return msg;
@@ -181,9 +181,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function inlinePlanContentForSharing(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   planSnapshot: { path: string; content: string }
-): MuxMessage[] {
+): XumMessage[] {
   return messages.map((msg) => {
     if (msg.role !== "assistant") {
       return msg;
@@ -242,7 +242,7 @@ function inlinePlanContentForSharing(
  * compacts adjacent text/reasoning deltas into a single part each to keep shared transcripts small.
  */
 export function buildChatJsonlForSharing(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   options: BuildChatJsonlForSharingOptions = {}
 ): string {
   if (messages.length === 0) return "";

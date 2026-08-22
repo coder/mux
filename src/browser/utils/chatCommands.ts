@@ -15,7 +15,7 @@ import type {
   SendMessageOptions,
 } from "@/common/orpc/types";
 import {
-  type MuxMessageMetadata,
+  type XumMessageMetadata,
   type CompactionRequestData,
   type CompactionFollowUpRequest,
   type CompactionFollowUpInput,
@@ -1497,7 +1497,7 @@ export interface CompactionResult {
  */
 export function prepareCompactionMessage(options: CompactionOptions): {
   messageText: string;
-  metadata: MuxMessageMetadata;
+  metadata: XumMessageMetadata;
   sendOptions: SendMessageOptions;
 } {
   // followUpContent is the content that will be auto-sent after compaction.
@@ -1560,7 +1560,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Apply compaction overrides
   const sendOptions = applyCompactionOverrides(options.sendMessageOptions, compactData);
 
-  const metadata: MuxMessageMetadata = {
+  const metadata: XumMessageMetadata = {
     type: "compaction-request",
     rawCommand: fullRawCommand,
     commandPrefix: commandLine,

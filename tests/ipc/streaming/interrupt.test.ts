@@ -23,7 +23,7 @@ import {
   HAIKU_MODEL,
 } from "../helpers";
 import { createStreamCollector } from "../streamCollector";
-import { isInitOutput, isMuxMessage } from "@/common/orpc/types";
+import { isInitOutput, isXumMessage } from "@/common/orpc/types";
 import * as path from "path";
 import * as fs from "fs/promises";
 // eslint-disable-next-line local/no-unsafe-child-process
@@ -113,7 +113,7 @@ describeIntegration("interruptStream during startup", () => {
 
       // Wait until we observe the user message being persisted/emitted.
       const sawUserMessage = await waitFor(() => {
-        return activeCollector.getEvents().some((e) => isMuxMessage(e) && e.role === "user");
+        return activeCollector.getEvents().some((e) => isXumMessage(e) && e.role === "user");
       }, 5000);
       expect(sawUserMessage).toBe(true);
 

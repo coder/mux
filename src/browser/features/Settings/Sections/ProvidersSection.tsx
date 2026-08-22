@@ -39,9 +39,9 @@ import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
-  formatMuxGatewayBalance,
-  useMuxGatewayAccountStatus,
-} from "@/browser/hooks/useMuxGatewayAccountStatus";
+  formatXumGatewayBalance,
+  useXumGatewayAccountStatus,
+} from "@/browser/hooks/useXumGatewayAccountStatus";
 import { useRouting } from "@/browser/hooks/useRouting";
 import { Button } from "@/browser/components/Button/Button";
 import {
@@ -78,7 +78,7 @@ import type {
 } from "@/common/orpc/types";
 import type { ServiceTier, XAIServiceTier } from "@/common/config/schemas/providersConfig";
 
-type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
+type XumGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
 type CopilotLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
@@ -413,8 +413,8 @@ export function ProvidersSection() {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
     isLoading: muxGatewayAccountLoading,
-    refresh: refreshMuxGatewayAccountStatus,
-  } = useMuxGatewayAccountStatus();
+    refresh: refreshXumGatewayAccountStatus,
+  } = useXumGatewayAccountStatus();
 
   const [openaiServiceTierSelectOverride, setOpenaiServiceTierSelectOverride] =
     useState<OpenAIServiceTierSelectValue | null>(null);
@@ -756,7 +756,7 @@ export function ProvidersSection() {
     }
   };
 
-  const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
+  const [muxGatewayLoginStatus, setXumGatewayLoginStatus] = useState<XumGatewayLoginStatus>("idle");
   const cancelCodexOauth = () => {
     codexOauthAttemptRef.current++;
 
@@ -776,34 +776,34 @@ export function ProvidersSection() {
     setCodexOauthError(null);
   };
 
-  const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
+  const [muxGatewayLoginError, setXumGatewayLoginError] = useState<string | null>(null);
 
   const muxGatewayLoginAttemptRef = useRef(0);
-  const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
-  const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
+  const [muxGatewayDesktopFlowId, setXumGatewayDesktopFlowId] = useState<string | null>(null);
+  const [muxGatewayServerState, setXumGatewayServerState] = useState<string | null>(null);
 
-  const [muxGatewayAuthorizeUrl, setMuxGatewayAuthorizeUrl] = useState<string | null>(null);
+  const [muxGatewayAuthorizeUrl, setXumGatewayAuthorizeUrl] = useState<string | null>(null);
 
-  const cancelMuxGatewayLogin = () => {
+  const cancelXumGatewayLogin = () => {
     muxGatewayLoginAttemptRef.current++;
 
     if (isDesktop && api && muxGatewayDesktopFlowId) {
       void api.muxGatewayOauth.cancelDesktopFlow({ flowId: muxGatewayDesktopFlowId });
     }
 
-    setMuxGatewayDesktopFlowId(null);
-    setMuxGatewayServerState(null);
-    setMuxGatewayAuthorizeUrl(null);
-    setMuxGatewayLoginStatus("idle");
-    setMuxGatewayLoginError(null);
+    setXumGatewayDesktopFlowId(null);
+    setXumGatewayServerState(null);
+    setXumGatewayAuthorizeUrl(null);
+    setXumGatewayLoginStatus("idle");
+    setXumGatewayLoginError(null);
   };
 
-  const clearMuxGatewayCredentials = () => {
+  const clearXumGatewayCredentials = () => {
     if (!api) {
       return;
     }
 
-    cancelMuxGatewayLogin();
+    cancelXumGatewayLogin();
     updateOptimistically("mux-gateway", { couponCodeSet: false });
 
     void api.providers.setProviderConfig({
@@ -818,23 +818,23 @@ export function ProvidersSection() {
     });
   };
 
-  const startMuxGatewayLogin = async () => {
+  const startXumGatewayLogin = async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
     try {
-      setMuxGatewayLoginError(null);
-      setMuxGatewayDesktopFlowId(null);
-      setMuxGatewayServerState(null);
-      setMuxGatewayAuthorizeUrl(null);
+      setXumGatewayLoginError(null);
+      setXumGatewayDesktopFlowId(null);
+      setXumGatewayServerState(null);
+      setXumGatewayAuthorizeUrl(null);
 
       if (isDesktop) {
         if (!api) {
-          setMuxGatewayLoginStatus("error");
-          setMuxGatewayLoginError("Xum API not connected.");
+          setXumGatewayLoginStatus("error");
+          setXumGatewayLoginError("Xum API not connected.");
           return;
         }
 
-        setMuxGatewayLoginStatus("starting");
+        setXumGatewayLoginStatus("starting");
         const startResult = await api.muxGatewayOauth.startDesktopFlow();
 
         if (attempt !== muxGatewayLoginAttemptRef.current) {
@@ -845,15 +845,15 @@ export function ProvidersSection() {
         }
 
         if (!startResult.success) {
-          setMuxGatewayLoginStatus("error");
-          setMuxGatewayLoginError(startResult.error);
+          setXumGatewayLoginStatus("error");
+          setXumGatewayLoginError(startResult.error);
           return;
         }
 
         const { flowId, authorizeUrl } = startResult.data;
-        setMuxGatewayDesktopFlowId(flowId);
-        setMuxGatewayAuthorizeUrl(authorizeUrl);
-        setMuxGatewayLoginStatus("waiting");
+        setXumGatewayDesktopFlowId(flowId);
+        setXumGatewayAuthorizeUrl(authorizeUrl);
+        setXumGatewayLoginStatus("waiting");
 
         if (attempt !== muxGatewayLoginAttemptRef.current) {
           return;
@@ -866,20 +866,20 @@ export function ProvidersSection() {
         }
 
         if (waitResult.success) {
-          setMuxGatewayLoginStatus("success");
-          void refreshMuxGatewayAccountStatus();
+          setXumGatewayLoginStatus("success");
+          void refreshXumGatewayAccountStatus();
 
           return;
         }
 
-        setMuxGatewayAuthorizeUrl(null);
-        setMuxGatewayLoginStatus("error");
-        setMuxGatewayLoginError(waitResult.error);
+        setXumGatewayAuthorizeUrl(null);
+        setXumGatewayLoginStatus("error");
+        setXumGatewayLoginError(waitResult.error);
         return;
       }
 
       // Browser/server mode: use unauthenticated bootstrap route.
-      setMuxGatewayLoginStatus("starting");
+      setXumGatewayLoginStatus("starting");
 
       const startUrl = new URL(`${backendBaseUrl}/auth/mux-gateway/start`);
       const authToken = getServerAuthToken();
@@ -918,18 +918,18 @@ export function ProvidersSection() {
         throw new Error(`Invalid response from ${startUrl.pathname}`);
       }
 
-      setMuxGatewayServerState(json.state);
-      setMuxGatewayAuthorizeUrl(json.authorizeUrl);
-      setMuxGatewayLoginStatus("waiting");
+      setXumGatewayServerState(json.state);
+      setXumGatewayAuthorizeUrl(json.authorizeUrl);
+      setXumGatewayLoginStatus("waiting");
     } catch (err) {
       if (attempt !== muxGatewayLoginAttemptRef.current) {
         return;
       }
 
       const message = getErrorMessage(err);
-      setMuxGatewayAuthorizeUrl(null);
-      setMuxGatewayLoginStatus("error");
-      setMuxGatewayLoginError(message);
+      setXumGatewayAuthorizeUrl(null);
+      setXumGatewayLoginStatus("error");
+      setXumGatewayLoginError(message);
     }
   };
 
@@ -950,17 +950,17 @@ export function ProvidersSection() {
       if (data.state !== muxGatewayServerState) return;
 
       if (data.ok === true) {
-        setMuxGatewayAuthorizeUrl(null);
-        setMuxGatewayLoginStatus("success");
-        void refreshMuxGatewayAccountStatus();
+        setXumGatewayAuthorizeUrl(null);
+        setXumGatewayLoginStatus("success");
+        void refreshXumGatewayAccountStatus();
 
         return;
       }
 
       const msg = typeof data.error === "string" ? data.error : "Login failed";
-      setMuxGatewayAuthorizeUrl(null);
-      setMuxGatewayLoginStatus("error");
-      setMuxGatewayLoginError(msg);
+      setXumGatewayAuthorizeUrl(null);
+      setXumGatewayLoginStatus("error");
+      setXumGatewayLoginError(msg);
     };
 
     window.addEventListener("message", handleMessage);
@@ -970,7 +970,7 @@ export function ProvidersSection() {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     backendOrigin,
-    refreshMuxGatewayAccountStatus,
+    refreshXumGatewayAccountStatus,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const muxGatewayLoginInProgress =
@@ -1368,14 +1368,14 @@ export function ProvidersSection() {
       return;
     }
 
-    void refreshMuxGatewayAccountStatus();
+    void refreshXumGatewayAccountStatus();
   }, [
     expandedProvider,
     muxGatewayAccountError,
     muxGatewayAccountLoading,
     muxGatewayAccountStatus,
     muxGatewayIsLoggedIn,
-    refreshMuxGatewayAccountStatus,
+    refreshXumGatewayAccountStatus,
   ]);
   const [editingField, setEditingField] = useState<{
     provider: string;
@@ -1388,7 +1388,7 @@ export function ProvidersSection() {
     setExpandedProvider((prev) => {
       const next = prev === provider ? null : provider;
       if (prev === "mux-gateway" && next !== "mux-gateway") {
-        cancelMuxGatewayLogin();
+        cancelXumGatewayLogin();
       }
       if (prev === "github-copilot" && next !== "github-copilot") {
         cancelCopilotLogin();
@@ -1975,7 +1975,7 @@ export function ProvidersSection() {
                               <Button
                                 size="sm"
                                 onClick={() => {
-                                  void startMuxGatewayLogin();
+                                  void startXumGatewayLogin();
                                 }}
                                 disabled={muxGatewayLoginInProgress}
                               >
@@ -2000,7 +2000,7 @@ export function ProvidersSection() {
                                 <Button
                                   variant="secondary"
                                   size="sm"
-                                  onClick={cancelMuxGatewayLogin}
+                                  onClick={cancelXumGatewayLogin}
                                 >
                                   Cancel
                                 </Button>
@@ -2010,7 +2010,7 @@ export function ProvidersSection() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={clearMuxGatewayCredentials}
+                                  onClick={clearXumGatewayCredentials}
                                 >
                                   Log out
                                 </Button>
@@ -2048,7 +2048,7 @@ export function ProvidersSection() {
                               variant="outline"
                               size="sm"
                               onClick={() => {
-                                void refreshMuxGatewayAccountStatus();
+                                void refreshXumGatewayAccountStatus();
                               }}
                               disabled={muxGatewayAccountLoading}
                             >
@@ -2059,7 +2059,7 @@ export function ProvidersSection() {
                           <div className="flex items-center justify-between gap-4">
                             <span className="text-muted text-xs">Balance</span>
                             <span className="text-foreground font-mono text-xs">
-                              {formatMuxGatewayBalance(
+                              {formatXumGatewayBalance(
                                 muxGatewayAccountStatus?.remaining_microdollars
                               )}
                             </span>

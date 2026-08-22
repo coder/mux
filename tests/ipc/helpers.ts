@@ -34,7 +34,7 @@ import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 import type { WorkspaceSendMessageOutput } from "@/common/orpc/schemas";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { HistoryService } from "../../src/node/services/historyService";
-import { createMuxMessage } from "../../src/common/types/message";
+import { createXumMessage } from "../../src/common/types/message";
 
 const execAsync = promisify(exec);
 import { ORPCError } from "@orpc/client";
@@ -712,7 +712,7 @@ export async function buildLargeHistory(
   for (let i = 0; i < messageCount; i++) {
     const isUser = i % 2 === 0;
     const role = isUser ? "user" : "assistant";
-    const message = createMuxMessage(`history-msg-${i}`, role, largeText, {});
+    const message = createXumMessage(`history-msg-${i}`, role, largeText, {});
 
     const result = await historyService.appendToHistory(workspaceId, message);
     if (!result.success) {

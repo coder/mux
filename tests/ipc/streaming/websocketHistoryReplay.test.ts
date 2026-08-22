@@ -6,15 +6,15 @@ import {
   cleanupTempGitRepo,
 } from "../helpers";
 import { HistoryService } from "@/node/services/historyService";
-import { createMuxMessage } from "@/common/types/message";
-import type { MuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import assert from "node:assert";
 
 async function collectFullHistory(
   service: HistoryService,
   workspaceId: string
-): Promise<MuxMessage[]> {
-  const messages: MuxMessage[] = [];
+): Promise<XumMessage[]> {
+  const messages: XumMessage[] = [];
   const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
     messages.push(...chunk);
   });
@@ -52,7 +52,7 @@ describe("WebSocket history replay", () => {
         const workspaceId = createResult.metadata.id;
 
         const historyService = new HistoryService(env.config);
-        const testMessage = createMuxMessage("test-msg-2", "user", "Test message for getHistory");
+        const testMessage = createXumMessage("test-msg-2", "user", "Test message for getHistory");
         await historyService.appendToHistory(workspaceId, testMessage);
 
         await new Promise((resolve) => setTimeout(resolve, 100));

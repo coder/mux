@@ -1,7 +1,7 @@
 import fsPromises from "fs/promises";
 import path from "path";
 import type { DemoProjectConfig } from "./demoProject";
-import { createMuxMessage, type MuxMessage } from "../../../src/common/types/message";
+import { createXumMessage, type XumMessage } from "../../../src/common/types/message";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "../../../src/common/types/tools";
 import { HistoryService } from "../../../src/node/services/historyService";
 
@@ -123,8 +123,8 @@ function createAssistantParts(args: {
   toolOutputChars: number;
   reasoningChars: number;
   largeDiffLinePairs?: number;
-}): MuxMessage["parts"] {
-  const parts: MuxMessage["parts"] = [];
+}): XumMessage["parts"] {
+  const parts: XumMessage["parts"] = [];
 
   if (args.toolOutputChars > 0) {
     const toolName = args.index % 2 === 0 ? "file_read" : "bash";
@@ -187,7 +187,7 @@ function createAssistantParts(args: {
 async function appendOrThrow(args: {
   historyService: HistoryService;
   workspaceId: string;
-  message: MuxMessage;
+  message: XumMessage;
   profile: HistoryProfileName;
   role: "user" | "assistant";
 }): Promise<void> {
@@ -219,7 +219,7 @@ export async function seedWorkspaceHistoryProfile(args: {
       `${profile}-user-${pairIndex}`,
       profileConfig.userChars
     );
-    const userMessage = createMuxMessage(`${profile}-user-msg-${pairIndex}`, "user", userText, {
+    const userMessage = createXumMessage(`${profile}-user-msg-${pairIndex}`, "user", userText, {
       timestamp: BASE_TIMESTAMP_MS + pairIndex * 2,
     });
     await appendOrThrow({
@@ -242,7 +242,7 @@ export async function seedWorkspaceHistoryProfile(args: {
       largeDiffLinePairs: profileConfig.largeDiffLinePairs,
     });
 
-    const assistantMessage = createMuxMessage(
+    const assistantMessage = createXumMessage(
       `${profile}-assistant-msg-${pairIndex}`,
       "assistant",
       assistantText,

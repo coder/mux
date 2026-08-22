@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { EventEmitter } from "events";
 import { MockAiStreamPlayer } from "./mockAiStreamPlayer";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
@@ -16,14 +16,14 @@ function readWorkspaceId(payload: unknown): string | undefined {
   return typeof workspaceId === "string" ? workspaceId : undefined;
 }
 
-function extractText(message: MuxMessage | null | undefined): string {
+function extractText(message: XumMessage | null | undefined): string {
   if (!message) {
     return "";
   }
 
   return message.parts
     .filter(
-      (part): part is Extract<MuxMessage["parts"][number], { type: "text" }> => part.type === "text"
+      (part): part is Extract<XumMessage["parts"][number], { type: "text" }> => part.type === "text"
     )
     .map((part) => part.text)
     .join("");
@@ -67,7 +67,7 @@ describe("MockAiStreamPlayer", () => {
 
     const workspaceId = "workspace-1";
 
-    const firstTurnUser = createMuxMessage(
+    const firstTurnUser = createXumMessage(
       "user-1",
       "user",
       "[mock:list-languages] List 3 programming languages",
@@ -84,7 +84,7 @@ describe("MockAiStreamPlayer", () => {
     const historyResult = await historyService.getLastMessages(workspaceId, 100);
     const historyBeforeSecondTurn = historyResult.success ? historyResult.data : [];
 
-    const secondTurnUser = createMuxMessage(
+    const secondTurnUser = createXumMessage(
       "user-2",
       "user",
       "[mock:error:api] Trigger API error",
@@ -127,14 +127,14 @@ describe("MockAiStreamPlayer", () => {
       appendResolve = resolve;
     });
 
-    let appendedMessageResolve!: (msg: MuxMessage) => void;
-    const appendedMessage = new Promise<MuxMessage>((resolve) => {
+    let appendedMessageResolve!: (msg: XumMessage) => void;
+    const appendedMessage = new Promise<XumMessage>((resolve) => {
       appendedMessageResolve = resolve;
     });
 
     const originalAppend = historyService.appendToHistory.bind(historyService);
     spyOn(historyService, "appendToHistory").mockImplementation(
-      async (wId: string, message: MuxMessage) => {
+      async (wId: string, message: XumMessage) => {
         // Write to disk so deleteMessage can find it later
         await originalAppend(wId, message);
         appendedMessageResolve(message);
@@ -152,7 +152,7 @@ describe("MockAiStreamPlayer", () => {
 
     const workspaceId = "workspace-abort-startup";
 
-    const userMessage = createMuxMessage(
+    const userMessage = createXumMessage(
       "user-1",
       "user",
       "[mock:list-languages] List 3 programming languages",
@@ -214,7 +214,7 @@ describe("MockAiStreamPlayer", () => {
       }
     });
 
-    const firstUserMessage = createMuxMessage(
+    const firstUserMessage = createXumMessage(
       "user-abort-replacement-first",
       "user",
       "[force] first stream before aborted replacement",
@@ -229,7 +229,7 @@ describe("MockAiStreamPlayer", () => {
       expect(streamStartMessageIds).toHaveLength(1);
 
       const abortController = new AbortController();
-      const replacementUserMessage = createMuxMessage(
+      const replacementUserMessage = createXumMessage(
         "user-abort-replacement-second",
         "user",
         "[force] replacement stream should abort before scheduling",
@@ -286,7 +286,7 @@ describe("MockAiStreamPlayer", () => {
       });
     });
 
-    const userMessage = createMuxMessage("user-partial", "user", "[force] keep streaming", {
+    const userMessage = createXumMessage("user-partial", "user", "[force] keep streaming", {
       timestamp: Date.now(),
     });
 
@@ -337,7 +337,7 @@ describe("MockAiStreamPlayer", () => {
     );
 
     const workspaceId = "workspace-stale-partial-after-stop";
-    const userMessage = createMuxMessage("user-stale-partial", "user", "[force] keep streaming", {
+    const userMessage = createXumMessage("user-stale-partial", "user", "[force] keep streaming", {
       timestamp: Date.now(),
     });
 
@@ -418,7 +418,7 @@ describe("MockAiStreamPlayer", () => {
       }
     });
 
-    const firstUserMessage = createMuxMessage(
+    const firstUserMessage = createXumMessage(
       "user-stale-delayed-write-first",
       "user",
       "[force] first stream before stale delayed-write cleanup",
@@ -433,7 +433,7 @@ describe("MockAiStreamPlayer", () => {
 
       await waitForCondition(() => writePartialCallCount >= 1, 1000);
 
-      const replacementUserMessage = createMuxMessage(
+      const replacementUserMessage = createXumMessage(
         "user-stale-delayed-write-second",
         "user",
         "[force] replacement stream should keep its partial after stale cleanup",
@@ -483,7 +483,7 @@ describe("MockAiStreamPlayer", () => {
     });
 
     const workspaceId = "workspace-partial-replacement";
-    const firstUserMessage = createMuxMessage(
+    const firstUserMessage = createXumMessage(
       "user-partial-first",
       "user",
       "[force] first-partial-marker keep streaming",
@@ -503,7 +503,7 @@ describe("MockAiStreamPlayer", () => {
     const firstPartial = await historyService.readPartial(workspaceId);
     expect(firstPartial).not.toBeNull();
 
-    const secondUserMessage = createMuxMessage(
+    const secondUserMessage = createXumMessage(
       "user-partial-second",
       "user",
       "[force] second-partial-marker keep streaming",
@@ -560,7 +560,7 @@ describe("MockAiStreamPlayer", () => {
       errorEvents.push(payload as { messageId?: string });
     });
 
-    const firstUserMessage = createMuxMessage(
+    const firstUserMessage = createXumMessage(
       "user-stream-error-first",
       "user",
       "[mock:error:api] Trigger API error",
@@ -574,7 +574,7 @@ describe("MockAiStreamPlayer", () => {
 
     await waitForCondition(() => deletePartialCallCount >= 1, 1000);
 
-    const replacementUserMessage = createMuxMessage(
+    const replacementUserMessage = createXumMessage(
       "user-stream-error-second",
       "user",
       "[force] replacement stream after cancelled error",
@@ -619,7 +619,7 @@ describe("MockAiStreamPlayer", () => {
     });
 
     const workspaceId = "workspace-stale-stream-end";
-    const firstUserMessage = createMuxMessage(
+    const firstUserMessage = createXumMessage(
       "user-stream-end-first",
       "user",
       "[mock:list-languages] List 3 programming languages",
@@ -633,7 +633,7 @@ describe("MockAiStreamPlayer", () => {
 
     await waitForCondition(() => deletePartialCallCount >= 1, 1000);
 
-    const replacementUserMessage = createMuxMessage(
+    const replacementUserMessage = createXumMessage(
       "user-stream-end-second",
       "user",
       "[force] replacement stream after completed turn",
@@ -671,7 +671,7 @@ describe("MockAiStreamPlayer", () => {
     });
 
     const workspaceId = "workspace-partial-commit";
-    const userMessage = createMuxMessage(
+    const userMessage = createXumMessage(
       "user-commit",
       "user",
       "[mock:list-languages] List 3 programming languages",
@@ -717,7 +717,7 @@ describe("MockAiStreamPlayer", () => {
       if (payload.workspaceId === workspaceId) streamEnd = payload;
     });
 
-    const userMessage = createMuxMessage("user-metadata", "user", "Continue delegated work", {
+    const userMessage = createXumMessage("user-metadata", "user", "Continue delegated work", {
       timestamp: Date.now(),
     });
     const playResult = await player.play([userMessage], workspaceId, {
@@ -785,7 +785,7 @@ describe("MockAiStreamPlayer", () => {
       });
     });
 
-    const forceTurnUser = createMuxMessage("user-force", "user", "[force] keep streaming", {
+    const forceTurnUser = createXumMessage("user-force", "user", "[force] keep streaming", {
       timestamp: Date.now(),
     });
 

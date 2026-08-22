@@ -1,1 +1,1 @@
-export { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
+export { XumProviderOptionsSchema } from "@/common/schemas/providerOptions";

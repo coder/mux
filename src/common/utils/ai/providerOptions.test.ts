@@ -5,7 +5,7 @@
 import { createOpenAI, type OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import { generateText, streamText } from "ai";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { createOpenAICachedSystemMessage } from "./cacheStrategy";
 import { describe, test, expect, mock } from "bun:test";
 import { openaiDirectProviderOptionsAvailable } from "./openaiProviderOptionsAvailability";
@@ -17,7 +17,7 @@ import {
   preserveAnthropic1MContextForFollowUp,
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
-  MUX_WORKSPACE_ID_HEADER,
+  XUM_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
 // Mock the log module to avoid console noise
@@ -1564,7 +1564,7 @@ describe("buildProviderOptions - OpenAI", () => {
   describe("OpenAI conversation state management", () => {
     test("does not reuse previousResponseId when Xum already sends explicit GPT-5.5 history", () => {
       const messages = [
-        createMuxMessage("assistant-1", "assistant", "", {
+        createXumMessage("assistant-1", "assistant", "", {
           model: "mux-gateway:openai/gpt-5.5",
           providerMetadata: { openai: { responseId: "resp_123" } },
         }),
@@ -1631,7 +1631,7 @@ describe("buildProviderOptions - OpenAI", () => {
 
     test("omits previousResponseId when wireFormat is chatCompletions", () => {
       const messages = [
-        createMuxMessage("assistant-1", "assistant", "", {
+        createXumMessage("assistant-1", "assistant", "", {
           model: "openai:gpt-5.2",
           providerMetadata: { openai: { responseId: "resp_chat_123" } },
         }),
@@ -2250,14 +2250,14 @@ describe("buildRequestHeaders", () => {
       model: "openai:gpt-5.2",
       options: undefined,
       workspaceId: "a1b2c3d4e5",
-      expected: { [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
+      expected: { [XUM_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
     },
     {
       name: "should include X-Mux-Workspace-Id for mux-gateway routes",
       model: "mux-gateway:openai/gpt-5.2",
       options: undefined,
       workspaceId: "a1b2c3d4e5",
-      expected: { [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
+      expected: { [XUM_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
     },
     {
       name: "should encode non-header-safe workspace IDs before attaching request header",
@@ -2265,7 +2265,7 @@ describe("buildRequestHeaders", () => {
       options: undefined,
       workspaceId: "workspace-😀",
       expected: {
-        [MUX_WORKSPACE_ID_HEADER]: `b64:${Buffer.from("workspace-😀", "utf8").toString("base64url")}`,
+        [XUM_WORKSPACE_ID_HEADER]: `b64:${Buffer.from("workspace-😀", "utf8").toString("base64url")}`,
       },
     },
     {
@@ -2274,7 +2274,7 @@ describe("buildRequestHeaders", () => {
       options: { anthropic: { use1MContext: true } },
       workspaceId: "a1b2c3d4e5",
       expected: {
-        [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5",
+        [XUM_WORKSPACE_ID_HEADER]: "a1b2c3d4e5",
         "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER,
       },
     },
@@ -2283,7 +2283,7 @@ describe("buildRequestHeaders", () => {
       model: "anthropic:claude-sonnet-4-20250514",
       options: undefined,
       workspaceId: "deadbeef00",
-      expected: { [MUX_WORKSPACE_ID_HEADER]: "deadbeef00" },
+      expected: { [XUM_WORKSPACE_ID_HEADER]: "deadbeef00" },
     },
   ] as const) {
     test(name, () => {
@@ -2294,7 +2294,7 @@ describe("buildRequestHeaders", () => {
   }
 
   test("workspace correlation header uses the mux wire name, not Xum", () => {
-    expect(MUX_WORKSPACE_ID_HEADER).toBe("X-Mux-Workspace-Id");
+    expect(XUM_WORKSPACE_ID_HEADER).toBe("X-Mux-Workspace-Id");
     const headers = buildRequestHeaders("openai:gpt-5.2", undefined, "ws-id");
     expect(headers?.["X-Mux-Workspace-Id"]).toBe("ws-id");
     expect(headers?.["X-Xum-Workspace-Id"]).toBeUndefined();

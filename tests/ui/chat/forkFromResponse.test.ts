@@ -1,6 +1,6 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
@@ -17,7 +17,7 @@ async function collectFullHistory(
   );
 }
 
-function getMessageText(messages: Array<{ parts: MuxMessage["parts"] }>): string {
+function getMessageText(messages: Array<{ parts: XumMessage["parts"] }>): string {
   return messages
     .flatMap((message) =>
       message.parts

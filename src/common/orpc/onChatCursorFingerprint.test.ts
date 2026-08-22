@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { computePriorHistoryFingerprint } from "./onChatCursorFingerprint";
 
 function withHistoryMetadata(
-  message: MuxMessage,
+  message: XumMessage,
   historySequence: number,
   timestamp: number
-): MuxMessage {
+): XumMessage {
   return {
     ...message,
     metadata: {
@@ -20,7 +20,7 @@ function withHistoryMetadata(
 describe("computePriorHistoryFingerprint", () => {
   test("returns undefined when no rows exist below the anchor", () => {
     const anchorOnly = withHistoryMetadata(
-      createMuxMessage("msg-anchor", "assistant", "anchor"),
+      createXumMessage("msg-anchor", "assistant", "anchor"),
       1,
       1_000
     );
@@ -30,12 +30,12 @@ describe("computePriorHistoryFingerprint", () => {
 
   test("changes when a lower-sequence row is rewritten with new content", () => {
     const originalRow = withHistoryMetadata(
-      createMuxMessage("msg-rewritten", "assistant", "original"),
+      createXumMessage("msg-rewritten", "assistant", "original"),
       1,
       1_001
     );
     const anchorRow = withHistoryMetadata(
-      createMuxMessage("msg-anchor", "assistant", "anchor"),
+      createXumMessage("msg-anchor", "assistant", "anchor"),
       2,
       1_002
     );
@@ -43,7 +43,7 @@ describe("computePriorHistoryFingerprint", () => {
     const originalFingerprint = computePriorHistoryFingerprint([originalRow, anchorRow], 2);
 
     const rewrittenRow = withHistoryMetadata(
-      createMuxMessage("msg-rewritten", "assistant", "rewritten"),
+      createXumMessage("msg-rewritten", "assistant", "rewritten"),
       1,
       1_001
     );

@@ -8,7 +8,7 @@ import { log } from "./log";
 import * as os from "os";
 import * as childProcess from "node:child_process";
 import { VERSION } from "@/version";
-import { buildMuxMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
+import { buildXumMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
 import type { AppRouter } from "@/node/orpc/router";
 
 export interface ServerInfo {
@@ -440,7 +440,7 @@ export class ServerService {
     // "auto" mode: only advertise when the bind host is reachable from other devices.
     if (mdnsAdvertisementEnabled !== false && !isLoopbackHost(bindHost)) {
       const instanceName = options.context.config.getMdnsServiceName() ?? `xum-${os.hostname()}`;
-      const serviceOptions = buildMuxMdnsServiceOptions({
+      const serviceOptions = buildXumMdnsServiceOptions({
         bindHost,
         port: server.port,
         instanceName,

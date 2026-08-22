@@ -683,9 +683,9 @@ function extractRawCommand(metadata: MessageMetadataWithFrontendFields | undefin
     return null;
   }
 
-  const fromMuxMetadata = extractRawCommandFromFrontendMetadata(metadata.muxMetadata);
-  if (fromMuxMetadata != null) {
-    return fromMuxMetadata;
+  const fromXumMetadata = extractRawCommandFromFrontendMetadata(metadata.muxMetadata);
+  if (fromXumMetadata != null) {
+    return fromXumMetadata;
   }
 
   return extractRawCommandFromFrontendMetadata(metadata.cmuxMetadata);

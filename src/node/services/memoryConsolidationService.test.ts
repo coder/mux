@@ -6,7 +6,7 @@ import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { MemoryConsolidationStatusChangeEventPayload } from "@/common/orpc/schemas/memory";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -314,15 +314,15 @@ async function seedCompactionEpoch(
 ): Promise<CompactionCompletionMetadata> {
   await fixture.historyService.appendToHistory(
     workspaceId,
-    createMuxMessage("pref-1", "user", "Please remember that I prefer concise tests.")
+    createXumMessage("pref-1", "user", "Please remember that I prefer concise tests.")
   );
   await fixture.historyService.appendToHistory(
     workspaceId,
-    createMuxMessage("compact-request", "user", "Please compact", {
+    createXumMessage("compact-request", "user", "Please compact", {
       muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
     })
   );
-  const summary = createMuxMessage("summary-1", "assistant", "The user prefers concise tests.", {
+  const summary = createXumMessage("summary-1", "assistant", "The user prefers concise tests.", {
     compactionBoundary: true,
     compacted: "user",
     compactionEpoch: 1,

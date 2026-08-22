@@ -1,8 +1,8 @@
 import type {
-  MuxTextPart,
-  MuxReasoningPart,
-  MuxFilePart,
-  MuxToolPart,
+  XumTextPart,
+  XumReasoningPart,
+  XumFilePart,
+  XumToolPart,
 } from "@/common/types/message";
 import type {
   CodeExecutionResult,
@@ -11,7 +11,7 @@ import type {
 import type { TodoItem } from "@/common/types/tools";
 
 /** Part type for message construction */
-type MuxPart = MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart;
+type MuxPart = XumTextPart | XumReasoningPart | XumFilePart | XumToolPart;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TOOL CALL FACTORY

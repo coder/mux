@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { ProjectsConfig, Workspace } from "@/common/types/project";
 import type { WorkspaceActivitySnapshot, WorkspaceMetadata } from "@/common/types/workspace";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -868,7 +868,7 @@ export class HeartbeatService {
     return workspaceId.length > 0 ? workspaceId : null;
   }
 
-  private hasInteractiveToolInput(message: MuxMessage): boolean {
+  private hasInteractiveToolInput(message: XumMessage): boolean {
     if (!Array.isArray(message.parts)) {
       return false;
     }

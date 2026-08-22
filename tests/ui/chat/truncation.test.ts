@@ -16,7 +16,7 @@ import {
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "@/browser/utils/messages/transcriptTruncationPlan";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 
 import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
@@ -40,7 +40,7 @@ async function seedHistoryWithToolCalls(
   pairCount: number
 ): Promise<void> {
   for (let i = 0; i < pairCount; i++) {
-    const userMessage = createMuxMessage(`user-${i}`, "user", `user-${i}`);
+    const userMessage = createXumMessage(`user-${i}`, "user", `user-${i}`);
     const toolMessage = {
       id: `assistant-tool-${i}`,
       role: "assistant" as const,
@@ -56,7 +56,7 @@ async function seedHistoryWithToolCalls(
         },
       ],
     };
-    const assistantMessage = createMuxMessage(`assistant-${i}`, "assistant", `assistant-${i}`);
+    const assistantMessage = createXumMessage(`assistant-${i}`, "assistant", `assistant-${i}`);
 
     const userResult = await historyService.appendToHistory(workspaceId, userMessage);
     if (!userResult.success) {

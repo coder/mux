@@ -1,6 +1,6 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 
-import type { MuxMessageMetadata } from "@/common/types/message";
+import type { XumMessageMetadata } from "@/common/types/message";
 import { Err, Ok } from "@/common/types/result";
 import type { WorkspaceGoalService } from "./workspaceGoalService";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
@@ -65,10 +65,10 @@ describe("AgentSession queued message tool-call dispatch", () => {
     const sessionHolder: {
       current?: {
         hasQueuedOrDispatchingEntry(
-          continuationMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+          continuationMetadata?: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>
         ): boolean;
         hasPendingWorkspaceTurnContinuation(
-          continuationMetadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+          continuationMetadata: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>
         ): boolean;
       };
     } = {};

@@ -6,7 +6,7 @@ import * as path from "node:path";
 
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { AIService } from "@/node/services/aiService";
 
@@ -38,7 +38,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     await historyCleanup?.();
   });
 
-  function getMessageText(message: MuxMessage): string {
+  function getMessageText(message: XumMessage): string {
     const textPart = message.parts.find((part) => part.type === "text");
     if (textPart?.type !== "text") {
       throw new Error(`Expected text part for message ${message.id}`);
@@ -70,10 +70,10 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     });
     historyCleanup = cleanup;
 
-    const messages: MuxMessage[] = [];
+    const messages: XumMessage[] = [];
     const realAppend = historyService.appendToHistory.bind(historyService);
     const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
-      async (wId: string, message: MuxMessage) => {
+      async (wId: string, message: XumMessage) => {
         messages.push(message);
         return realAppend(wId, message);
       }
@@ -899,13 +899,13 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const skillSnapshotId = "agent-skill-snapshot-0";
     const userMessageId = "user-0";
 
-    const historyMessages: MuxMessage[] = [
-      createMuxMessage(fileSnapshotId, "user", "<file>...</file>", {
+    const historyMessages: XumMessage[] = [
+      createXumMessage(fileSnapshotId, "user", "<file>...</file>", {
         historySequence: 0,
         synthetic: true,
         fileAtMentionSnapshot: ["@file:foo.txt"],
       }),
-      createMuxMessage(skillSnapshotId, "user", "<agent-skill>...</agent-skill>", {
+      createXumMessage(skillSnapshotId, "user", "<agent-skill>...</agent-skill>", {
         historySequence: 1,
         synthetic: true,
         agentSkillSnapshot: {
@@ -914,7 +914,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
           sha256: "abc",
         },
       }),
-      createMuxMessage(userMessageId, "user", "do X", {
+      createXumMessage(userMessageId, "user", "do X", {
         historySequence: 2,
         muxMetadata: {
           type: "agent-skill",

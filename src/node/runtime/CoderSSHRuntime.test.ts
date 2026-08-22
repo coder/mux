@@ -31,7 +31,7 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
     verifyAuthenticatedSession: mock(() => Promise.resolve()),
     takeProvisioningSession: mock(() => provisioningSession),
     disposeProvisioningSession: mock(() => Promise.resolve()),
-    ensureMuxCoderSSHConfig: mock(() => Promise.resolve()),
+    ensureXumCoderSSHConfig: mock(() => Promise.resolve()),
     getWorkspaceStatus: mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     ),
@@ -604,7 +604,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
   it("creates a new Coder workspace and prepares the directory", async () => {
     const createWorkspace = mock(() => asyncLines(["build line 1", "build line 2"]));
-    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
+    const ensureXumCoderSSHConfig = mock(() => Promise.resolve());
     const provisioningSession = {
       token: "token",
       dispose: mock(() => Promise.resolve()),
@@ -623,7 +623,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
     const coderService = createMockCoderService({
       createWorkspace,
-      ensureMuxCoderSSHConfig,
+      ensureXumCoderSSHConfig,
       getWorkspaceStatus,
       takeProvisioningSession,
     });
@@ -670,7 +670,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       provisioningSession
     );
     expect(provisioningSession.dispose).toHaveBeenCalled();
-    expect(ensureMuxCoderSSHConfig).toHaveBeenCalled();
+    expect(ensureXumCoderSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
 
     // After postCreateSetup, ensureReady should succeed (workspace exists on server)
@@ -724,7 +724,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
   it("skips workspace creation when existingWorkspace=true and workspace is running", async () => {
     const createWorkspace = mock(() => asyncLines(["should not happen"]));
     const waitForStartupScripts = mock(() => asyncLines(["Already running"]));
-    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
+    const ensureXumCoderSSHConfig = mock(() => Promise.resolve());
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     );
@@ -732,7 +732,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const coderService = createMockCoderService({
       createWorkspace,
       waitForStartupScripts,
-      ensureMuxCoderSSHConfig,
+      ensureXumCoderSSHConfig,
       getWorkspaceStatus,
     });
     const runtime = createRuntime(
@@ -745,7 +745,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(createWorkspace).not.toHaveBeenCalled();
     // waitForStartupScripts is called (it handles running workspaces quickly)
     expect(waitForStartupScripts).toHaveBeenCalled();
-    expect(ensureMuxCoderSSHConfig).toHaveBeenCalled();
+    expect(ensureXumCoderSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
   });
 
@@ -754,7 +754,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const waitForStartupScripts = mock(() =>
       asyncLines(["Starting workspace...", "Build complete", "Startup scripts finished"])
     );
-    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
+    const ensureXumCoderSSHConfig = mock(() => Promise.resolve());
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
@@ -762,7 +762,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const coderService = createMockCoderService({
       createWorkspace,
       waitForStartupScripts,
-      ensureMuxCoderSSHConfig,
+      ensureXumCoderSSHConfig,
       getWorkspaceStatus,
     });
     const runtime = createRuntime(
@@ -782,7 +782,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(waitForStartupScripts).toHaveBeenCalled();
     expect(loggedStdout).toContain("Starting workspace...");
     expect(loggedStdout).toContain("Startup scripts finished");
-    expect(ensureMuxCoderSSHConfig).toHaveBeenCalled();
+    expect(ensureXumCoderSSHConfig).toHaveBeenCalled();
   });
 
   it("polls until stopping workspace becomes stopped before connecting", async () => {
@@ -796,12 +796,12 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       return Promise.resolve({ kind: "ok" as const, status: "stopped" as const });
     });
     const waitForStartupScripts = mock(() => asyncLines(["Ready"]));
-    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
+    const ensureXumCoderSSHConfig = mock(() => Promise.resolve());
 
     const coderService = createMockCoderService({
       getWorkspaceStatus,
       waitForStartupScripts,
-      ensureMuxCoderSSHConfig,
+      ensureXumCoderSSHConfig,
     });
 
     const runtime = createRuntime(

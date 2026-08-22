@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { MessageQueue } from "./messageQueue";
-import type { MuxMessageMetadata } from "@/common/types/message";
+import type { XumMessageMetadata } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
 
 describe("MessageQueue", () => {
@@ -44,7 +44,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return rawCommand for compaction request", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact -t 3000",
         parsed: { maxOutputTokens: 3000 },
@@ -64,7 +64,7 @@ describe("MessageQueue", () => {
     it("should queue compaction after normal message as its own entry", () => {
       queue.add("First message");
 
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -87,12 +87,12 @@ describe("MessageQueue", () => {
 
       const second = queue.dequeueNext();
       expect(second.message).toBe("Summarize this conversation...");
-      expect((second.options?.muxMetadata as MuxMessageMetadata).type).toBe("compaction-request");
+      expect((second.options?.muxMetadata as XumMessageMetadata).type).toBe("compaction-request");
       expect(queue.isEmpty()).toBe(true);
     });
 
     it("should return joined messages when metadata type is not compaction-request", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "normal",
       };
 
@@ -112,7 +112,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return joined messages after clearing compaction metadata", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -134,7 +134,7 @@ describe("MessageQueue", () => {
 
   describe("getMessages", () => {
     it("should return raw messages even for compaction requests", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -166,7 +166,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return true when compaction request is queued", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -182,7 +182,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return false after clearing", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -243,7 +243,7 @@ describe("MessageQueue", () => {
       });
       expect(queue.getQueueDispatchMode()).toBe("turn-end");
 
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "agent-skill",
         rawCommand: "/init",
         skillName: "init",
@@ -393,7 +393,7 @@ describe("MessageQueue", () => {
   });
 
   describe("workspace turn metadata", () => {
-    const metadata: MuxMessageMetadata = {
+    const metadata: XumMessageMetadata = {
       type: "workspace-turn-task",
       taskHandleId: "wst_followup",
       ownerWorkspaceId: "parent-workspace",
@@ -416,7 +416,7 @@ describe("MessageQueue", () => {
       // FIFO: the workspace turn dispatches first with its metadata + callbacks...
       const first = queue.dequeueNext();
       expect(first.message).toBe("Follow up");
-      expect((first.options?.muxMetadata as MuxMessageMetadata).type).toBe("workspace-turn-task");
+      expect((first.options?.muxMetadata as XumMessageMetadata).type).toBe("workspace-turn-task");
       expect(first.internal?.onAccepted).toBe(onAccepted);
 
       // ...and the user message dispatches after it, without adopting either.
@@ -440,7 +440,7 @@ describe("MessageQueue", () => {
       expect(queue.hasWorkspaceTurn("wst_followup")).toBe(true);
 
       const second = queue.dequeueNext();
-      expect((second.options?.muxMetadata as MuxMessageMetadata).type).toBe("workspace-turn-task");
+      expect((second.options?.muxMetadata as XumMessageMetadata).type).toBe("workspace-turn-task");
       expect(queue.hasWorkspaceTurn("wst_followup")).toBe(false);
     });
 
@@ -774,7 +774,7 @@ describe("MessageQueue", () => {
     });
 
     it("should preserve compaction metadata when follow-up is added", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "compaction-request",
         rawCommand: "/compact",
         parsed: {},
@@ -796,7 +796,7 @@ describe("MessageQueue", () => {
       // dequeueNext preserves compaction metadata from the entry's first message
       const { message, options } = queue.dequeueNext();
       expect(message).toBe("Summarize...\nAnd then do this follow-up task");
-      const muxMeta = options?.muxMetadata as MuxMessageMetadata;
+      const muxMeta = options?.muxMetadata as XumMessageMetadata;
       expect(muxMeta.type).toBe("compaction-request");
       if (muxMeta.type === "compaction-request") {
         expect(muxMeta.rawCommand).toBe("/compact");
@@ -806,7 +806,7 @@ describe("MessageQueue", () => {
     it("should queue an agent-skill invocation after a normal message as its own entry", () => {
       queue.add("First message");
 
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "agent-skill",
         rawCommand: "/init",
         skillName: "init",
@@ -829,13 +829,13 @@ describe("MessageQueue", () => {
       expect(first.options?.muxMetadata).toBeUndefined();
 
       const second = queue.dequeueNext();
-      expect((second.options?.muxMetadata as MuxMessageMetadata).type).toBe("agent-skill");
+      expect((second.options?.muxMetadata as XumMessageMetadata).type).toBe("agent-skill");
     });
 
     it("should queue an MCP prompt invocation after a normal message as its own entry", () => {
       queue.add("First message");
 
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "normal",
         rawCommand: "/mcp__coder__review src",
         mcpPromptRefs: [
@@ -864,13 +864,13 @@ describe("MessageQueue", () => {
       expect(first.options?.muxMetadata).toBeUndefined();
 
       const second = queue.dequeueNext();
-      expect((second.options?.muxMetadata as MuxMessageMetadata).mcpPromptRefs).toHaveLength(1);
+      expect((second.options?.muxMetadata as XumMessageMetadata).mcpPromptRefs).toHaveLength(1);
     });
 
     it("should queue an inline skill reference after a normal message as its own entry", () => {
       queue.add("First message");
 
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "normal",
         agentSkillRefs: [{ skillName: "tdd", scope: "global", source: "inline" }],
       };
@@ -887,11 +887,11 @@ describe("MessageQueue", () => {
       expect(first.options?.muxMetadata).toBeUndefined();
 
       const second = queue.dequeueNext();
-      expect((second.options?.muxMetadata as MuxMessageMetadata).agentSkillRefs).toHaveLength(1);
+      expect((second.options?.muxMetadata as XumMessageMetadata).agentSkillRefs).toHaveLength(1);
     });
 
     it("should queue a normal message behind an agent-skill invocation without leaking metadata", () => {
-      const metadata: MuxMessageMetadata = {
+      const metadata: XumMessageMetadata = {
         type: "agent-skill",
         rawCommand: "/init",
         skillName: "init",
@@ -913,7 +913,7 @@ describe("MessageQueue", () => {
 
       const first = queue.dequeueNext();
       expect(first.message).toBe("Use skill init");
-      expect((first.options?.muxMetadata as MuxMessageMetadata).type).toBe("agent-skill");
+      expect((first.options?.muxMetadata as XumMessageMetadata).type).toBe("agent-skill");
 
       const second = queue.dequeueNext();
       expect(second.message).toBe("Follow-up message");

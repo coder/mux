@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 const DATA_URI_PREFIX = "data:";
 
@@ -56,7 +56,7 @@ function parseDataUriToBase64(dataUri: string): ParsedDataUri {
  * URL-encoded (non-base64) data URIs would be silently corrupted. Rebuilding the
  * canonical `data:<mediaType>;base64,<payload>` form keeps both cases safe.
  */
-export function convertDataUriFilePartsForSdk(messages: MuxMessage[]): MuxMessage[] {
+export function convertDataUriFilePartsForSdk(messages: XumMessage[]): XumMessage[] {
   let changedAnyMessage = false;
 
   const convertedMessages = messages.map((message) => {
@@ -66,7 +66,7 @@ export function convertDataUriFilePartsForSdk(messages: MuxMessage[]): MuxMessag
 
     let changedMessage = false;
 
-    const convertedParts: MuxMessage["parts"] = message.parts.map((part) => {
+    const convertedParts: XumMessage["parts"] = message.parts.map((part) => {
       if (part.type !== "file" || !part.url.toLowerCase().startsWith(DATA_URI_PREFIX)) {
         return part;
       }

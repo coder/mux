@@ -3,8 +3,8 @@ import { mkdtemp, rm, stat, utimes, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { createMuxMessage } from "@/common/types/message";
-import type { MuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { Err, Ok } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import { AgentSession } from "./agentSession";
@@ -41,10 +41,10 @@ describe("AgentSession file-change notification (turn start)", () => {
     historyCleanup = cleanup;
     await historyService.appendToHistory(
       "ws",
-      createMuxMessage("user-1", "user", "hello", { timestamp: Date.now() })
+      createXumMessage("user-1", "user", "hello", { timestamp: Date.now() })
     );
 
-    const capturedRequests: MuxMessage[][] = [];
+    const capturedRequests: XumMessage[][] = [];
     const streamMessage = mock((opts: StreamMessageOptions) => {
       capturedRequests.push(opts.messages);
       return Promise.resolve(Ok(undefined));

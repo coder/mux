@@ -8,7 +8,7 @@ import {
   MUX_CODER_SSH_BLOCK_END,
   MUX_CODER_SSH_BLOCK_START,
 } from "@/constants/coder";
-import { ensureMuxCoderSSHConfigFile } from "./muxSshConfigWriter";
+import { ensureXumCoderSSHConfigFile } from "./xumSshConfigWriter";
 
 function renderExpectedMuxBlock(coderBinaryPath: string): string {
   const quotedPath = `"${coderBinaryPath.replaceAll('"', String.raw`\"`)}"`;
@@ -25,7 +25,7 @@ function renderExpectedMuxBlock(coderBinaryPath: string): string {
   ].join("\n");
 }
 
-describe("ensureMuxCoderSSHConfigFile", () => {
+describe("ensureXumCoderSSHConfigFile", () => {
   const coderBinaryPath = "/usr/local/bin/coder";
   let tempDirs: string[] = [];
 
@@ -52,7 +52,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
   it("creates block from an empty config", async () => {
     const sshConfigPath = await makeSSHConfigPath();
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toBe(`${renderExpectedMuxBlock(coderBinaryPath)}\n`);
@@ -63,7 +63,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await writeSSHConfig(sshConfigPath, "Host github.com\n");
     await fs.chmod(sshConfigPath, 0o644);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const mode = await fs.stat(sshConfigPath).then((stats) => stats.mode & 0o777);
     expect(mode).toBe(0o644);
@@ -72,7 +72,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
   it("defaults to 0o600 for a newly created config file", async () => {
     const sshConfigPath = await makeSSHConfigPath();
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const mode = await fs.stat(sshConfigPath).then((stats) => stats.mode & 0o777);
     expect(mode).toBe(0o600);
@@ -92,7 +92,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await fs.writeFile(targetConfigPath, "Host github.com\n", "utf8");
     await fs.symlink(path.relative(sshDir, targetConfigPath), sshConfigPath);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const linkStats = await fs.lstat(sshConfigPath);
     expect(linkStats.isSymbolicLink()).toBe(true);
@@ -116,7 +116,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await fs.mkdir(path.join(tempDir, "dotfiles"), { recursive: true });
     await fs.symlink(targetPath, symlinkPath);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath: symlinkPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath: symlinkPath });
 
     // Symlink must still exist and point to the target.
     const stat = await fs.lstat(symlinkPath);
@@ -146,7 +146,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await fs.symlink(targetPath, linkA);
     await fs.symlink(linkA, configLink);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath: configLink });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath: configLink });
 
     // Both symlinks must survive.
     expect((await fs.lstat(configLink)).isSymbolicLink()).toBe(true);
@@ -169,7 +169,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await fs.symlink(realFile, linkA);
     await fs.symlink(linkA, configLink);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath: configLink });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath: configLink });
 
     // Both symlinks must remain intact.
     const configStat = await fs.lstat(configLink);
@@ -191,7 +191,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const existingContent = ["Host github.com", "  User git", ""].join("\n");
     await writeSSHConfig(sshConfigPath, existingContent);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content.slice(0, existingContent.length)).toBe(existingContent);
@@ -208,7 +208,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     ].join("\n");
     await writeSSHConfig(sshConfigPath, existingContent);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content.slice(0, existingContent.length)).toBe(existingContent);
@@ -230,7 +230,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
 
     await writeSSHConfig(sshConfigPath, existingContent);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     const expected = [
@@ -252,7 +252,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const existingContent = `${renderExpectedMuxBlock(originalBinaryPath)}\n${userContent}`;
     await writeSSHConfig(sshConfigPath, existingContent);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toBe(`${renderExpectedMuxBlock(coderBinaryPath)}\n${userContent}`);
@@ -265,7 +265,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const existingContent = `${userContent}\n${renderExpectedMuxBlock(originalBinaryPath)}`;
     await writeSSHConfig(sshConfigPath, existingContent);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toBe(`${userContent}\n${renderExpectedMuxBlock(coderBinaryPath)}`);
@@ -274,10 +274,10 @@ describe("ensureMuxCoderSSHConfigFile", () => {
   it("is idempotent when called repeatedly with the same binary path", async () => {
     const sshConfigPath = await makeSSHConfigPath();
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
     const firstWrite = await readSSHConfig(sshConfigPath);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
     const secondWrite = await readSSHConfig(sshConfigPath);
 
     expect(secondWrite).toBe(firstWrite);
@@ -286,8 +286,8 @@ describe("ensureMuxCoderSSHConfigFile", () => {
   it("updates ProxyCommand when binary path changes", async () => {
     const sshConfigPath = await makeSSHConfigPath();
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
-    await ensureMuxCoderSSHConfigFile({
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({
       coderBinaryPath: "/Applications/Coder.app/Contents/MacOS/coder",
       sshConfigPath,
     });
@@ -305,7 +305,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const sshConfigPath = await makeSSHConfigPath();
     const spacedPath = "/usr/local/my dir/coder";
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath: spacedPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath: spacedPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toContain('ProxyCommand "/usr/local/my dir/coder"');
@@ -315,7 +315,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const sshConfigPath = await makeSSHConfigPath();
     const quotedPath = '/path/to/"coder"';
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath: quotedPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath: quotedPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toContain('ProxyCommand "/path/to/\\"coder\\""');
@@ -325,7 +325,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const sshConfigPath = await makeSSHConfigPath();
     const trickyPath = "/usr/$HOME/`whoami`/$(id)/coder";
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath: trickyPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath: trickyPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     // Double-quoting preserves the literal path in the SSH config file.
@@ -339,7 +339,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const sshConfigPath = await makeSSHConfigPath();
     const pathWithQuote = "/usr/local/it's/coder";
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath: pathWithQuote, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath: pathWithQuote, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toContain('ProxyCommand "/usr/local/it\'s/coder"');
@@ -349,7 +349,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const sshConfigPath = await makeSSHConfigPath();
     const windowsPath = "C:\\Program Files\\Coder\\bin\\coder.exe";
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath: windowsPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath: windowsPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toContain('ProxyCommand "C:\\Program Files\\Coder\\bin\\coder.exe"');
@@ -360,7 +360,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
     await expect(
-      ensureMuxCoderSSHConfigFile({ coderBinaryPath: "/path\n/coder", sshConfigPath })
+      ensureXumCoderSSHConfigFile({ coderBinaryPath: "/path\n/coder", sshConfigPath })
     ).rejects.toThrow(/newline/i);
   });
 
@@ -369,7 +369,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     const existingContent = ["Host github.com", "  User git"].join("\n");
     await writeSSHConfig(sshConfigPath, existingContent);
 
-    await ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
+    await ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath });
 
     const content = await readSSHConfig(sshConfigPath);
     expect(content).toBe(`${existingContent}\n${renderExpectedMuxBlock(coderBinaryPath)}\n`);
@@ -388,7 +388,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await writeSSHConfig(sshConfigPath, corruptedConfig);
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
-    await expect(ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath })).rejects.toThrow(
+    await expect(ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath })).rejects.toThrow(
       /duplicate/i
     );
   });
@@ -406,7 +406,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await writeSSHConfig(sshConfigPath, corruptedConfig);
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
-    await expect(ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath })).rejects.toThrow(
+    await expect(ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath })).rejects.toThrow(
       /duplicate/i
     );
   });
@@ -425,7 +425,7 @@ describe("ensureMuxCoderSSHConfigFile", () => {
     await writeSSHConfig(sshConfigPath, config);
 
     // eslint-disable-next-line @typescript-eslint/await-thenable -- Bun's expect().rejects.toThrow() is thenable at runtime
-    await expect(ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath })).rejects.toThrow(
+    await expect(ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath })).rejects.toThrow(
       /mismatched/i
     );
   });
@@ -441,8 +441,8 @@ describe("ensureMuxCoderSSHConfigFile", () => {
 
     try {
       await Promise.all([
-        ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath }),
-        ensureMuxCoderSSHConfigFile({ coderBinaryPath, sshConfigPath }),
+        ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath }),
+        ensureXumCoderSSHConfigFile({ coderBinaryPath, sshConfigPath }),
       ]);
 
       const tempPaths = writeFileSpy.mock.calls

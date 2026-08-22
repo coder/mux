@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { inlineSvgAsTextForProvider } from "./inlineSvgAsTextForProvider";
 
 describe("inlineSvgAsTextForProvider", () => {
@@ -7,7 +7,7 @@ describe("inlineSvgAsTextForProvider", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>';
     const b64 = Buffer.from(svg, "utf8").toString("base64");
 
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-1",
         role: "user",
@@ -33,7 +33,7 @@ describe("inlineSvgAsTextForProvider", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>Hello</text></svg>';
     const encoded = encodeURIComponent(svg);
 
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-2",
         role: "user",
@@ -55,7 +55,7 @@ describe("inlineSvgAsTextForProvider", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg">' + "a".repeat(100) + "</svg>";
     const b64 = Buffer.from(svg, "utf8").toString("base64");
 
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-3",
         role: "user",
@@ -78,7 +78,7 @@ describe("inlineSvgAsTextForProvider", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg">' + "a".repeat(100) + "</svg>";
     const b64 = Buffer.from(svg, "utf8").toString("base64");
 
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-3b",
         role: "user",
@@ -98,7 +98,7 @@ describe("inlineSvgAsTextForProvider", () => {
   });
 
   it("returns the same array when there are no SVG parts", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "user-4",
         role: "user",

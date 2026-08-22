@@ -7,7 +7,7 @@ import {
   modelString,
 } from "../helpers";
 import { HistoryService } from "../../../src/node/services/historyService";
-import { createMuxMessage } from "../../../src/common/types/message";
+import { createXumMessage } from "../../../src/common/types/message";
 import type { DeleteMessage } from "@/common/orpc/types";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -30,12 +30,12 @@ describeIntegration("truncateHistory", () => {
         // Create messages with a unique word in the first message
         const uniqueWord = `testword-${Date.now()}`;
         const messages = [
-          createMuxMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
-          createMuxMessage("msg-2", "assistant", "I will remember that word.", {}),
-          createMuxMessage("msg-3", "user", "What is 2+2?", {}),
-          createMuxMessage("msg-4", "assistant", "4", {}),
-          createMuxMessage("msg-5", "user", "What is 3+3?", {}),
-          createMuxMessage("msg-6", "assistant", "6", {}),
+          createXumMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
+          createXumMessage("msg-2", "assistant", "I will remember that word.", {}),
+          createXumMessage("msg-3", "user", "What is 2+2?", {}),
+          createXumMessage("msg-4", "assistant", "4", {}),
+          createXumMessage("msg-5", "user", "What is 3+3?", {}),
+          createXumMessage("msg-6", "assistant", "6", {}),
         ];
 
         // Append messages to history
@@ -115,10 +115,10 @@ describeIntegration("truncateHistory", () => {
         // Prepopulate chat with messages (avoid API calls)
         const uniqueWord = `testword-${Date.now()}`;
         const messages = [
-          createMuxMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
-          createMuxMessage("msg-2", "assistant", "I will remember that word.", {}),
-          createMuxMessage("msg-3", "user", "Tell me a fact about cats", {}),
-          createMuxMessage("msg-4", "assistant", "Cats sleep 12-16 hours a day.", {}),
+          createXumMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
+          createXumMessage("msg-2", "assistant", "I will remember that word.", {}),
+          createXumMessage("msg-3", "user", "Tell me a fact about cats", {}),
+          createXumMessage("msg-4", "assistant", "Cats sleep 12-16 hours a day.", {}),
         ];
 
         // Append messages to history
@@ -208,8 +208,8 @@ describeIntegration("truncateHistory", () => {
         // Prepopulate some history
         const uniqueWord = `testword-${Date.now()}`;
         const messages = [
-          createMuxMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
-          createMuxMessage("msg-2", "assistant", "I will remember that word.", {}),
+          createXumMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
+          createXumMessage("msg-2", "assistant", "I will remember that word.", {}),
         ];
 
         for (const msg of messages) {

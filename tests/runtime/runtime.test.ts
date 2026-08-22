@@ -3052,7 +3052,7 @@ describeIntegration("Runtime integration tests", () => {
             createWorkspaceCalled = true;
             yield "should not happen";
           },
-          ensureMuxCoderSSHConfig: async () => {
+          ensureXumCoderSSHConfig: async () => {
             // This SHOULD be called - it's safe and idempotent
           },
           getWorkspaceStatus: () =>

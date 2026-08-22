@@ -20,7 +20,7 @@ interface OpenAITranscriptionConfig {
   enabled?: unknown;
 }
 
-interface MuxGatewayTranscriptionConfig {
+interface XumGatewayTranscriptionConfig {
   couponCode?: string;
   voucher?: string;
   baseUrl?: string;
@@ -47,7 +47,7 @@ export class VoiceService {
     try {
       const providersConfig = this.config.loadProvidersConfig() ?? {};
       const gatewayConfig = providersConfig["mux-gateway"] as
-        | MuxGatewayTranscriptionConfig
+        | XumGatewayTranscriptionConfig
         | undefined;
       const openaiConfig = providersConfig.openai as OpenAITranscriptionConfig | undefined;
       const mainConfig = this.config.loadConfigOrDefault();
@@ -142,7 +142,7 @@ export class VoiceService {
   private async transcribeWithGateway(
     audioBase64: string,
     couponCode: string,
-    gatewayConfig: MuxGatewayTranscriptionConfig | undefined
+    gatewayConfig: XumGatewayTranscriptionConfig | undefined
   ): Promise<Result<string, string>> {
     const forcedBaseUrl = this.policyService?.getForcedBaseUrl("mux-gateway");
     const gatewayBase = this.resolveGatewayBase(
@@ -157,7 +157,7 @@ export class VoiceService {
     });
 
     if (response.status === 401) {
-      await this.clearMuxGatewayCredentials();
+      await this.clearXumGatewayCredentials();
       return {
         success: false,
         error: "You've been logged out of Xum Gateway. Please login again to use voice input.",
@@ -261,7 +261,7 @@ export class VoiceService {
     return errorMessage;
   }
 
-  private async clearMuxGatewayCredentials(): Promise<void> {
+  private async clearXumGatewayCredentials(): Promise<void> {
     if (!this.providerService) {
       return;
     }

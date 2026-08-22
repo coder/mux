@@ -13,7 +13,7 @@ import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
   INSTRUCTION_SCOPE,
   collectInstructionContents,
-  collectMuxOnlyInstructionContents,
+  collectXumOnlyInstructionContents,
   type InstructionSet,
   type InstructionSources,
 } from "@/common/types/instructions";
@@ -666,8 +666,8 @@ export async function buildSystemMessage(
   // so a "Model: …" heading in a shared AGENTS.md (read by non-Xum agents too)
   // stays ordinary markdown. Extraction runs per file: a scoped section at the
   // end of one file must not swallow the next file's unscoped content.
-  const muxContextContents = collectMuxOnlyInstructionContents(instructionSources.context);
-  const muxGlobalContents = collectMuxOnlyInstructionContents(instructionSources.global);
+  const muxContextContents = collectXumOnlyInstructionContents(instructionSources.context);
+  const muxGlobalContents = collectXumOnlyInstructionContents(instructionSources.global);
 
   const agentPromptSections = (options?.agentSystemPromptSections ?? [])
     .map((section) => section.trim())

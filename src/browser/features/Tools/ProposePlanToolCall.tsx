@@ -30,7 +30,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import { useReviews } from "@/browser/hooks/useReviews";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { TranscriptQuoteRoot } from "../Messages/TranscriptQuoteBoundary";
 import { cn } from "@/common/lib/utils";
@@ -442,7 +442,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     if (!workspaceId || !api) return;
 
     try {
-      const summaryMessage = createMuxMessage(
+      const summaryMessage = createXumMessage(
         `${args.idPrefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         "assistant",
         startHereContent,

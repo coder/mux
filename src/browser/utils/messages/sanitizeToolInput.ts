@@ -1,4 +1,4 @@
-import type { MuxMessage, MuxToolPart } from "@/common/types/message";
+import type { XumMessage, XumToolPart } from "@/common/types/message";
 
 /**
  * Sanitizes tool inputs in messages to ensure they are valid objects.
@@ -15,7 +15,7 @@ import type { MuxMessage, MuxToolPart } from "@/common/types/message";
  * @param messages - Messages to sanitize
  * @returns New array with sanitized messages (original messages are not modified)
  */
-export function sanitizeToolInputs(messages: MuxMessage[]): MuxMessage[] {
+export function sanitizeToolInputs(messages: XumMessage[]): XumMessage[] {
   return messages.map((msg) => {
     // Only process assistant messages with tool parts
     if (msg.role !== "assistant") {
@@ -43,7 +43,7 @@ export function sanitizeToolInputs(messages: MuxMessage[]): MuxMessage[] {
 
         // Sanitize the input if it's not a valid object
         if (typeof part.input !== "object" || part.input === null || Array.isArray(part.input)) {
-          const sanitized: MuxToolPart = {
+          const sanitized: XumToolPart = {
             ...part,
             input: {}, // Replace with empty object
           };

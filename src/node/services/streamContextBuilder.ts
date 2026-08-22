@@ -17,7 +17,7 @@ import * as path from "node:path";
 
 import assert from "@/common/utils/assert";
 import { ADVISOR_USAGE_GUIDANCE } from "@/common/constants/advisor";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { DesktopCapability } from "@/common/types/desktop";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { XumToolScope } from "@/common/types/toolScope";
@@ -76,7 +76,7 @@ export interface BuildPlanInstructionsOptions {
    * Plan-context derivation must stay aligned with the request payload to avoid pre-boundary
    * history (e.g., old Start Here summaries) suppressing required plan hints.
    */
-  requestPayloadMessages: MuxMessage[];
+  requestPayloadMessages: XumMessage[];
 }
 
 /** Result of plan instructions assembly. */

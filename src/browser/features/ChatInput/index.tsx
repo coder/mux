@@ -173,7 +173,7 @@ import {
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
   type AgentSkillReference,
-  type MuxMessageMetadata,
+  type XumMessageMetadata,
   type ReviewNoteDataForDisplay,
   prepareUserMessageForSend,
   withAgentSkillRefs,
@@ -799,8 +799,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Track transcription provider prerequisites from Settings → Providers.
   const [openAIKeySet, setOpenAIKeySet] = useState(false);
   const [openAIProviderEnabled, setOpenAIProviderEnabled] = useState(true);
-  const [muxGatewayCouponSet, setMuxGatewayCouponSet] = useState(false);
-  const [muxGatewayEnabled, setMuxGatewayEnabled] = useState(true);
+  const [muxGatewayCouponSet, setXumGatewayCouponSet] = useState(false);
+  const [muxGatewayEnabled, setXumGatewayEnabled] = useState(true);
   const isTranscriptionAvailable =
     (openAIProviderEnabled && openAIKeySet) || (muxGatewayEnabled && muxGatewayCouponSet);
 
@@ -1964,8 +1964,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (!signal.aborted) {
           setOpenAIKeySet(config?.openai?.apiKeySet ?? false);
           setOpenAIProviderEnabled(config?.openai?.isEnabled ?? true);
-          setMuxGatewayCouponSet(config?.["mux-gateway"]?.couponCodeSet ?? false);
-          setMuxGatewayEnabled(config?.["mux-gateway"]?.isEnabled ?? true);
+          setXumGatewayCouponSet(config?.["mux-gateway"]?.couponCodeSet ?? false);
+          setXumGatewayEnabled(config?.["mux-gateway"]?.isEnabled ?? true);
         }
       } catch {
         // Ignore errors fetching config
@@ -2925,14 +2925,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       }
 
-      const skillMuxMetadata = skillInvocation
+      const skillXumMetadata = skillInvocation
         ? buildSkillInvocationMetadata(
             appendStagedAttachmentNotice(messageText, sendAttachments),
             skillInvocation.descriptor,
             skillInvocation.argumentText
           )
         : undefined;
-      const promptMuxMetadata: MuxMessageMetadata | undefined = mcpPromptInvocation
+      const promptXumMetadata: XumMessageMetadata | undefined = mcpPromptInvocation
         ? {
             type: "normal",
             // Include the staged-attachment notice so edit restoration and
@@ -3009,7 +3009,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
-        let muxMetadata: MuxMessageMetadata | undefined = skillMuxMetadata ?? promptMuxMetadata;
+        let muxMetadata: XumMessageMetadata | undefined = skillXumMetadata ?? promptXumMetadata;
         if (combinedSkillRefs.length > 0) {
           muxMetadata = withAgentSkillRefs(muxMetadata, combinedSkillRefs);
         }

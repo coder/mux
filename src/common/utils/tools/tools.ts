@@ -1,7 +1,7 @@
 import { xai } from "@ai-sdk/xai";
 import { type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { XumProviderOptions } from "@/common/types/providerOptions";
 import { isGrokFrontierModel } from "@/common/types/thinking";
 import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
@@ -156,7 +156,7 @@ export interface ToolConfiguration {
   /** Whether the resolved route supports xAI Responses-native tools. */
   xaiNativeToolsEnabled?: boolean;
   /** Legacy xAI Live Search settings translated to Responses native search tools. */
-  xaiSearchParameters?: NonNullable<NonNullable<MuxProviderOptions["xai"]>["searchParameters"]>;
+  xaiSearchParameters?: NonNullable<NonNullable<XumProviderOptions["xai"]>["searchParameters"]>;
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */

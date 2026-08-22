@@ -16,7 +16,7 @@ import {
   configureTestRetries,
 } from "../sendMessageTestHelpers";
 import { HistoryService } from "@/node/services/historyService";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 import assert from "node:assert";
 
@@ -24,8 +24,8 @@ import assert from "node:assert";
 async function collectFullHistory(
   service: HistoryService,
   workspaceId: string
-): Promise<MuxMessage[]> {
-  const messages: MuxMessage[] = [];
+): Promise<XumMessage[]> {
+  const messages: XumMessage[] = [];
   const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
     messages.push(...chunk);
   });
@@ -200,7 +200,7 @@ describeIntegration("sendMessage image handling tests", () => {
           const messages = await collectFullHistory(historyService, workspaceId);
 
           const imageMsg = messages.find(
-            (msg: MuxMessage) =>
+            (msg: XumMessage) =>
               msg.role === "user" &&
               msg.parts.some(
                 (part) =>

@@ -1057,7 +1057,7 @@ export async function createOrpcServer({
       res.status(400).json({ error: "Missing or invalid Host header" });
       return;
     }
-    const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
+    const { authorizeUrl, state } = context.xumGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
 
@@ -1073,7 +1073,7 @@ export async function createOrpcServer({
     const error = getStringParamFromQueryOrBody(req, "error");
     const errorDescription = getStringParamFromQueryOrBody(req, "error_description") ?? undefined;
 
-    const result = await context.muxGatewayOauthService.handleServerCallbackAndExchange({
+    const result = await context.xumGatewayOauthService.handleServerCallbackAndExchange({
       state,
       code,
       error,
@@ -1204,7 +1204,7 @@ export async function createOrpcServer({
       res.status(400).json({ error: "Missing or invalid Host header" });
       return;
     }
-    const result = context.muxGovernorOauthService.startServerFlow({
+    const result = context.xumGovernorOauthService.startServerFlow({
       governorOrigin: governorUrl,
       redirectUri,
     });
@@ -1236,7 +1236,7 @@ export async function createOrpcServer({
       hasError: typeof error === "string" && error.length > 0,
     });
 
-    const result = await context.muxGovernorOauthService.handleServerCallbackAndExchange({
+    const result = await context.xumGovernorOauthService.handleServerCallbackAndExchange({
       state,
       code,
       error,

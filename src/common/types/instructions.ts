@@ -69,7 +69,7 @@ export function collectInstructionContents(sets: ReadonlyArray<InstructionSet | 
  * bounds only stop at another same-or-higher heading, which a following file
  * may not start with.
  */
-export function collectMuxOnlyInstructionContents(
+export function collectXumOnlyInstructionContents(
   sets: ReadonlyArray<InstructionSet | null>
 ): string[] {
   return sets

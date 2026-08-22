@@ -1,6 +1,6 @@
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { isStreamEnd } from "@/common/orpc/types";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { HistoryService } from "@/node/services/historyService";
 import {
@@ -19,7 +19,7 @@ if (shouldRunIntegrationTests()) {
 
 const DISABLE_TOOLS: ToolPolicy = [{ regex_match: ".*", action: "disable" }];
 
-function hasXaiEncryptedReasoning(messages: MuxMessage[]): boolean {
+function hasXaiEncryptedReasoning(messages: XumMessage[]): boolean {
   for (const message of messages) {
     if (message.role !== "assistant" || !Array.isArray(message.parts)) continue;
     for (const part of message.parts) {

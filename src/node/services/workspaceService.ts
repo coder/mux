@@ -155,12 +155,12 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { UIModeSchema, type UIMode } from "@/common/types/mode";
 import {
-  createMuxMessage,
+  createXumMessage,
   getCompactionFollowUpContent,
   pickPreservedSendOptions,
   type CompactionFollowUpRequest,
-  type MuxMessageMetadata,
-  type MuxMessage,
+  type XumMessageMetadata,
+  type XumMessage,
 } from "@/common/types/message";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
 import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
@@ -352,7 +352,7 @@ interface HeartbeatExecutionRequest {
   schedulePolicy: HeartbeatSchedulePolicy;
   sendOptions: SendMessageOptions;
   heartbeatPrompt: string;
-  muxMetadata: Extract<MuxMessageMetadata, { type: "heartbeat-request" }>;
+  muxMetadata: Extract<XumMessageMetadata, { type: "heartbeat-request" }>;
   followUp: CompactionFollowUpRequest;
 }
 
@@ -365,7 +365,7 @@ type WorktreeArchiveSnapshotLifecycleService = Pick<
 >;
 // Trim and normalize a heartbeat message for storage. Accepts `unknown` so it safely handles
 // both user input (string | undefined) and persisted config values that may have been corrupted.
-function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolean {
+function isWorkflowInvocationMessage(message: XumMessage, runId: string): boolean {
   if (
     message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE &&
     message.metadata.muxMetadata.runId === runId
@@ -391,7 +391,7 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
   });
 }
 
-function isTerminalWorkflowToolResultMessage(message: MuxMessage, runId: string): boolean {
+function isTerminalWorkflowToolResultMessage(message: XumMessage, runId: string): boolean {
   return message.parts.some(
     (part) =>
       part.type === "dynamic-tool" &&
@@ -400,7 +400,7 @@ function isTerminalWorkflowToolResultMessage(message: MuxMessage, runId: string)
   );
 }
 
-function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+function isInternalResumeAutoCompactionMessage(message: XumMessage): boolean {
   const muxMetadata = message.metadata?.muxMetadata;
   if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
     return false;
@@ -408,7 +408,7 @@ function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
   return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
 }
 
-function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+function isSyntheticManualSupersessionMessage(message: XumMessage): boolean {
   const muxMetadata = message.metadata?.muxMetadata;
   return (
     message.metadata?.synthetic === true &&
@@ -418,21 +418,21 @@ function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
   );
 }
 
-function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+function isManualUserSupersessionMessage(message: XumMessage): boolean {
   return (
     message.role === "user" &&
     (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
   );
 }
 
-function isWorkflowResultContinuationMessage(message: MuxMessage, runId: string): boolean {
+function isWorkflowResultContinuationMessage(message: XumMessage, runId: string): boolean {
   return (
     message.metadata?.muxMetadata?.type === WORKFLOW_RESULT_METADATA_TYPE &&
     message.metadata.muxMetadata.runId === runId
   );
 }
 
-function isResetBoundaryMessage(message: MuxMessage): boolean {
+function isResetBoundaryMessage(message: XumMessage): boolean {
   return message.metadata?.contextBoundaryKind === CONTEXT_BOUNDARY_KINDS.RESET;
 }
 
@@ -460,7 +460,7 @@ function isTerminalWorkflowTaskAwaitRecord(
   return false;
 }
 
-function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: string): boolean {
+function isTerminalWorkflowTaskAwaitResultMessage(message: XumMessage, runId: string): boolean {
   if (message.role !== "assistant") {
     return false;
   }
@@ -730,7 +730,7 @@ interface WorkspaceTitleConversationContext {
   latestUserText: string | undefined;
 }
 
-function extractMuxMessageText(message: MuxMessage): string {
+function extractXumMessageText(message: XumMessage): string {
   const text =
     message.parts
       ?.filter((part) => part.type === "text")
@@ -741,7 +741,7 @@ function extractMuxMessageText(message: MuxMessage): string {
 }
 
 function collectWorkspaceTitleContextTurns(
-  messages: readonly MuxMessage[]
+  messages: readonly XumMessage[]
 ): WorkspaceTitleContextTurn[] {
   const turns: WorkspaceTitleContextTurn[] = [];
 
@@ -750,7 +750,7 @@ function collectWorkspaceTitleContextTurns(
       continue;
     }
 
-    const text = extractMuxMessageText(message);
+    const text = extractXumMessageText(message);
     if (!text) {
       continue;
     }
@@ -905,7 +905,7 @@ async function resetForkedSessionUsage(
 
 async function materializeForkedPartialSnapshot(params: {
   historyService: HistoryService;
-  partialSnapshot: MuxMessage | null;
+  partialSnapshot: XumMessage | null;
   sourceWorkspaceId: string;
   targetWorkspaceId: string;
 }): Promise<void> {
@@ -944,9 +944,9 @@ async function materializeForkedPartialSnapshot(params: {
 }
 
 function getOldestSequencedMessage(
-  messages: readonly MuxMessage[]
-): { message: MuxMessage; historySequence: number } | null {
-  let oldest: { message: MuxMessage; historySequence: number } | null = null;
+  messages: readonly XumMessage[]
+): { message: XumMessage; historySequence: number } | null {
+  let oldest: { message: XumMessage; historySequence: number } | null = null;
 
   for (const message of messages) {
     const historySequence = message.metadata?.historySequence;
@@ -973,13 +973,13 @@ interface WorkspaceHistoryLoadMoreResult {
   hasOlder: boolean;
 }
 
-function isCompactedSummaryMessage(message: MuxMessage): boolean {
+function isCompactedSummaryMessage(message: XumMessage): boolean {
   return isDurableCompactedMarker(message.metadata?.compacted);
 }
 
 function getNextCompactionEpochForAppendBoundary(
   workspaceId: string,
-  messages: MuxMessage[]
+  messages: XumMessage[]
 ): number {
   let epochCursor = 0;
 
@@ -1692,7 +1692,7 @@ function mergeActiveCount(
  * `/compact` stores its follow-up separately from `rawCommand`; reconstruct it to match the
  * transcript display.
  */
-function appendCompactionFollowUp(rawCommand: string, message: MuxMessage): string {
+function appendCompactionFollowUp(rawCommand: string, message: XumMessage): string {
   const muxMeta: unknown = message.metadata?.muxMetadata;
   if (rawCommand.includes("\n") || typeof muxMeta !== "object" || muxMeta === null) {
     return rawCommand;
@@ -1707,7 +1707,7 @@ function appendCompactionFollowUp(rawCommand: string, message: MuxMessage): stri
  * Prefer `rawCommand` so slash commands match the transcript instead of provider-expanded content.
  * Treat malformed persisted rows as empty so they cannot hide older valid prompts.
  */
-function extractUserPromptText(message: MuxMessage): string {
+function extractUserPromptText(message: XumMessage): string {
   const muxMeta: unknown = message.metadata?.muxMetadata;
   const rawCommand =
     typeof muxMeta === "object" &&
@@ -8444,7 +8444,7 @@ export class WorkspaceService extends EventEmitter {
     const now = Date.now();
     void this.updateRecencyTimestamp(input.workspaceId, now);
     const commandPrefix = input.rawCommand.trim().split(/\s+/u)[0] ?? "/workflow";
-    const userMessage = createMuxMessage(
+    const userMessage = createXumMessage(
       `workflow-run-command-${input.runId}`,
       "user",
       input.rawCommand,
@@ -8733,9 +8733,9 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
-      const normalizedMuxMetadata = normalizedOptions.muxMetadata as MuxMessageMetadata | undefined;
+      const normalizedXumMetadata = normalizedOptions.muxMetadata as XumMessageMetadata | undefined;
       const workspaceTurnContinuationMetadata =
-        normalizedMuxMetadata?.type === "workspace-turn-task" ? normalizedMuxMetadata : undefined;
+        normalizedXumMetadata?.type === "workspace-turn-task" ? normalizedXumMetadata : undefined;
 
       const isWorkspaceTurnContinuation = internal?.workspaceTurnContinuation === true;
       const stripWorkspaceTurnCorrelation = (
@@ -9337,8 +9337,8 @@ export class WorkspaceService extends EventEmitter {
       try {
         // Helper: update a message in-place if it contains this ask_user_question tool call.
         const tryFinalizeMessage = (
-          msg: MuxMessage
-        ): Result<{ updated: MuxMessage; output: AskUserQuestionToolSuccessResult }> => {
+          msg: XumMessage
+        ): Result<{ updated: XumMessage; output: AskUserQuestionToolSuccessResult }> => {
           let foundToolCall = false;
           let output: AskUserQuestionToolSuccessResult | null = null;
           let errorMessage: string | null = null;
@@ -9439,7 +9439,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         // Find the newest message containing this tool call.
-        let best: MuxMessage | null = null;
+        let best: XumMessage | null = null;
         let bestSeq = -Infinity;
         for (const msg of historyResult.data) {
           const seq = msg.metadata?.historySequence;
@@ -9689,7 +9689,7 @@ export class WorkspaceService extends EventEmitter {
    */
   hasPendingWorkspaceTurnContinuation(
     workspaceId: string,
-    metadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+    metadata: Extract<XumMessageMetadata, { type: "workspace-turn-task" }>
   ): boolean {
     const session = this.sessions.get(workspaceId.trim());
     return session?.hasPendingWorkspaceTurnContinuation(metadata) ?? false;
@@ -9938,7 +9938,7 @@ export class WorkspaceService extends EventEmitter {
         return Ok("noop");
       }
 
-      const boundaryMessage = createMuxMessage(
+      const boundaryMessage = createXumMessage(
         createContextResetBoundaryMessageId(),
         "assistant",
         "",
@@ -9983,7 +9983,7 @@ export class WorkspaceService extends EventEmitter {
 
   async replaceHistory(
     workspaceId: string,
-    summaryMessage: MuxMessage,
+    summaryMessage: XumMessage,
     options?: {
       mode?: "destructive" | "append-compaction-boundary" | null;
       deletePlanFile?: boolean;
@@ -10206,7 +10206,7 @@ export class WorkspaceService extends EventEmitter {
       return {};
     }
   }
-  async getChatHistory(workspaceId: string): Promise<MuxMessage[]> {
+  async getChatHistory(workspaceId: string): Promise<XumMessage[]> {
     try {
       // Only return messages from the latest compaction boundary onward.
       // Pre-boundary messages are summarized in the boundary marker.
@@ -11065,7 +11065,7 @@ export class WorkspaceService extends EventEmitter {
 
     const sendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
 
-    const muxMetadata: MuxMessageMetadata = {
+    const muxMetadata: XumMessageMetadata = {
       type: "compaction-request",
       rawCommand: "/compact",
       commandPrefix: "/compact",
@@ -11328,7 +11328,7 @@ export class WorkspaceService extends EventEmitter {
       "Heartbeat requests require a resolved agentId"
     );
 
-    const muxMetadata: Extract<MuxMessageMetadata, { type: "heartbeat-request" }> = {
+    const muxMetadata: Extract<XumMessageMetadata, { type: "heartbeat-request" }> = {
       type: "heartbeat-request",
       source: "heartbeat",
       requestedModel: sendOptions.model,
@@ -11465,7 +11465,7 @@ export class WorkspaceService extends EventEmitter {
     heartbeatRequest: HeartbeatExecutionRequest
   ): Promise<void> {
     const compactionSendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
-    const compactionMuxMetadata: MuxMessageMetadata = {
+    const compactionXumMetadata: XumMessageMetadata = {
       type: "compaction-request",
       rawCommand: "/compact",
       commandPrefix: "/compact",
@@ -11483,7 +11483,7 @@ export class WorkspaceService extends EventEmitter {
       buildCompactionMessageText({ followUpContent: heartbeatRequest.followUp }),
       {
         ...compactionSendOptions,
-        muxMetadata: compactionMuxMetadata,
+        muxMetadata: compactionXumMetadata,
       },
       {
         skipAutoResumeReset: true,

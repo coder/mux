@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentSideConnection } from "@agentclientprotocol/sdk";
 import { StreamTranslator } from "@/node/acp/streamTranslator";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 
 async function replayThrough(events: WorkspaceChatMessage[]): Promise<unknown[]> {
@@ -16,7 +16,7 @@ async function replayThrough(events: WorkspaceChatMessage[]): Promise<unknown[]>
 
 describe("StreamTranslator MCP prompt replay", () => {
   test("replays the authored slash command instead of the transformed prompt text", async () => {
-    const userMessage = createMuxMessage("user-1", "user", "Using MCP prompt coder/review: src", {
+    const userMessage = createXumMessage("user-1", "user", "Using MCP prompt coder/review: src", {
       muxMetadata: {
         type: "normal",
         rawCommand: "/mcp__coder__review src",
@@ -47,7 +47,7 @@ describe("StreamTranslator MCP prompt replay", () => {
   });
 
   test("suppresses synthetic MCP prompt snapshot rows", async () => {
-    const snapshotMessage = createMuxMessage("mcp-prompt-snapshot-1", "user", "Expanded prompt", {
+    const snapshotMessage = createXumMessage("mcp-prompt-snapshot-1", "user", "Expanded prompt", {
       synthetic: true,
       mcpPromptSnapshot: {
         serverName: "coder",

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
-import { MuxMessageSchema } from "@/common/orpc/schemas/message";
-import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { XumMessageSchema } from "@/common/orpc/schemas/message";
+import { createXumMessage, type DisplayedMessage } from "@/common/types/message";
 import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import { getInterruptionContext } from "@/common/utils/messages/retryEligibility";
@@ -46,7 +46,7 @@ const waitForInitThrottle = () => new Promise((r) => setTimeout(r, 120));
 
 function seedPendingStreamState(aggregator: StreamingMessageAggregator): void {
   aggregator.handleMessage({
-    ...createMuxMessage("user-1", "user", "Hello", {
+    ...createXumMessage("user-1", "user", "Hello", {
       historySequence: 1,
       timestamp: Date.now(),
       muxMetadata: {
@@ -235,7 +235,7 @@ function historicalToolMessage(
     workflowRun?: { runId: string; timestamp: number };
   } = {}
 ) {
-  const message = createMuxMessage(id, "assistant", "", {
+  const message = createXumMessage(id, "assistant", "", {
     partial: options.partial,
     historySequence: options.historySequence ?? 1,
     timestamp: Date.now(),
@@ -437,7 +437,7 @@ describe("StreamingMessageAggregator", () => {
     test("propagates modelFallback metadata to displayed assistant rows", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      const fallback = createMuxMessage("a1", "assistant", "answer", {
+      const fallback = createXumMessage("a1", "assistant", "answer", {
         timestamp: 1,
         historySequence: 1,
         model: "anthropic:claude-opus-4-8",
@@ -446,7 +446,7 @@ describe("StreamingMessageAggregator", () => {
           refusedModels: ["openai:gpt-5.5"],
         },
       });
-      const plain = createMuxMessage("a2", "assistant", "no fallback", {
+      const plain = createXumMessage("a2", "assistant", "no fallback", {
         timestamp: 2,
         historySequence: 2,
         model: "anthropic:claude-opus-4-8",
@@ -467,12 +467,12 @@ describe("StreamingMessageAggregator", () => {
     test("should hide synthetic messages by default", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      const synthetic = createMuxMessage("s1", "user", "synthetic", {
+      const synthetic = createXumMessage("s1", "user", "synthetic", {
         timestamp: 1,
         historySequence: 1,
         synthetic: true,
       });
-      const user = createMuxMessage("u1", "user", "hello", {
+      const user = createXumMessage("u1", "user", "hello", {
         timestamp: 2,
         historySequence: 2,
       });
@@ -488,13 +488,13 @@ describe("StreamingMessageAggregator", () => {
     test("should show uiVisible synthetic messages by default", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      const syntheticVisible = createMuxMessage("s1", "user", "synthetic visible", {
+      const syntheticVisible = createXumMessage("s1", "user", "synthetic visible", {
         timestamp: 1,
         historySequence: 1,
         synthetic: true,
         uiVisible: true,
       });
-      const user = createMuxMessage("u1", "user", "hello", {
+      const user = createXumMessage("u1", "user", "hello", {
         timestamp: 2,
         historySequence: 2,
       });
@@ -513,7 +513,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("renders unknown persisted muxMetadata as an ordinary row", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const legacyMessage = MuxMessageSchema.parse({
+      const legacyMessage = XumMessageSchema.parse({
         id: "legacy-1",
         role: "user",
         parts: [{ type: "text", text: "ordinary persisted content" }],
@@ -543,7 +543,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("assistant-1", "assistant", "I incorporated the progress update.", {
+          createXumMessage("assistant-1", "assistant", "I incorporated the progress update.", {
             timestamp: 1,
             historySequence: 1,
           }),
@@ -552,7 +552,7 @@ describe("StreamingMessageAggregator", () => {
       );
 
       aggregator.handleMessage({
-        ...createMuxMessage(
+        ...createXumMessage(
           "report-1",
           "user",
           formatSubagentReportEnvelope({
@@ -583,7 +583,7 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("keeps an anchored completed report between reasoning emitted before and after it", () => {
-      const report = createMuxMessage(
+      const report = createXumMessage(
         "report-1",
         "user",
         formatSubagentReportEnvelope({
@@ -657,7 +657,7 @@ describe("StreamingMessageAggregator", () => {
       reloaded.loadHistoricalMessages(
         [
           {
-            ...createMuxMessage("assistant-1", "assistant", "", {
+            ...createXumMessage("assistant-1", "assistant", "", {
               timestamp: 1,
               historySequence: 1,
               model: "openai:gpt-5",
@@ -688,7 +688,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage(
+          createXumMessage(
             "progress-1",
             "user",
             formatSubagentReportEnvelope({
@@ -700,16 +700,16 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 1, historySequence: 1, synthetic: true }
           ),
-          createMuxMessage("assistant-progress", "assistant", "I incorporated the update.", {
+          createXumMessage("assistant-progress", "assistant", "I incorporated the update.", {
             timestamp: 2,
             historySequence: 2,
           }),
-          createMuxMessage("manual-user", "user", "Continue with other work", {
+          createXumMessage("manual-user", "user", "Continue with other work", {
             timestamp: 3,
             historySequence: 3,
           }),
           {
-            ...createMuxMessage("assistant-current", "assistant", "", {
+            ...createXumMessage("assistant-current", "assistant", "", {
               timestamp: 4,
               historySequence: 4,
             }),
@@ -718,7 +718,7 @@ describe("StreamingMessageAggregator", () => {
               { type: "reasoning", text: "reasoning B" },
             ],
           },
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -768,7 +768,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage(
+          createXumMessage(
             "progress-1",
             "user",
             formatSubagentReportEnvelope({
@@ -780,11 +780,11 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 1, historySequence: 1, synthetic: true }
           ),
-          createMuxMessage("assistant-1", "assistant", "Final answer", {
+          createXumMessage("assistant-1", "assistant", "Final answer", {
             timestamp: 2,
             historySequence: 2,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -817,7 +817,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage(
+          createXumMessage(
             "progress-1",
             "user",
             formatSubagentReportEnvelope({
@@ -829,7 +829,7 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 1, historySequence: 1, synthetic: true }
           ),
-          createMuxMessage(
+          createXumMessage(
             "report-2",
             "user",
             formatSubagentReportEnvelope({
@@ -841,11 +841,11 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 2, historySequence: 2, synthetic: true, uiVisible: true }
           ),
-          createMuxMessage("assistant-1", "assistant", "Final answer", {
+          createXumMessage("assistant-1", "assistant", "Final answer", {
             timestamp: 3,
             historySequence: 3,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -891,14 +891,14 @@ describe("StreamingMessageAggregator", () => {
       },
     ])("repairs a trailing report before a $label-only assistant", ({ parts, expectedType }) => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const assistant = createMuxMessage(
+      const assistant = createXumMessage(
         "assistant-1",
         "assistant",
         "",
         { timestamp: 1, historySequence: 1 },
         [...parts]
       );
-      const report = createMuxMessage(
+      const report = createXumMessage(
         "report-1",
         "user",
         formatSubagentReportEnvelope({
@@ -925,7 +925,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage(
+          createXumMessage(
             "progress-1",
             "user",
             formatSubagentReportEnvelope({
@@ -937,19 +937,19 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 1, historySequence: 1, synthetic: true }
           ),
-          createMuxMessage("assistant-progress", "assistant", "I incorporated the update.", {
+          createXumMessage("assistant-progress", "assistant", "I incorporated the update.", {
             timestamp: 2,
             historySequence: 2,
           }),
-          createMuxMessage("manual-user", "user", "One more question", {
+          createXumMessage("manual-user", "user", "One more question", {
             timestamp: 3,
             historySequence: 3,
           }),
-          createMuxMessage("assistant-manual", "assistant", "Answering the later question.", {
+          createXumMessage("assistant-manual", "assistant", "Answering the later question.", {
             timestamp: 4,
             historySequence: 4,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -987,16 +987,16 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("assistant-1", "assistant", "Old answer", {
+          createXumMessage("assistant-1", "assistant", "Old answer", {
             timestamp: 1,
             historySequence: 1,
           }),
-          createMuxMessage("reset-1", "assistant", "", {
+          createXumMessage("reset-1", "assistant", "", {
             timestamp: 2,
             historySequence: 2,
             contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1022,20 +1022,20 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("reset-1", "assistant", "", {
+          createXumMessage("reset-1", "assistant", "", {
             timestamp: 1,
             historySequence: 1,
             contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
           }),
-          createMuxMessage("new-user", "user", "New epoch question", {
+          createXumMessage("new-user", "user", "New epoch question", {
             timestamp: 2,
             historySequence: 2,
           }),
-          createMuxMessage("new-assistant", "assistant", "New epoch answer", {
+          createXumMessage("new-assistant", "assistant", "New epoch answer", {
             timestamp: 3,
             historySequence: 3,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1063,11 +1063,11 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("assistant-1", "assistant", "Original answer", {
+          createXumMessage("assistant-1", "assistant", "Original answer", {
             timestamp: 1,
             historySequence: 1,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1079,11 +1079,11 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 2, historySequence: 2, synthetic: true, uiVisible: true }
           ),
-          createMuxMessage("manual-user", "user", "A later question", {
+          createXumMessage("manual-user", "user", "A later question", {
             timestamp: 3,
             historySequence: 3,
           }),
-          createMuxMessage("assistant-2", "assistant", "A later answer", {
+          createXumMessage("assistant-2", "assistant", "A later answer", {
             timestamp: 4,
             historySequence: 4,
           }),
@@ -1108,7 +1108,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage(
+          createXumMessage(
             "progress-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1120,11 +1120,11 @@ describe("StreamingMessageAggregator", () => {
             }),
             { timestamp: 1, historySequence: 1, synthetic: true }
           ),
-          createMuxMessage("assistant-1", "assistant", "Final answer", {
+          createXumMessage("assistant-1", "assistant", "Final answer", {
             timestamp: 2,
             historySequence: 2,
           }),
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1164,7 +1164,7 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         Array.from({ length: 70 }, (_, index) =>
-          createMuxMessage(`older-${index}`, "assistant", `older response ${index}`, {
+          createXumMessage(`older-${index}`, "assistant", `older response ${index}`, {
             historySequence: index + 1,
             timestamp: index + 1,
           })
@@ -1188,7 +1188,7 @@ describe("StreamingMessageAggregator", () => {
         timestamp: 71,
       });
       aggregator.handleMessage({
-        ...createMuxMessage(
+        ...createXumMessage(
           "report-1",
           "user",
           formatSubagentReportEnvelope({
@@ -1243,14 +1243,14 @@ describe("StreamingMessageAggregator", () => {
       aggregator.loadHistoricalMessages(
         [
           {
-            ...createMuxMessage("assistant-1", "assistant", "", {
+            ...createXumMessage("assistant-1", "assistant", "", {
               timestamp: 1,
               historySequence: 1,
               model: "openai:gpt-5",
             }),
             parts: [{ type: "text", text: "final answer" }],
           },
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1297,7 +1297,7 @@ describe("StreamingMessageAggregator", () => {
       aggregator.loadHistoricalMessages(
         [
           {
-            ...createMuxMessage("assistant-1", "assistant", "", {
+            ...createXumMessage("assistant-1", "assistant", "", {
               timestamp: 1,
               historySequence: 1,
               error: "Provider failed",
@@ -1305,7 +1305,7 @@ describe("StreamingMessageAggregator", () => {
             }),
             parts: [{ type: "text", text: "before after" }],
           },
-          createMuxMessage(
+          createXumMessage(
             "report-1",
             "user",
             formatSubagentReportEnvelope({
@@ -1343,7 +1343,7 @@ describe("StreamingMessageAggregator", () => {
         const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
         aggregator.loadHistoricalMessages(
           [
-            createMuxMessage(
+            createXumMessage(
               "report-1",
               "user",
               formatSubagentReportEnvelope({
@@ -1376,7 +1376,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("renders persisted workflow slash invocation before workflow card", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const command = createMuxMessage("workflow-command", "user", "/deep-research mux", {
+      const command = createXumMessage("workflow-command", "user", "/deep-research mux", {
         timestamp: 1,
         historySequence: 1,
         muxMetadata: {
@@ -1398,7 +1398,7 @@ describe("StreamingMessageAggregator", () => {
         uiVisible: true,
         muxMetadata: { type: "workflow-run-card-display", runId: "wfr_123" },
       };
-      const hiddenWorkflowResult = createMuxMessage(
+      const hiddenWorkflowResult = createXumMessage(
         "workflow-result",
         "user",
         '/deep-research mux\n\n<mux_workflow_result>{"reportMarkdown":"hidden"}</mux_workflow_result>',
@@ -1413,7 +1413,7 @@ describe("StreamingMessageAggregator", () => {
           },
         }
       );
-      const assistant = createMuxMessage("assistant-1", "assistant", "Done", {
+      const assistant = createXumMessage("assistant-1", "assistant", "Done", {
         timestamp: 4,
         historySequence: 4,
       });
@@ -1446,7 +1446,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("should strip legacy goal-cleared label from displayed summaries", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const legacySummary = createMuxMessage(
+      const legacySummary = createXumMessage(
         "goal-cleared-1",
         "assistant",
         'Goal cleared: "Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
@@ -1470,7 +1470,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("should preserve already-concise goal-cleared summaries", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const summary = createMuxMessage(
+      const summary = createXumMessage(
         "goal-cleared-2",
         "assistant",
         '"Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
@@ -1496,12 +1496,12 @@ describe("StreamingMessageAggregator", () => {
       withDebugLlmRequestEnabled(() => {
         const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-        const synthetic = createMuxMessage("s1", "user", "synthetic", {
+        const synthetic = createXumMessage("s1", "user", "synthetic", {
           timestamp: 1,
           historySequence: 1,
           synthetic: true,
         });
-        const user = createMuxMessage("u1", "user", "hello", {
+        const user = createXumMessage("u1", "user", "hello", {
           timestamp: 2,
           historySequence: 2,
         });
@@ -1530,7 +1530,7 @@ describe("StreamingMessageAggregator", () => {
         const baseSequence = i * 3;
         // User message (always kept)
         manyMessages.push(
-          createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+          createXumMessage(`u${i}`, "user", `msg-${i}`, {
             timestamp: baseSequence,
             historySequence: baseSequence,
           })
@@ -1558,7 +1558,7 @@ describe("StreamingMessageAggregator", () => {
         });
         // Assistant response message (always kept)
         manyMessages.push(
-          createMuxMessage(`a${i}`, "assistant", `response-${i}`, {
+          createXumMessage(`a${i}`, "assistant", `response-${i}`, {
             historySequence: baseSequence + 2,
             timestamp: baseSequence + 2,
             model: "claude-3-5-sonnet-20241022",
@@ -1628,13 +1628,13 @@ describe("StreamingMessageAggregator", () => {
       for (let i = 0; i < 200; i++) {
         const baseSequence = i * 2;
         manyMessages.push(
-          createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+          createXumMessage(`u${i}`, "user", `msg-${i}`, {
             timestamp: baseSequence,
             historySequence: baseSequence,
           })
         );
         manyMessages.push(
-          createMuxMessage(`a${i}`, "assistant", `response-${i}`, {
+          createXumMessage(`a${i}`, "assistant", `response-${i}`, {
             historySequence: baseSequence + 1,
             timestamp: baseSequence + 1,
             model: "claude-3-5-sonnet-20241022",
@@ -1680,9 +1680,9 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("u1", "user", "first", { historySequence: 1, timestamp: 1 }),
-          createMuxMessage("u2", "user", "second", { historySequence: 2, timestamp: 2 }),
-          createMuxMessage("u3", "user", "third", { historySequence: 3, timestamp: 3 }),
+          createXumMessage("u1", "user", "first", { historySequence: 1, timestamp: 1 }),
+          createXumMessage("u2", "user", "second", { historySequence: 2, timestamp: 2 }),
+          createXumMessage("u3", "user", "third", { historySequence: 3, timestamp: 3 }),
         ],
         false
       );
@@ -1695,7 +1695,7 @@ describe("StreamingMessageAggregator", () => {
     test("should not show history-hidden when only user messages exceed cap", () => {
       // When all messages are user rows (always-keep type), no filtering occurs
       const manyMessages = Array.from({ length: 200 }, (_, i) =>
-        createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+        createXumMessage(`u${i}`, "user", `msg-${i}`, {
           timestamp: i,
           historySequence: i,
         })
@@ -1717,7 +1717,7 @@ describe("StreamingMessageAggregator", () => {
 
       const snapshotText = "<agent-skill>\nBODY\n</agent-skill>";
 
-      const snapshot1 = createMuxMessage("s1", "assistant", snapshotText, {
+      const snapshot1 = createXumMessage("s1", "assistant", snapshotText, {
         timestamp: 1,
         historySequence: 1,
         synthetic: true,
@@ -1729,7 +1729,7 @@ describe("StreamingMessageAggregator", () => {
         },
       });
 
-      const invocation = createMuxMessage("u1", "user", "/test-skill", {
+      const invocation = createXumMessage("u1", "user", "/test-skill", {
         timestamp: 2,
         historySequence: 2,
         muxMetadata: {
@@ -1753,7 +1753,7 @@ describe("StreamingMessageAggregator", () => {
       }
 
       // Update the snapshot frontmatter without changing body or sha256.
-      const snapshot2 = createMuxMessage("s1", "assistant", snapshotText, {
+      const snapshot2 = createXumMessage("s1", "assistant", snapshotText, {
         timestamp: 1,
         historySequence: 1,
         synthetic: true,
@@ -1907,7 +1907,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("older-user", "user", "Older history", {
+          createXumMessage("older-user", "user", "Older history", {
             historySequence: 1,
             timestamp: 1,
           }),
@@ -1933,7 +1933,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("replayed-user", "user", "Replay window", {
+          createXumMessage("replayed-user", "user", "Replay window", {
             historySequence: 21,
             timestamp: 21,
           }),
@@ -1985,11 +1985,11 @@ describe("StreamingMessageAggregator", () => {
     test("inserts a boundary row before compaction summary messages", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      const before = createMuxMessage("user-before", "user", "Before compaction", {
+      const before = createXumMessage("user-before", "user", "Before compaction", {
         historySequence: 1,
         timestamp: 1,
       });
-      const summary = createMuxMessage("summary-1", "assistant", "Compacted summary", {
+      const summary = createXumMessage("summary-1", "assistant", "Compacted summary", {
         historySequence: 2,
         timestamp: 2,
         compacted: "user",
@@ -1997,7 +1997,7 @@ describe("StreamingMessageAggregator", () => {
         compactionEpoch: 3,
         muxMetadata: { type: "compaction-summary" },
       });
-      const after = createMuxMessage("user-after", "user", "After compaction", {
+      const after = createXumMessage("user-after", "user", "After compaction", {
         historySequence: 3,
         timestamp: 3,
       });
@@ -2025,11 +2025,11 @@ describe("StreamingMessageAggregator", () => {
     test("omits malformed compaction epoch values instead of crashing transcript rendering", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      const before = createMuxMessage("user-before", "user", "Before compaction", {
+      const before = createXumMessage("user-before", "user", "Before compaction", {
         historySequence: 1,
         timestamp: 1,
       });
-      const summaryWithMalformedEpoch = createMuxMessage(
+      const summaryWithMalformedEpoch = createXumMessage(
         "summary-malformed",
         "assistant",
         "Compacted summary",
@@ -2042,7 +2042,7 @@ describe("StreamingMessageAggregator", () => {
           muxMetadata: { type: "compaction-summary" },
         }
       );
-      const after = createMuxMessage("user-after", "user", "After compaction", {
+      const after = createXumMessage("user-after", "user", "After compaction", {
         historySequence: 3,
         timestamp: 3,
       });
@@ -2066,7 +2066,7 @@ describe("StreamingMessageAggregator", () => {
   describe("live compaction boundary pruning", () => {
     // handleMessage expects ChatXumMessage (type: "message"), matching how the
     // backend emits events via emitChatEvent({ ...message, type: "message" }).
-    const asChatMessage = (msg: ReturnType<typeof createMuxMessage>) => ({
+    const asChatMessage = (msg: ReturnType<typeof createXumMessage>) => ({
       ...msg,
       type: "message" as const,
     });
@@ -2076,13 +2076,13 @@ describe("StreamingMessageAggregator", () => {
 
       // Simulate messages accumulated during a live session (no prior compaction)
       const msg1 = asChatMessage(
-        createMuxMessage("user-1", "user", "First message", {
+        createXumMessage("user-1", "user", "First message", {
           historySequence: 0,
           timestamp: 1,
         })
       );
       const msg2 = asChatMessage(
-        createMuxMessage("assistant-1", "assistant", "Response", {
+        createXumMessage("assistant-1", "assistant", "Response", {
           historySequence: 1,
           timestamp: 2,
         })
@@ -2092,7 +2092,7 @@ describe("StreamingMessageAggregator", () => {
       aggregator.handleMessage(msg2);
 
       const summary = asChatMessage(
-        createMuxMessage("summary-1", "assistant", "Compacted summary", {
+        createXumMessage("summary-1", "assistant", "Compacted summary", {
           historySequence: 2,
           compacted: "user",
           compactionBoundary: true,
@@ -2114,7 +2114,7 @@ describe("StreamingMessageAggregator", () => {
 
       // Epoch 0 messages (before any compaction)
       const epoch0Msg = asChatMessage(
-        createMuxMessage("epoch0-user", "user", "Old message", {
+        createXumMessage("epoch0-user", "user", "Old message", {
           historySequence: 0,
           timestamp: 1,
         })
@@ -2123,7 +2123,7 @@ describe("StreamingMessageAggregator", () => {
 
       // First compaction boundary (epoch 1)
       const boundary1 = asChatMessage(
-        createMuxMessage("boundary-1", "assistant", "Summary epoch 1", {
+        createXumMessage("boundary-1", "assistant", "Summary epoch 1", {
           historySequence: 1,
           compacted: "user",
           compactionBoundary: true,
@@ -2135,7 +2135,7 @@ describe("StreamingMessageAggregator", () => {
 
       // Epoch 1 messages
       const epoch1Msg = asChatMessage(
-        createMuxMessage("epoch1-user", "user", "Message in epoch 1", {
+        createXumMessage("epoch1-user", "user", "Message in epoch 1", {
           historySequence: 2,
           timestamp: 3,
         })
@@ -2148,7 +2148,7 @@ describe("StreamingMessageAggregator", () => {
       // Second compaction boundary (epoch 2): existing messages with sequence < 3
       // are pruned, then boundary-2 is appended.
       const boundary2 = asChatMessage(
-        createMuxMessage("boundary-2", "assistant", "Summary epoch 2", {
+        createXumMessage("boundary-2", "assistant", "Summary epoch 2", {
           historySequence: 3,
           compacted: "user",
           compactionBoundary: true,
@@ -2169,11 +2169,11 @@ describe("StreamingMessageAggregator", () => {
       // Simulate initial replay window starting at historySequence 40.
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("history-40", "user", "Historical user", {
+          createXumMessage("history-40", "user", "Historical user", {
             historySequence: 40,
             timestamp: 40,
           }),
-          createMuxMessage("history-41", "assistant", "Historical assistant", {
+          createXumMessage("history-41", "assistant", "Historical assistant", {
             historySequence: 41,
             timestamp: 41,
           }),
@@ -2186,7 +2186,7 @@ describe("StreamingMessageAggregator", () => {
       expect(beforeCompactionCursor?.history?.oldestHistorySequence).toBe(40);
 
       const boundary = asChatMessage(
-        createMuxMessage("boundary-60", "assistant", "Summary epoch 60", {
+        createXumMessage("boundary-60", "assistant", "Summary epoch 60", {
           historySequence: 60,
           compacted: "user",
           compactionBoundary: true,
@@ -2204,13 +2204,13 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const user = asChatMessage(
-        createMuxMessage("user-1", "user", "First message", { historySequence: 0 })
+        createXumMessage("user-1", "user", "First message", { historySequence: 0 })
       );
       const assistant = asChatMessage(
-        createMuxMessage("assistant-1", "assistant", "Normal response", { historySequence: 1 })
+        createXumMessage("assistant-1", "assistant", "Normal response", { historySequence: 1 })
       );
       const resetBoundary = asChatMessage(
-        createMuxMessage("reset-1", "assistant", "", {
+        createXumMessage("reset-1", "assistant", "", {
           historySequence: 2,
           contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
         })
@@ -2256,10 +2256,10 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const msg1 = asChatMessage(
-        createMuxMessage("user-1", "user", "First message", { historySequence: 0 })
+        createXumMessage("user-1", "user", "First message", { historySequence: 0 })
       );
       const msg2 = asChatMessage(
-        createMuxMessage("assistant-1", "assistant", "Normal response", { historySequence: 1 })
+        createXumMessage("assistant-1", "assistant", "Normal response", { historySequence: 1 })
       );
 
       aggregator.handleMessage(msg1);
@@ -2436,7 +2436,7 @@ describe("StreamingMessageAggregator", () => {
       };
 
       aggregator.handleMessage({
-        ...createMuxMessage("idle-compaction-request", "user", "/compact", {
+        ...createXumMessage("idle-compaction-request", "user", "/compact", {
           historySequence: 1,
           timestamp: Date.now(),
           muxMetadata: {
@@ -2748,7 +2748,7 @@ describe("StreamingMessageAggregator", () => {
     test("rebuilds displayed rows when append replay overwrites an existing message id", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
-      const partialMessage = createMuxMessage("msg-overwrite-1", "assistant", "partial", {
+      const partialMessage = createXumMessage("msg-overwrite-1", "assistant", "partial", {
         historySequence: 1,
         timestamp: 1,
       });
@@ -2762,7 +2762,7 @@ describe("StreamingMessageAggregator", () => {
       expect(initialAssistant).toBeDefined();
       expect(initialAssistant?.content).toBe("partial");
 
-      const finalizedMessage = createMuxMessage("msg-overwrite-1", "assistant", "finalized", {
+      const finalizedMessage = createXumMessage("msg-overwrite-1", "assistant", "finalized", {
         historySequence: 1,
         timestamp: 2,
       });
@@ -3013,7 +3013,7 @@ describe("StreamingMessageAggregator", () => {
     expect(existingMessage).toBeDefined();
     expect(existingMessage?.parts.length).toBeGreaterThan(1);
 
-    const staleReplayMessage = createMuxMessage("msg-stale-append", "assistant", "placeholder", {
+    const staleReplayMessage = createXumMessage("msg-stale-append", "assistant", "placeholder", {
       historySequence: 1,
       timestamp: 1_050,
     });
@@ -3195,7 +3195,7 @@ describe("StreamingMessageAggregator", () => {
           },
         },
       };
-      const compactionSummaryMessage = createMuxMessage(
+      const compactionSummaryMessage = createXumMessage(
         "summary-1",
         "assistant",
         "Compacted summary",
@@ -3230,7 +3230,7 @@ describe("StreamingMessageAggregator", () => {
         completion = event.completion;
       };
 
-      const summaryMessage = createMuxMessage("summary-default-continue", "assistant", "Summary", {
+      const summaryMessage = createXumMessage("summary-default-continue", "assistant", "Summary", {
         historySequence: 1,
         timestamp: Date.now(),
         compactionBoundary: true,
@@ -3247,7 +3247,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.loadHistoricalMessages([summaryMessage], true);
       aggregator.handleMessage({
-        ...createMuxMessage("synthetic-default-continue", "user", "Continue", {
+        ...createXumMessage("synthetic-default-continue", "user", "Continue", {
           historySequence: 2,
           timestamp: Date.now(),
           synthetic: true,
@@ -3294,7 +3294,7 @@ describe("StreamingMessageAggregator", () => {
         completion = event.completion;
       };
 
-      const summaryMessage = createMuxMessage("summary-user-follow-up", "assistant", "Summary", {
+      const summaryMessage = createXumMessage("summary-user-follow-up", "assistant", "Summary", {
         historySequence: 1,
         timestamp: Date.now(),
         compactionBoundary: true,
@@ -3310,7 +3310,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.loadHistoricalMessages([summaryMessage], true);
       aggregator.handleMessage({
-        ...createMuxMessage("synthetic-user-follow-up", "user", "Continue", {
+        ...createXumMessage("synthetic-user-follow-up", "user", "Continue", {
           historySequence: 2,
           timestamp: Date.now(),
           synthetic: true,
@@ -3462,7 +3462,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.markOptimisticPendingStreamStart("openai:gpt-4o-mini");
       aggregator.loadHistoricalMessages([
-        createMuxMessage("user-1", "user", "Hello", {
+        createXumMessage("user-1", "user", "Hello", {
           historySequence: 1,
           timestamp: Date.now(),
         }),
@@ -3488,7 +3488,7 @@ describe("StreamingMessageAggregator", () => {
 
       aggregator.loadHistoricalMessages(
         [
-          createMuxMessage("assistant-1", "assistant", "Done", {
+          createXumMessage("assistant-1", "assistant", "Done", {
             historySequence: 2,
             timestamp: Date.now(),
             model: "openai:gpt-4o-mini",
@@ -3933,7 +3933,7 @@ describe("StreamingMessageAggregator", () => {
       });
 
       aggregator.handleMessage({
-        ...createMuxMessage("user-1", "user", "Hello", { historySequence: 1 }),
+        ...createXumMessage("user-1", "user", "Hello", { historySequence: 1 }),
         type: "message",
       });
 
@@ -4215,7 +4215,7 @@ function historicalReviewPaneUpdateMessage(
   operation: "add" | "replace" = "replace",
   options: { historySequence?: number; toolCallId?: string } = {}
 ) {
-  const message = createMuxMessage(id, "assistant", "", {
+  const message = createXumMessage(id, "assistant", "", {
     historySequence: options.historySequence ?? 1,
     timestamp: Date.now(),
     muxMetadata: { type: "normal", requestedModel: TEST_MODEL },
@@ -4402,7 +4402,7 @@ describe("notify tool -> browser notifications", () => {
     // loadHistoricalMessages; historical notify results must stay silent.
     withFakeNotificationWindow(() => {
       const aggregator = createTestAggregator();
-      const message = createMuxMessage("msg-1", "assistant", "", {
+      const message = createXumMessage("msg-1", "assistant", "", {
         historySequence: 1,
         timestamp: Date.now(),
         muxMetadata: { type: "normal", requestedModel: TEST_MODEL },

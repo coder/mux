@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { defaultConfig } from "@/node/config";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
 import { getXumSessionsDir } from "@/common/constants/paths";
@@ -41,10 +41,10 @@ export function sendMessageCommand(
   // Note: We use a more flexible type here because the on-disk format includes workspaceId
   // which is not part of the XumMessage type (it's metadata that gets stripped)
   const data = fs.readFileSync(chatHistoryPath, "utf-8");
-  const messages: Array<MuxMessage & { workspaceId?: string }> = data
+  const messages: Array<XumMessage & { workspaceId?: string }> = data
     .split("\n")
     .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as MuxMessage & { workspaceId?: string });
+    .map((line) => JSON.parse(line) as XumMessage & { workspaceId?: string });
 
   if (messages.length === 0) {
     console.log("❌ No messages in chat history");

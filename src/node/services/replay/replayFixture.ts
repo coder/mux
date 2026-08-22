@@ -19,7 +19,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { z } from "zod";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { DevToolsLogEntry } from "@/common/types/devtools";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { applyCacheControlToTools, type AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import assert from "@/common/utils/assert";
 import { HistoryService } from "@/node/services/historyService";
@@ -77,7 +77,7 @@ export interface ReplayFixtureTurnSpec {
   planFilePath?: string;
   postCompactionAttachments?: PostCompactionAttachment[];
   /** Refusal-fallback partial continuation (envelope-only, never in chat.jsonl). */
-  partialContinuation?: MuxMessage;
+  partialContinuation?: XumMessage;
   anthropicCacheTtl?: AnthropicCacheTtl;
   /** Set false to simulate devtools logging being off for this turn. */
   recordDevtools?: boolean;
@@ -114,7 +114,7 @@ export function createReplayFixtureSessionContext(
 
 async function appendOrThrow(
   ctx: ReplayFixtureSessionContext,
-  message: MuxMessage
+  message: XumMessage
 ): Promise<number> {
   const result = await ctx.historyService.appendToHistory(ctx.workspaceId, message);
   assert(result.success, `fixture append failed: ${String(!result.success && result.error)}`);
@@ -140,7 +140,7 @@ export async function appendReplayFixtureTurn(
   const baseTimestamp = 1_700_000_000_000 + turnNumber * 10_000;
   const agentId = spec.agentId ?? "exec";
 
-  const userMessage = createMuxMessage(`user-${turnNumber}`, "user", spec.userText, {
+  const userMessage = createXumMessage(`user-${turnNumber}`, "user", spec.userText, {
     timestamp: baseTimestamp,
   });
   const requestHistorySequence = await appendOrThrow(ctx, userMessage);
@@ -241,7 +241,7 @@ export async function appendReplayFixtureTurn(
   }
 
   if (spec.assistantText !== undefined) {
-    const assistantMessage = createMuxMessage(
+    const assistantMessage = createXumMessage(
       `assistant-${turnNumber}`,
       "assistant",
       spec.assistantText,
@@ -269,7 +269,7 @@ export async function appendReplayFixtureCompactionBoundary(
   compactionEpoch: number
 ): Promise<void> {
   ctx.turnCounter += 1;
-  const boundaryMessage = createMuxMessage(
+  const boundaryMessage = createXumMessage(
     `compaction-${ctx.turnCounter}`,
     "assistant",
     summaryText,

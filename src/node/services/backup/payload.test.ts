@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as jsonc from "jsonc-parser";
-import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
+import { XumProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import {
   BACKUP_SCHEMA_VERSION,
@@ -345,7 +345,7 @@ describe("backup payload", () => {
   });
 
   it("keeps no undeclared provider option out of the payload", () => {
-    for (const provider of Object.keys(MuxProviderOptionsSchema.shape)) {
+    for (const provider of Object.keys(XumProviderOptionsSchema.shape)) {
       const serialized = serializeBackupPreferences({
         ai: { providerOptions: { [provider]: { apiKey: "hunter2" } } },
       }).toString("utf-8");

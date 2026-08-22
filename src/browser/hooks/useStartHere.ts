@@ -1,7 +1,7 @@
 import { useState } from "react";
 import React from "react";
 import { StartHereModal } from "@/browser/components/StartHereModal/StartHereModal";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { useAPI } from "@/browser/contexts/API";
 
 /**
@@ -40,7 +40,7 @@ export function useStartHere(
 
     setIsStartingHere(true);
     try {
-      const summaryMessage = createMuxMessage(
+      const summaryMessage = createXumMessage(
         `start-here-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         "assistant",
         content,

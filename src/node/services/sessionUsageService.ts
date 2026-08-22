@@ -16,7 +16,7 @@ import {
 import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import { HEADLESS_USAGE_FILE_NAME } from "@/common/constants/paths";
-import type { MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
+import type { XumMessage, PersistedToolModelUsage } from "@/common/types/message";
 import {
   normalizeUsageModelKey,
   resolveModelForMetadata,
@@ -119,8 +119,8 @@ export class SessionUsageService {
     this.getProvidersConfig = getProvidersConfig ?? (() => null);
   }
   /** Usage rebuild needs every epoch for accurate totals. */
-  private async collectFullHistory(workspaceId: string): Promise<MuxMessage[]> {
-    const messages: MuxMessage[] = [];
+  private async collectFullHistory(workspaceId: string): Promise<XumMessage[]> {
+    const messages: XumMessage[] = [];
     const result = await this.historyService.iterateFullHistoryUnderLock(
       workspaceId,
       "forward",
@@ -598,7 +598,7 @@ export class SessionUsageService {
    */
   private async rebuildFromMessagesInternal(
     workspaceId: string,
-    messages: MuxMessage[]
+    messages: XumMessage[]
   ): Promise<void> {
     const result: SessionUsageFile = this.createEmptyUsageFile();
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
@@ -713,7 +713,7 @@ export class SessionUsageService {
   /**
    * Public rebuild method (acquires lock).
    */
-  async rebuildFromMessages(workspaceId: string, messages: MuxMessage[]): Promise<void> {
+  async rebuildFromMessages(workspaceId: string, messages: XumMessage[]): Promise<void> {
     return this.fileLocks.withLock(workspaceId, async () => {
       await this.rebuildFromMessagesInternal(workspaceId, messages);
     });

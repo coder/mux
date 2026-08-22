@@ -1,5 +1,5 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createXumMessage, type XumMessage } from "@/common/types/message";
 import { Err, Ok } from "@/common/types/result";
 import type { AIService } from "@/node/services/aiService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -171,7 +171,7 @@ describe("AgentSession MCP prompt snapshots", () => {
     try {
       const realAppend = harness.historyService.appendToHistory.bind(harness.historyService);
       const appendToHistory = spyOn(harness.historyService, "appendToHistory").mockImplementation(
-        async (workspaceId: string, message: MuxMessage) => {
+        async (workspaceId: string, message: XumMessage) => {
           if (message.metadata?.mcpPromptSnapshot) return realAppend(workspaceId, message);
           return Err("disk full");
         }
@@ -228,7 +228,7 @@ describe("AgentSession MCP prompt snapshots", () => {
   });
 
   test("excludes crash-orphaned snapshots from provider requests", async () => {
-    const streamMessage = mock((_args: { messages: MuxMessage[] }) =>
+    const streamMessage = mock((_args: { messages: XumMessage[] }) =>
       Promise.resolve(Ok(undefined))
     );
     const harness = await createAgentSessionHarness({
@@ -241,7 +241,7 @@ describe("AgentSession MCP prompt snapshots", () => {
     try {
       await harness.historyService.appendToHistory(
         "workspace",
-        createMuxMessage("orphan-snap", "user", "Expanded prompt", {
+        createXumMessage("orphan-snap", "user", "Expanded prompt", {
           historySequence: 0,
           synthetic: true,
           mcpPromptSnapshot: {
@@ -276,7 +276,7 @@ describe("AgentSession MCP prompt snapshots", () => {
       const userMessageId = "user-0";
       await harness.historyService.appendToHistory(
         "workspace",
-        createMuxMessage(snapshotId, "user", "Expanded prompt", {
+        createXumMessage(snapshotId, "user", "Expanded prompt", {
           historySequence: 0,
           synthetic: true,
           mcpPromptSnapshot: {
@@ -288,7 +288,7 @@ describe("AgentSession MCP prompt snapshots", () => {
       );
       await harness.historyService.appendToHistory(
         "workspace",
-        createMuxMessage(userMessageId, "user", "Using MCP prompt coder/review: src", {
+        createXumMessage(userMessageId, "user", "Using MCP prompt coder/review: src", {
           historySequence: 1,
           muxMetadata: promptMetadata(),
         })

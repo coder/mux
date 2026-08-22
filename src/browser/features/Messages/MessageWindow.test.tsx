@@ -1,7 +1,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { installDom } from "../../../../tests/ui/dom";
 import { MessageWindow } from "./MessageWindow";
 
@@ -21,7 +21,7 @@ function createAssistantMessage(overrides: {
   isStreaming?: boolean;
   isLastPartOfMessage?: boolean;
   isPartial?: boolean;
-}): MuxMessage {
+}): XumMessage {
   return {
     id: "assistant-1",
     role: "assistant",
@@ -29,7 +29,7 @@ function createAssistantMessage(overrides: {
     parts: [],
     metadata: { model: "test-model", partial: overrides.isPartial ? true : undefined },
     ...(overrides as object),
-  } as unknown as MuxMessage;
+  } as unknown as XumMessage;
 }
 
 function renderAssistantWindow(overrides: Parameters<typeof createAssistantMessage>[0]) {
@@ -112,7 +112,7 @@ describe("MessageWindow meta-row stability", () => {
       historySequence: 1,
       parts: [],
       metadata: {},
-    } as unknown as MuxMessage;
+    } as unknown as XumMessage;
 
     const { container } = render(
       <MessageWindow label={null} message={userMessage} variant="user">

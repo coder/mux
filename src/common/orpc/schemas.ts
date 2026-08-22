@@ -191,7 +191,7 @@ export {
   PolicyRuntimeIdSchema,
 } from "./schemas/policy";
 // Provider options schemas
-export { MuxProviderOptionsSchema } from "./schemas/providerOptions";
+export { XumProviderOptionsSchema } from "./schemas/providerOptions";
 
 // MCP schemas
 export {
@@ -231,13 +231,13 @@ export {
   DynamicToolPartRedactedSchema,
   DynamicToolPartSchema,
   FilePartSchema,
-  MuxFilePartSchema,
-  MuxMessageSchema,
-  MuxReasoningPartSchema,
-  MuxTextPartSchema,
-  MuxToolPartSchema,
+  XumFilePartSchema,
+  XumMessageSchema,
+  XumReasoningPartSchema,
+  XumTextPartSchema,
+  XumToolPartSchema,
 } from "./schemas/message";
-export type { FilePart, MuxFilePart } from "./schemas/message";
+export type { FilePart, XumFilePart } from "./schemas/message";
 
 // Stream event schemas
 export {
@@ -247,7 +247,7 @@ export {
   AutoRetryScheduledEventSchema,
   AutoRetryStartingEventSchema,
   CaughtUpMessageSchema,
-  ChatMuxMessageSchema,
+  ChatXumMessageSchema,
   CompletedMessagePartSchema,
   DeleteMessageSchema,
   ErrorEventSchema,

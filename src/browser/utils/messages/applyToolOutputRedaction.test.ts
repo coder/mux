@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 import { applyToolOutputRedaction } from "./applyToolOutputRedaction";
 
 describe("applyToolOutputRedaction", () => {
   it("strips UI-only fields from provider-bound tool output", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -35,7 +35,7 @@ describe("applyToolOutputRedaction", () => {
   });
 
   it("strips workflow run attachment hints from provider-bound tool parts", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-workflow",
         role: "assistant",
@@ -89,7 +89,7 @@ describe("applyToolOutputRedaction", () => {
         },
       ],
     };
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -168,7 +168,7 @@ describe("applyToolOutputRedaction", () => {
       source: inlineSource,
       events: [{ sequence: 1, type: "log", at: "2026-01-01T00:00:00.000Z", message: "noisy" }],
     };
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",
@@ -234,7 +234,7 @@ describe("applyToolOutputRedaction", () => {
   });
 
   it("sanitizes binary-like provider output strings for top-level and nested tools", () => {
-    const messages: MuxMessage[] = [
+    const messages: XumMessage[] = [
       {
         id: "assistant-1",
         role: "assistant",

@@ -1,5 +1,5 @@
 import type z from "zod";
-import type { MuxProviderOptionsSchema } from "../orpc/schemas";
+import type { XumProviderOptionsSchema } from "../orpc/schemas";
 
 /**
  * Xum provider-specific options that get passed through the stack.
@@ -12,4 +12,4 @@ import type { MuxProviderOptionsSchema } from "../orpc/schemas";
  * configuration level (e.g., custom headers, beta features).
  */
 
-export type MuxProviderOptions = z.infer<typeof MuxProviderOptionsSchema>;
+export type XumProviderOptions = z.infer<typeof XumProviderOptionsSchema>;

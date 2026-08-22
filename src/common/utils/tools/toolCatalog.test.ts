@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Tool } from "ai";
-import type { ModelMessage, MuxMessage } from "@/common/types/message";
+import type { ModelMessage, XumMessage } from "@/common/types/message";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import {
   buildToolCatalog,
@@ -680,17 +680,17 @@ describe("extractPreActivatedToolNames", () => {
     expect(names.size).toBe(0);
   });
 
-  test("reads MuxMessage dynamic-tool parts (pre-conversion seeding path)", () => {
+  test("reads XumMessage dynamic-tool parts (pre-conversion seeding path)", () => {
     // aiService seeds from XumMessages (before Xum→Model conversion) so the
     // agent-transition sentinel can include pre-activated tools.
-    const muxMessage = (toolName: string, state: string, output?: unknown): MuxMessage => {
+    const muxMessage = (toolName: string, state: string, output?: unknown): XumMessage => {
       const raw: unknown = {
         id: "m1",
         role: "assistant",
         metadata: {},
         parts: [{ type: "dynamic-tool", toolCallId: "call-1", toolName, input: {}, state, output }],
       };
-      return raw as MuxMessage;
+      return raw as XumMessage;
     };
     const names = extractPreActivatedToolNames([
       muxMessage("tool_catalog_search", "output-available", matchesResult),

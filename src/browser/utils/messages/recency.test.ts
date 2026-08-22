@@ -1,5 +1,5 @@
 import { computeRecencyTimestamp } from "./recency";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 
 describe("computeRecencyTimestamp", () => {
   it("returns null for empty messages array", () => {
@@ -8,25 +8,25 @@ describe("computeRecencyTimestamp", () => {
 
   it("returns null when no messages have timestamps", () => {
     const messages = [
-      createMuxMessage("1", "user", "hello"),
-      createMuxMessage("2", "assistant", "hi"),
+      createXumMessage("1", "user", "hello"),
+      createXumMessage("2", "assistant", "hi"),
     ];
     expect(computeRecencyTimestamp(messages)).toBeNull();
   });
 
   it("returns last user message timestamp", () => {
     const messages = [
-      createMuxMessage("1", "user", "first", { timestamp: 100 }),
-      createMuxMessage("2", "assistant", "reply", { timestamp: 200 }),
-      createMuxMessage("3", "user", "second", { timestamp: 300 }),
+      createXumMessage("1", "user", "first", { timestamp: 100 }),
+      createXumMessage("2", "assistant", "reply", { timestamp: 200 }),
+      createXumMessage("3", "user", "second", { timestamp: 300 }),
     ];
     expect(computeRecencyTimestamp(messages)).toBe(300);
   });
 
   it("returns max of user message and compacted message timestamps", () => {
     const messages = [
-      createMuxMessage("1", "user", "user msg", { timestamp: 100 }),
-      createMuxMessage("2", "assistant", "compacted", {
+      createXumMessage("1", "user", "user msg", { timestamp: 100 }),
+      createXumMessage("2", "assistant", "compacted", {
         timestamp: 200,
         compacted: true,
       }),
@@ -37,8 +37,8 @@ describe("computeRecencyTimestamp", () => {
 
   it("falls back to compacted message when no user messages", () => {
     const messages = [
-      createMuxMessage("1", "assistant", "response"),
-      createMuxMessage("2", "assistant", "compacted summary", {
+      createXumMessage("1", "assistant", "response"),
+      createXumMessage("2", "assistant", "compacted summary", {
         timestamp: 150,
         compacted: true,
       }),
@@ -48,22 +48,22 @@ describe("computeRecencyTimestamp", () => {
 
   it("uses most recent user message when multiple exist", () => {
     const messages = [
-      createMuxMessage("1", "user", "old", { timestamp: 100 }),
-      createMuxMessage("2", "user", "middle", { timestamp: 200 }),
-      createMuxMessage("3", "assistant", "reply"),
-      createMuxMessage("4", "user", "newest", { timestamp: 300 }),
+      createXumMessage("1", "user", "old", { timestamp: 100 }),
+      createXumMessage("2", "user", "middle", { timestamp: 200 }),
+      createXumMessage("3", "assistant", "reply"),
+      createXumMessage("4", "user", "newest", { timestamp: 300 }),
     ];
     expect(computeRecencyTimestamp(messages)).toBe(300);
   });
 
   it("uses most recent compacted message as fallback", () => {
     const messages = [
-      createMuxMessage("1", "assistant", "old summary", {
+      createXumMessage("1", "assistant", "old summary", {
         timestamp: 100,
         compacted: true,
       }),
-      createMuxMessage("2", "assistant", "response"),
-      createMuxMessage("3", "assistant", "newer summary", {
+      createXumMessage("2", "assistant", "response"),
+      createXumMessage("3", "assistant", "newer summary", {
         timestamp: 200,
         compacted: true,
       }),
@@ -73,34 +73,34 @@ describe("computeRecencyTimestamp", () => {
 
   it("handles messages with metadata but no timestamp", () => {
     const messages = [
-      createMuxMessage("1", "user", "hello", { model: "claude" }),
-      createMuxMessage("2", "assistant", "hi", { duration: 100 }),
+      createXumMessage("1", "user", "hello", { model: "claude" }),
+      createXumMessage("2", "assistant", "hi", { duration: 100 }),
     ];
     expect(computeRecencyTimestamp(messages)).toBeNull();
   });
 
   it("ignores assistant messages without compacted flag", () => {
     const messages = [
-      createMuxMessage("1", "assistant", "regular", { timestamp: 100 }),
-      createMuxMessage("2", "assistant", "another", { timestamp: 200 }),
+      createXumMessage("1", "assistant", "regular", { timestamp: 100 }),
+      createXumMessage("2", "assistant", "another", { timestamp: 200 }),
     ];
     expect(computeRecencyTimestamp(messages)).toBeNull();
   });
 
   it("handles mixed messages with only some having timestamps", () => {
     const messages = [
-      createMuxMessage("1", "user", "no timestamp"),
-      createMuxMessage("2", "user", "has timestamp", { timestamp: 150 }),
-      createMuxMessage("3", "user", "no timestamp again"),
+      createXumMessage("1", "user", "no timestamp"),
+      createXumMessage("2", "user", "has timestamp", { timestamp: 150 }),
+      createXumMessage("3", "user", "no timestamp again"),
     ];
     expect(computeRecencyTimestamp(messages)).toBe(150);
   });
 
   it("handles user messages in middle of array", () => {
     const messages = [
-      createMuxMessage("1", "assistant", "start"),
-      createMuxMessage("2", "user", "middle", { timestamp: 250 }),
-      createMuxMessage("3", "assistant", "end"),
+      createXumMessage("1", "assistant", "start"),
+      createXumMessage("2", "user", "middle", { timestamp: 250 }),
+      createXumMessage("3", "assistant", "end"),
     ];
     expect(computeRecencyTimestamp(messages)).toBe(250);
   });
@@ -109,7 +109,7 @@ describe("computeRecencyTimestamp", () => {
     it("manual compaction summary bumps recency", () => {
       const now = Date.now();
       const messages = [
-        createMuxMessage("1", "assistant", "summary", { compacted: "user", timestamp: now }),
+        createXumMessage("1", "assistant", "summary", { compacted: "user", timestamp: now }),
       ];
 
       const result = computeRecencyTimestamp(messages);
@@ -118,7 +118,7 @@ describe("computeRecencyTimestamp", () => {
 
     it("idle compaction request user message is ignored", () => {
       const messages = [
-        createMuxMessage("1", "user", "compact", {
+        createXumMessage("1", "user", "compact", {
           timestamp: 2000,
           muxMetadata: {
             type: "compaction-request",
@@ -137,7 +137,7 @@ describe("computeRecencyTimestamp", () => {
       const requestTime = Date.now();
       const backdatedTime = requestTime - 60000;
       const messages = [
-        createMuxMessage("idle-req", "user", "compact", {
+        createXumMessage("idle-req", "user", "compact", {
           timestamp: requestTime,
           muxMetadata: {
             type: "compaction-request",
@@ -146,7 +146,7 @@ describe("computeRecencyTimestamp", () => {
             source: "idle-compaction",
           },
         }),
-        createMuxMessage("idle-summary", "assistant", "Summary", {
+        createXumMessage("idle-summary", "assistant", "Summary", {
           compacted: "idle",
           timestamp: backdatedTime,
         }),
@@ -158,7 +158,7 @@ describe("computeRecencyTimestamp", () => {
 
     it("manual compaction request user message does bump recency", () => {
       const messages = [
-        createMuxMessage("1", "user", "/compact", {
+        createXumMessage("1", "user", "/compact", {
           timestamp: 3000,
           muxMetadata: {
             type: "compaction-request",
@@ -187,7 +187,7 @@ describe("computeRecencyTimestamp", () => {
 
       // Old message (before workspace created)
       const messages = [
-        createMuxMessage("1", "user", "old message", { timestamp: createdTimestamp - 1000 }),
+        createXumMessage("1", "user", "old message", { timestamp: createdTimestamp - 1000 }),
       ];
       expect(computeRecencyTimestamp(messages, createdAt)).toBe(createdTimestamp);
     });
@@ -198,7 +198,7 @@ describe("computeRecencyTimestamp", () => {
 
       // New message (after workspace created)
       const messages = [
-        createMuxMessage("1", "user", "new message", { timestamp: createdTimestamp + 5000 }),
+        createXumMessage("1", "user", "new message", { timestamp: createdTimestamp + 5000 }),
       ];
       expect(computeRecencyTimestamp(messages, createdAt)).toBe(createdTimestamp + 5000);
     });
@@ -208,8 +208,8 @@ describe("computeRecencyTimestamp", () => {
       const createdTimestamp = new Date(createdAt).getTime();
 
       const messages = [
-        createMuxMessage("1", "user", "old user", { timestamp: createdTimestamp - 5000 }),
-        createMuxMessage("2", "assistant", "old compacted", {
+        createXumMessage("1", "user", "old user", { timestamp: createdTimestamp - 5000 }),
+        createXumMessage("2", "assistant", "old compacted", {
           timestamp: createdTimestamp - 2000,
           compacted: true,
         }),
@@ -224,8 +224,8 @@ describe("computeRecencyTimestamp", () => {
       const createdTimestamp = new Date(createdAt).getTime();
 
       const messages = [
-        createMuxMessage("1", "user", "newest", { timestamp: createdTimestamp + 10000 }),
-        createMuxMessage("2", "assistant", "compacted", {
+        createXumMessage("1", "user", "newest", { timestamp: createdTimestamp + 10000 }),
+        createXumMessage("2", "assistant", "compacted", {
           timestamp: createdTimestamp + 5000,
           compacted: true,
         }),
@@ -236,7 +236,7 @@ describe("computeRecencyTimestamp", () => {
     });
 
     it("handles invalid createdAt gracefully", () => {
-      const messages = [createMuxMessage("1", "user", "msg", { timestamp: 100 })];
+      const messages = [createXumMessage("1", "user", "msg", { timestamp: 100 })];
 
       // Invalid ISO string should result in NaN timestamp, which gets filtered out
       expect(computeRecencyTimestamp(messages, "invalid-date")).toBe(100);
@@ -252,9 +252,9 @@ describe("computeRecencyTimestamp", () => {
   describe("with idle compaction requests", () => {
     it("excludes idle compaction request messages from recency", () => {
       const messages = [
-        createMuxMessage("1", "user", "normal message", { timestamp: 100 }),
-        createMuxMessage("2", "assistant", "reply", { timestamp: 150 }),
-        createMuxMessage("3", "user", "compaction request", {
+        createXumMessage("1", "user", "normal message", { timestamp: 100 }),
+        createXumMessage("2", "assistant", "reply", { timestamp: 150 }),
+        createXumMessage("3", "user", "compaction request", {
           timestamp: 300,
           muxMetadata: {
             type: "compaction-request",
@@ -270,8 +270,8 @@ describe("computeRecencyTimestamp", () => {
 
     it("includes user-initiated compaction requests in recency", () => {
       const messages = [
-        createMuxMessage("1", "user", "normal message", { timestamp: 100 }),
-        createMuxMessage("2", "user", "compaction request", {
+        createXumMessage("1", "user", "normal message", { timestamp: 100 }),
+        createXumMessage("2", "user", "compaction request", {
           timestamp: 300,
           muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
         }),
@@ -285,7 +285,7 @@ describe("computeRecencyTimestamp", () => {
       const createdTimestamp = new Date(createdAt).getTime();
 
       const messages = [
-        createMuxMessage("1", "user", "idle compaction", {
+        createXumMessage("1", "user", "idle compaction", {
           timestamp: createdTimestamp + 10000,
           muxMetadata: {
             type: "compaction-request",

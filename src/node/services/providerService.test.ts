@@ -36,7 +36,7 @@ async function saveRoutePriority(
   await config.editConfig(() => ({ ...config.loadConfigOrDefault(), ...overrides, routePriority }));
 }
 
-function saveMuxGatewayConfig(config: Config): void {
+function saveXumGatewayConfig(config: Config): void {
   config.saveProvidersConfig({ "mux-gateway": { couponCode: "gateway-token" } });
 }
 
@@ -288,7 +288,7 @@ describe("ProviderService.getConfig", () => {
 
   it("marks mux-gateway disabled when muxGatewayEnabled is false in main config", () => {
     withTempConfig((config, service) => {
-      saveMuxGatewayConfig(config);
+      saveXumGatewayConfig(config);
 
       const defaultMainConfig = config.loadConfigOrDefault();
       const loadConfigSpy = spyOn(config, "loadConfigOrDefault");
@@ -1867,7 +1867,7 @@ describe("ProviderService gateway lifecycle", () => {
   it("does not auto-insert configured-but-disabled gateways into routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
       await saveRoutePriority(config, ["direct"]);
-      saveMuxGatewayConfig(config);
+      saveXumGatewayConfig(config);
 
       const result = await service.setConfig("mux-gateway", ["enabled"], false);
 
@@ -1879,7 +1879,7 @@ describe("ProviderService gateway lifecycle", () => {
   it("auto-removes gateway from routePriority when disabled", async () => {
     await withTempConfigAsync(async (config, service) => {
       await saveRoutePriority(config, ["mux-gateway", "direct"]);
-      saveMuxGatewayConfig(config);
+      saveXumGatewayConfig(config);
 
       const result = await service.setConfig("mux-gateway", ["enabled"], false);
 
@@ -1962,7 +1962,7 @@ describe("ProviderService gateway lifecycle", () => {
   it("preserves user order when inserting a second gateway before direct", async () => {
     await withTempConfigAsync(async (config, service) => {
       await saveRoutePriority(config, ["mux-gateway", "direct"]);
-      saveMuxGatewayConfig(config);
+      saveXumGatewayConfig(config);
 
       const result = await service.setConfig("openrouter", ["apiKey"], "sk-or-test");
 
@@ -1978,7 +1978,7 @@ describe("ProviderService gateway lifecycle", () => {
   it("appends gateway when direct is absent from routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
       await saveRoutePriority(config, ["mux-gateway"]);
-      saveMuxGatewayConfig(config);
+      saveXumGatewayConfig(config);
 
       const result = await service.setConfig("openrouter", ["apiKey"], "sk-or-test");
 
@@ -1990,7 +1990,7 @@ describe("ProviderService gateway lifecycle", () => {
   it("auto-removes gateway from routePriority when deconfigured", async () => {
     await withTempConfigAsync(async (config, service) => {
       await saveRoutePriority(config, ["mux-gateway", "direct"]);
-      saveMuxGatewayConfig(config);
+      saveXumGatewayConfig(config);
 
       const result = await service.setConfig("mux-gateway", ["couponCode"], "");
 

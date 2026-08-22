@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Protocol } from "@homebridge/ciao";
 import type { NetworkInterfaceInfo } from "node:os";
-import { buildMuxMdnsServiceOptions, MUX_MDNS_SERVICE_TYPE } from "./mdnsAdvertiserService";
+import { buildXumMdnsServiceOptions, XUM_MDNS_SERVICE_TYPE } from "./mdnsAdvertiserService";
 
-describe("buildMuxMdnsServiceOptions", () => {
+describe("buildXumMdnsServiceOptions", () => {
   test("0.0.0.0 disables IPv6 and avoids advertising loopback addresses", () => {
     const networkInterfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = {
       lo0: [
@@ -28,7 +28,7 @@ describe("buildMuxMdnsServiceOptions", () => {
       ],
     };
 
-    const serviceOptions = buildMuxMdnsServiceOptions({
+    const serviceOptions = buildXumMdnsServiceOptions({
       bindHost: "0.0.0.0",
       port: 3000,
       instanceName: "mux-test",
@@ -37,7 +37,7 @@ describe("buildMuxMdnsServiceOptions", () => {
       networkInterfaces,
     });
 
-    expect(serviceOptions.type).toBe(MUX_MDNS_SERVICE_TYPE);
+    expect(serviceOptions.type).toBe(XUM_MDNS_SERVICE_TYPE);
     expect(serviceOptions.protocol).toBe(Protocol.TCP);
     expect(serviceOptions.disabledIpv6).toBe(true);
     expect(serviceOptions.restrictedAddresses).toEqual(["en0"]);
@@ -80,7 +80,7 @@ describe("buildMuxMdnsServiceOptions", () => {
       ],
     };
 
-    const serviceOptions = buildMuxMdnsServiceOptions({
+    const serviceOptions = buildXumMdnsServiceOptions({
       bindHost: "::",
       port: 3000,
       instanceName: "mux-test",
@@ -94,7 +94,7 @@ describe("buildMuxMdnsServiceOptions", () => {
   });
 
   test("sanitizes dots in instanceName so DNS-SD clients can browse/resolve", () => {
-    const serviceOptions = buildMuxMdnsServiceOptions({
+    const serviceOptions = buildXumMdnsServiceOptions({
       bindHost: "192.168.1.10",
       port: 3000,
       instanceName: "mux-host.home",
@@ -106,7 +106,7 @@ describe("buildMuxMdnsServiceOptions", () => {
   });
 
   test("specific IP restricts addresses", () => {
-    const serviceOptions = buildMuxMdnsServiceOptions({
+    const serviceOptions = buildXumMdnsServiceOptions({
       bindHost: "192.168.1.10",
       port: 3000,
       instanceName: "mux-test",

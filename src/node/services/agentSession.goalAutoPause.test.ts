@@ -8,7 +8,7 @@ import type { InitStateManager } from "./initStateManager";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 import { WorkspaceGoalService } from "./workspaceGoalService";
-import { createMuxMessage } from "@/common/types/message";
+import { createXumMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
@@ -358,14 +358,14 @@ describe("AgentSession goal safety hooks", () => {
     await setGoalOk(goalService, { workspaceId, objective: "Recover safely" });
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-before-crash", "user", "Start risky work", {
+      createXumMessage("user-before-crash", "user", "Start risky work", {
         timestamp: 1,
         retrySendOptions: SEND_OPTIONS,
       })
     );
     await historyService.writePartial(
       workspaceId,
-      createMuxMessage("assistant-partial", "assistant", "Partial answer", { historySequence: 1 })
+      createXumMessage("assistant-partial", "assistant", "Partial answer", { historySequence: 1 })
     );
 
     await session.runStartupRecovery();
@@ -386,7 +386,7 @@ describe("AgentSession goal safety hooks", () => {
     cleanups.push(cleanup);
     await historyService.writePartial(
       workspaceId,
-      createMuxMessage("assistant-partial", "assistant", "Partial answer", { historySequence: 0 })
+      createXumMessage("assistant-partial", "assistant", "Partial answer", { historySequence: 0 })
     );
 
     await session.runStartupRecovery();
@@ -407,14 +407,14 @@ describe("AgentSession goal safety hooks", () => {
     await setGoalOk(goalService, { workspaceId, objective: "Continue after restart" });
     await historyService.appendToHistory(
       workspaceId,
-      createMuxMessage("user-before-crash", "user", "Start work", {
+      createXumMessage("user-before-crash", "user", "Start work", {
         timestamp: 1,
         retrySendOptions: SEND_OPTIONS,
       })
     );
     await historyService.writePartial(
       workspaceId,
-      createMuxMessage("assistant-partial", "assistant", "Partial answer", { historySequence: 1 })
+      createXumMessage("assistant-partial", "assistant", "Partial answer", { historySequence: 1 })
     );
     await session.runStartupRecovery();
 

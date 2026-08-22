@@ -11,12 +11,12 @@ import {
 
 import type { Workspace as WorkspaceConfigEntry } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
-function extractText(message: MuxMessage): string {
+function extractText(message: XumMessage): string {
   return message.parts
     .filter(
-      (part): part is Extract<MuxMessage["parts"][number], { type: "text" }> => part.type === "text"
+      (part): part is Extract<XumMessage["parts"][number], { type: "text" }> => part.type === "text"
     )
     .map((part) => part.text)
     .join("");
@@ -187,7 +187,7 @@ describe("Persistent sub-agent compaction", () => {
       )
     ).toBe(true);
 
-    const fullHistory: MuxMessage[] = [];
+    const fullHistory: XumMessage[] = [];
     const fullHistoryResult = await historyService.iterateFullHistory(
       childWorkspaceId,
       "forward",

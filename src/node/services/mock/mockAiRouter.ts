@@ -1,11 +1,11 @@
 import { getCompactionFollowUpContent } from "@/common/types/message";
-import type { CompactionFollowUpRequest, MuxMessage } from "@/common/types/message";
+import type { CompactionFollowUpRequest, XumMessage } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 export interface MockAiRouterRequest {
-  messages: MuxMessage[];
-  latestUserMessage: MuxMessage;
+  messages: XumMessage[];
+  latestUserMessage: XumMessage;
   latestUserText: string;
 }
 
@@ -81,7 +81,7 @@ function hasMockMarker(text: string, marker: string): boolean {
   return normalized.includes(`${MOCK_MARKER_PREFIX}${marker.toLowerCase()}`);
 }
 
-function hasCompactionHistory(messages: MuxMessage[]): boolean {
+function hasCompactionHistory(messages: XumMessage[]): boolean {
   return messages.some((message) => {
     if (readCompactionRequest(message)) {
       return true;
@@ -90,7 +90,7 @@ function hasCompactionHistory(messages: MuxMessage[]): boolean {
   });
 }
 function readCompactionRequest(
-  message: MuxMessage
+  message: XumMessage
 ): { followUpContent?: CompactionFollowUpRequest } | undefined {
   const muxMeta = message.metadata?.muxMetadata;
   if (!muxMeta || muxMeta.type !== "compaction-request") {
@@ -108,7 +108,7 @@ function buildUsage(inputTokens: number, outputTokens: number): LanguageModelV2U
 }
 
 function buildMockCompactionSummary(options: {
-  preCompactionMessages: MuxMessage[];
+  preCompactionMessages: XumMessage[];
   followUpContent?: CompactionFollowUpRequest;
 }): string {
   const userCount = options.preCompactionMessages.filter((m) => m.role === "user").length;

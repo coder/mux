@@ -1,11 +1,11 @@
-import type { MuxMessage } from "@/common/types/message";
+import type { XumMessage } from "@/common/types/message";
 
 /**
  * Check if a message is an idle compaction request.
  * Used to exclude these from recency calculation since they shouldn't affect
  * when the workspace was "last used" by the user.
  */
-function isIdleCompactionRequest(msg: MuxMessage): boolean {
+function isIdleCompactionRequest(msg: XumMessage): boolean {
   const muxMeta = msg.metadata?.muxMetadata;
   return muxMeta?.type === "compaction-request" && muxMeta?.source === "idle-compaction";
 }
@@ -21,7 +21,7 @@ function isIdleCompactionRequest(msg: MuxMessage): boolean {
  * @param unarchivedAt - When workspace was last unarchived (bumps to top of recency)
  */
 export function computeRecencyFromMessages(
-  messages: MuxMessage[],
+  messages: XumMessage[],
   createdAt?: number,
   unarchivedAt?: number
 ): number | null {

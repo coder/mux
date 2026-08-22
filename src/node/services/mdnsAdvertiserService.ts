@@ -11,9 +11,9 @@ import * as net from "node:net";
 import * as os from "node:os";
 import { log } from "./log";
 
-// NOTE: Avoid "mux" here: it's an IANA-registered service name ("Multiplexing Protocol"),
-// and some discovery tools will display/handle it specially.
-export const MUX_MDNS_SERVICE_TYPE = "mux-api";
+// Existing clients browse `_mux-api._tcp`, so the discovery value remains stable after the rename.
+// Avoid bare "mux": it is an IANA-registered service name that discovery tools may handle specially.
+export const XUM_MDNS_SERVICE_TYPE = "mux-api";
 
 type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
@@ -56,7 +56,7 @@ function getNonInternalInterfaceNames(
 }
 type ServiceTxtRecord = Record<string, string>;
 
-export interface BuildMuxMdnsServiceOptions {
+export interface BuildXumMdnsServiceOptions {
   bindHost: string;
   port: number;
   instanceName: string;
@@ -65,7 +65,7 @@ export interface BuildMuxMdnsServiceOptions {
   networkInterfaces?: NetworkInterfaces;
 }
 
-export function buildMuxMdnsServiceOptions(options: BuildMuxMdnsServiceOptions): ServiceOptions {
+export function buildXumMdnsServiceOptions(options: BuildXumMdnsServiceOptions): ServiceOptions {
   const bindHost = options.bindHost.trim();
   assert(bindHost, "bindHost is required");
 
@@ -105,7 +105,7 @@ export function buildMuxMdnsServiceOptions(options: BuildMuxMdnsServiceOptions):
 
   const serviceOptions: ServiceOptions = {
     name: instanceName,
-    type: MUX_MDNS_SERVICE_TYPE,
+    type: XUM_MDNS_SERVICE_TYPE,
     protocol: Protocol.TCP,
     port: options.port,
     txt,

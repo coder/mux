@@ -68,7 +68,7 @@ export const XAIProviderConfigSchema = BaseProviderConfigSchema.extend({
   fastModePreviousServiceTier: XAIFastModePreviousServiceTierSchema.optional(),
 });
 
-export const MuxGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({
+export const XumGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({
   couponCode: z.string().optional(),
   voucher: z.string().optional(),
 });
@@ -147,7 +147,7 @@ export const ProvidersConfigSchema = z
     bedrock: BedrockProviderConfigSchema.optional(),
     openrouter: OpenRouterProviderConfigSchema.optional(),
     xai: XAIProviderConfigSchema.optional(),
-    "mux-gateway": MuxGatewayProviderConfigSchema.optional(),
+    "mux-gateway": XumGatewayProviderConfigSchema.optional(),
     google: GoogleProviderConfigSchema.optional(),
     deepseek: DeepSeekProviderConfigSchema.optional(),
     moonshotai: MoonshotAIProviderConfigSchema.optional(),
@@ -163,7 +163,7 @@ export type OpenAIProviderConfig = z.infer<typeof OpenAIProviderConfigSchema>;
 export type BedrockProviderConfig = z.infer<typeof BedrockProviderConfigSchema>;
 export type OpenRouterProviderConfig = z.infer<typeof OpenRouterProviderConfigSchema>;
 export type XAIProviderConfig = z.infer<typeof XAIProviderConfigSchema>;
-export type MuxGatewayProviderConfig = z.infer<typeof MuxGatewayProviderConfigSchema>;
+export type XumGatewayProviderConfig = z.infer<typeof XumGatewayProviderConfigSchema>;
 export type GoogleProviderConfig = z.infer<typeof GoogleProviderConfigSchema>;
 export type DeepSeekProviderConfig = z.infer<typeof DeepSeekProviderConfigSchema>;
 export type MoonshotAIProviderConfig = z.infer<typeof MoonshotAIProviderConfigSchema>;

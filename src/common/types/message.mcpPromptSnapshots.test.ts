@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
-  createMuxMessage,
+  createXumMessage,
   filterOrphanedMcpPromptSnapshots,
   sanitizeMcpPromptRefs,
 } from "./message";
-import type { MuxMessage } from "./message";
+import type { XumMessage } from "./message";
 
-function snapshot(id: string, invokingMessageId?: string, promptName = "review"): MuxMessage {
-  return createMuxMessage(id, "user", `Expanded ${promptName}`, {
+function snapshot(id: string, invokingMessageId?: string, promptName = "review"): XumMessage {
+  return createXumMessage(id, "user", `Expanded ${promptName}`, {
     historySequence: 0,
     synthetic: true,
     mcpPromptSnapshot: {
@@ -19,8 +19,8 @@ function snapshot(id: string, invokingMessageId?: string, promptName = "review")
   });
 }
 
-function invokingUser(id: string, promptNames: string[]): MuxMessage {
-  return createMuxMessage(id, "user", "Using MCP prompt", {
+function invokingUser(id: string, promptNames: string[]): XumMessage {
+  return createXumMessage(id, "user", "Using MCP prompt", {
     historySequence: 0,
     muxMetadata: {
       type: "normal",
@@ -41,7 +41,7 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("drops a snapshot whose invoking user row was never persisted", () => {
-    const assistant = createMuxMessage("assistant-1", "assistant", "done", {
+    const assistant = createXumMessage("assistant-1", "assistant", "done", {
       historySequence: 0,
     });
     const messages = [invokingUser("user-1", []), assistant, snapshot("snap-1", "user-never")];
@@ -60,7 +60,7 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("drops a snapshot whose invoking id points at a row without a matching ref", () => {
-    const unrelated = createMuxMessage("user-unrelated", "user", "Plain message", {
+    const unrelated = createXumMessage("user-unrelated", "user", "Plain message", {
       historySequence: 0,
     });
     const messages = [snapshot("snap-1", "user-unrelated"), unrelated];
@@ -78,7 +78,7 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("keeps other synthetic rows with a corrupted snapshot field, stripped", () => {
-    const fileSnapshotRow = createMuxMessage("file-snap-1", "user", "File contents", {
+    const fileSnapshotRow = createXumMessage("file-snap-1", "user", "File contents", {
       historySequence: 0,
       synthetic: true,
       fileAtMentionSnapshot: ["@src/foo.ts"],
@@ -92,7 +92,7 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("drops a corrupted expansion row identified by its snapshot message id", () => {
-    const corrupted = createMuxMessage("mcp-prompt-snapshot-123-abc", "user", "Expanded", {
+    const corrupted = createXumMessage("mcp-prompt-snapshot-123-abc", "user", "Expanded", {
       historySequence: 0,
       synthetic: true,
     });
@@ -102,7 +102,7 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("drops a prefixed expansion row whose snapshot field is entirely absent", () => {
-    const corrupted = createMuxMessage("mcp-prompt-snapshot-456-def", "user", "Expanded", {
+    const corrupted = createXumMessage("mcp-prompt-snapshot-456-def", "user", "Expanded", {
       historySequence: 0,
       synthetic: true,
     });
@@ -115,17 +115,17 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("drops a prefixed expansion row with no metadata at all", () => {
-    const bare = createMuxMessage("mcp-prompt-snapshot-789-ghi", "user", "Expanded");
+    const bare = createXumMessage("mcp-prompt-snapshot-789-ghi", "user", "Expanded");
 
     expect(filterOrphanedMcpPromptSnapshots([bare])).toEqual([]);
   });
 
   test("keeps ordinary rows with a corrupted snapshot field, stripped", () => {
-    const authored = createMuxMessage("user-authored", "user", "Real user text", {
+    const authored = createXumMessage("user-authored", "user", "Real user text", {
       historySequence: 0,
     });
     (authored.metadata as Record<string, unknown>).mcpPromptSnapshot = null;
-    const assistant = createMuxMessage("assistant-1", "assistant", "Model reply", {
+    const assistant = createXumMessage("assistant-1", "assistant", "Model reply", {
       historySequence: 0,
     });
     (assistant.metadata as Record<string, unknown>).mcpPromptSnapshot = { bogus: true };
@@ -138,8 +138,8 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   test("drops raw rows whose snapshot field is present but malformed", () => {
     // Raw chat.jsonl rows bypass the oRPC sanitizer, so the request-side
     // filter must treat a present-but-invalid field as corruption.
-    const corruptRow = (id: string, snapshotValue: unknown): MuxMessage => {
-      const message = createMuxMessage(id, "user", "Expanded review", {
+    const corruptRow = (id: string, snapshotValue: unknown): XumMessage => {
+      const message = createXumMessage(id, "user", "Expanded review", {
         historySequence: 0,
         synthetic: true,
       });
