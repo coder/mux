@@ -1781,6 +1781,60 @@ describe("createCodeExecutionTool", () => {
       await host.disposeScope("ws-load");
     });
 
+    it("fails the load honestly when a guest Proxy vars swallows writes", async () => {
+      // Codex r29: the r28 handle-store verify did not cover mux.load's
+      // setVarsProperty path — a Proxy with lying set/defineProperty traps
+      // "accepted" the write while storing nothing, so the model saw a
+      // successful {key, bytes, lines, preview} record for a key that never
+      // existed (and the snapshot durably committed the miss).
+      using tmp = new DisposableTempDir("code-exec-load");
+      await fs.writeFile(nodePath.join(tmp.path, "x.txt"), "hello world", "utf8");
+      const host = new SandboxHostService();
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(fileReadTools()),
+        undefined,
+        kernelRunner(host, "ws-load-proxy", tmp.path),
+        {
+          loadFile: createKernelFileLoader({ cwd: tmp.path, runtime: new LocalRuntime(tmp.path) }),
+        }
+      );
+
+      const result = (await tool.execute!(
+        {
+          code: `
+            vars = new Proxy({}, {
+              set: function () { return true; },
+              defineProperty: function () { return true; },
+            });
+            let error = "";
+            try { mux.load({ path: "x.txt", key: "data" }); } catch (e) { error = String(e); }
+            return { error, missing: typeof vars.data };
+          `,
+        },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(result.success).toBe(true);
+      const returned = result.result as { error: string; missing: string };
+      expect(returned.error).toContain("did not store");
+      expect(returned.missing).toBe("undefined");
+      // The compact record reports the failure — never a fake success summary.
+      const record = result.toolCalls.find((r) => r.toolName === "load");
+      expect(record?.error).toBeDefined();
+      expect(record?.result).toBeUndefined();
+
+      // A genuine load (vars restored) still succeeds.
+      const recovered = (await tool.execute!(
+        {
+          code: 'vars = {}; const s = mux.load({ path: "x.txt", key: "data" }); return { s, len: vars.data.length };',
+        },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(recovered.success).toBe(true);
+      expect((recovered.result as { len: number }).len).toBe("hello world".length);
+      await host.disposeScope("ws-load-proxy");
+    });
+
     it("rewrites load records as failures when the post-load snapshot exceeds the budget", async () => {
       // r14: a successful mux.load can push vars past the snapshot budget
       // (new load keys are protected from retention eviction). persistVars

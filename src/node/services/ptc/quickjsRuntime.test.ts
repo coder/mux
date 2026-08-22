@@ -229,6 +229,30 @@ describe("QuickJSRuntime", () => {
       expect(result.success).toBe(true);
       expect(result.result).toEqual({ first: "hello", second: "world" });
     });
+
+    it("throws when a guest Proxy vars swallows the write (r29)", async () => {
+      // Lying set/defineProperty traps "accept" the write while storing
+      // nothing — without the read-back verify the host reported success for
+      // a key that never existed (mux.load then advertised a fake record).
+      runtime.registerFunction("hostWrite", (...args: unknown[]) => {
+        runtime.setVarsProperty(String(args[0]), String(args[1]));
+        return Promise.resolve(true);
+      });
+      const result = await runtime.eval(`
+        vars = new Proxy({}, {
+          set: function () { return true; },
+          defineProperty: function () { return true; },
+        });
+        try {
+          hostWrite("a", "hello");
+          return "stored";
+        } catch (e) {
+          return String(e);
+        }
+      `);
+      expect(result.success).toBe(true);
+      expect(String(result.result)).toContain("did not store");
+    });
   });
 
   describe("console capture", () => {

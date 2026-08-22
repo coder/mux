@@ -74,7 +74,9 @@ export interface IJSRuntime extends Disposable {
    * Write a string property onto the guest `vars` global from the host.
    * Safe to call from inside a registered host function (the VM is suspended
    * but the context is usable — the same window marshal/dump already use) or
-   * between evals. Recreates `vars` if the guest clobbered it. Used by
+   * between evals. Recreates `vars` if the guest clobbered it. Throws when
+   * the write does not stick (r29: a guest Proxy vars can swallow writes),
+   * so callers surface an honest failure instead of a fake success. Used by
    * mux.load (r12) to place bulk file content into the kernel without ever
    * transiting the model-visible record.
    */

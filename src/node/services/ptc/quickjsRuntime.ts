@@ -655,8 +655,27 @@ export class QuickJSRuntime implements IJSRuntime {
       this.ctx.setProp(this.ctx.global, "vars", varsHandle);
     }
     this.ctx.setProp(varsHandle, key, valueHandle);
-    varsHandle.dispose();
-    valueHandle.dispose();
+    // r29: a guest Proxy vars whose traps lie (set/defineProperty returning
+    // true without storing) swallows this write silently — mux.load would
+    // then return a successful {key, bytes, lines, preview} record while
+    // vars[key] never existed, and the next snapshot would durably commit
+    // the miss. Read the property back and throw so the caller's error path
+    // reports an honest failure to the model (same in-eval verify as the
+    // handle store in sandboxHostService).
+    let stored = false;
+    try {
+      const readBack = this.ctx.getProp(varsHandle, key);
+      stored = this.ctx.eq(readBack, valueHandle);
+      readBack.dispose();
+    } finally {
+      varsHandle.dispose();
+      valueHandle.dispose();
+    }
+    if (!stored) {
+      throw new Error(
+        `vars assignment did not store ${JSON.stringify(key)} — the guest vars namespace swallows writes; restore vars to a plain object and retry`
+      );
+    }
   }
 
   registerObject(
