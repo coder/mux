@@ -25,8 +25,7 @@ for suffix in APP_ROOT CONFIG_ROOT ROOT PROJECT_PATH PROJECT_CANDIDATES MODEL TI
   canonical_name="XUM_${suffix}"
   legacy_name="MUX_${suffix}"
   if [[ ! -v "${canonical_name}" && -v "${legacy_name}" ]]; then
-    printf -v "${canonical_name}" '%s' "${!legacy_name}"
-    export "${canonical_name}"
+    export "${canonical_name}=${!legacy_name}"
   fi
 done
 
