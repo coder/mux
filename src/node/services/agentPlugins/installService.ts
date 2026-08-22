@@ -1029,13 +1029,31 @@ export class AgentPluginInstallService {
    * promotion (e.g. `hooks.js -> ../../plugins/<name>/payload.js` resolves
    * to nothing in staging but to an executable hook inside the live root
    * post-install, skipping consent). Links that RESOLVE INSIDE the staged
-   * root keep their meaning across the promote rename; absolute links keep
-   * their meaning too (same target string) and stay subject to runtime
-   * escape containment — everything else is rejected before any commit.
+   * root keep their meaning across the promote rename. Absolute links keep
+   * their target STRING, but their CONTAINMENT can still flip: a target
+   * under the managed plugins container — this plugin's own final install
+   * path — resolves into the CURRENTLY INSTALLED tree during an update's
+   * staging (outside the staged root, so component discovery excludes it
+   * from the consent preview and the capability comparison) yet inside the
+   * promoted root after the swap, auto-loading undisclosed content. Links
+   * into the container are therefore rejected, by raw target and by
+   * resolution; other absolute links keep their meaning and stay subject to
+   * runtime escape containment. Everything else is rejected before any
+   * commit.
    */
   private async assertStagedTreeWithinQuota(dir: string): Promise<void> {
     const quota = this.stagingQuota();
     const rootReal = await fsPromises.realpath(dir);
+    // Both forms of the container path: the raw-target check must catch the
+    // guessable lexical path even when nothing exists there yet, and the
+    // resolved check must catch realpath-equivalent routes to it.
+    const containerReal = await fsPromises
+      .realpath(this.containerDir)
+      .catch(() => this.containerDir);
+    const withinContainer = (candidate: string): boolean =>
+      [this.containerDir, containerReal].some(
+        (container) => candidate === container || candidate.startsWith(container + path.sep)
+      );
     let bytes = 0;
     let entryCount = 0;
     const pending: string[] = [dir];
@@ -1062,13 +1080,20 @@ export class AgentPluginInstallService {
             );
           }
           const rawTarget = await fsPromises.readlink(entryPath);
-          if (
-            !path.isAbsolute(rawTarget) &&
-            resolvedTarget !== rootReal &&
-            !resolvedTarget.startsWith(rootReal + path.sep)
-          ) {
+          const withinStagedRoot =
+            resolvedTarget === rootReal || resolvedTarget.startsWith(rootReal + path.sep);
+          if (!path.isAbsolute(rawTarget) && !withinStagedRoot) {
             throw new Error(
               `The repository ships a relative symbolic link that escapes the repository root (${relative}). Such links resolve differently after install than during the consent preview, so they are rejected.`
+            );
+          }
+          if (
+            path.isAbsolute(rawTarget) &&
+            !withinStagedRoot &&
+            (withinContainer(path.resolve(rawTarget)) || withinContainer(resolvedTarget))
+          ) {
+            throw new Error(
+              `The repository ships an absolute symbolic link into the managed plugins directory (${relative}). Such links resolve differently after install than during the consent preview, so they are rejected.`
             );
           }
         }

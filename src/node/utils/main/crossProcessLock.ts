@@ -127,7 +127,11 @@ const CORRUPT_LOCK_GRACE_MS = 2_000;
  * or undefined when a competitor holds a fresh mutex (back off and retry).
  * A mutex dir older than RECLAIM_MUTEX_STALE_MS (crashed holder) is broken.
  * Ownership is witnessed by a token file so a competitor that breaks our
- * mutex during an arbitrary pause is detectable via `owns()`.
+ * mutex during an arbitrary pause is detectable via `owns()`. The token is
+ * published with exclusive create: a process that stalled between its mkdir
+ * and this publication long enough to be broken as stale must find the
+ * successor's owner file and abandon, not overwrite it — a plain write would
+ * let BOTH sides leave believing they hold the mutex.
  */
 async function enterLockMutex(
   lockPath: string
@@ -159,7 +163,18 @@ async function enterLockMutex(
       return undefined;
     }
   }
-  await fsPromises.writeFile(mutexTokenFile, mutexToken);
+  try {
+    await fsPromises.writeFile(mutexTokenFile, mutexToken, { flag: "wx" });
+  } catch (error) {
+    // EEXIST: a competitor broke our apparently-abandoned dir and published
+    // its own owner (or we broke theirs and lost the publish race) — exactly
+    // one publisher may win, and it is not us. ENOENT: the dir itself was
+    // broken mid-publication. Both mean "abandon and let the caller retry".
+    if (hasErrorCode(error, "EEXIST") || hasErrorCode(error, "ENOENT")) {
+      return undefined;
+    }
+    throw error;
+  }
 
   const owns = async (): Promise<boolean> => {
     try {

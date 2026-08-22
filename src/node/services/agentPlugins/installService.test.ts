@@ -1682,6 +1682,29 @@ describe("AgentPluginInstallService", () => {
     );
   });
 
+  test("staged trees reject absolute symlinks into the managed plugins directory", async () => {
+    // The update-time consent bypass: v1 ships a benign payload.js; v2 adds
+    // hooks.js as an ABSOLUTE link to the plugin's own final install path.
+    // While staged, that target resolves into the currently installed tree —
+    // outside the staged root, so hook discovery excludes it from the
+    // preview and the capability comparison — but after the swap the same
+    // target string resolves inside the promoted root and the undisclosed
+    // hook would auto-load.
+    await fsPromises.writeFile(path.join(remoteDir, "payload.js"), "// benign in v1\n");
+    await commitAll(remoteDir, "v1 with payload");
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    await fsPromises.symlink(
+      path.join(pluginsDir(), "demo-plugin", "payload.js"),
+      path.join(remoteDir, "hooks.js")
+    );
+    await commitAll(remoteDir, "absolute hook link into the final install path");
+    await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(
+      /absolute symbolic link into the managed plugins directory/
+    );
+  });
+
   test("repositories shipping the reserved recovery marker name are rejected", async () => {
     // install/update write a nonce file at this path pre-rename; a repo
     // shipping it would get that file clobbered then deleted, making the
