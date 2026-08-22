@@ -7628,10 +7628,37 @@ export class TaskService {
       // Appended BEFORE the trigger send so the triggered turn's request (which
       // may start streaming in the background immediately, or dispatch later
       // from the queue) always sees the payload in history.
-      const appendResult = await this.historyService.appendToHistory(parentWorkspaceId, payloadRow);
-      if (!appendResult.success) {
-        refundBudget();
-        return Err({ code: "send_failed" as const, message: appendResult.error });
+      // Same removal race as the sibling route below: a concurrent parent
+      // removal (possible once this sender is itself removed mid-send) could
+      // otherwise interleave between the config snapshot and this append, and
+      // the append would recreate the removed session directory with an
+      // orphan row. Recheck + append under the task-tree lifecycle lock
+      // removal holds; same lock order as the sibling route
+      // (familyMessageDeliveryLocks OUTER, lifecycle lock released before the
+      // wake path runs).
+      const appendOutcome = await this.withTaskTreeLifecycleLock(
+        parentWorkspaceId,
+        async (): Promise<Result<void, SendParentAgentMessageError>> => {
+          if (findWorkspaceEntry(this.config.loadConfigOrDefault(), parentWorkspaceId) == null) {
+            refundBudget();
+            return Err({
+              code: "send_failed" as const,
+              message: "Parent workspace no longer exists.",
+            });
+          }
+          const appendResult = await this.historyService.appendToHistory(
+            parentWorkspaceId,
+            payloadRow
+          );
+          if (!appendResult.success) {
+            refundBudget();
+            return Err({ code: "send_failed" as const, message: appendResult.error });
+          }
+          return Ok(undefined);
+        }
+      );
+      if (!appendOutcome.success) {
+        return appendOutcome;
       }
       this.workspaceService.emitChatEvent(parentWorkspaceId, { ...payloadRow, type: "message" });
 
@@ -7767,10 +7794,36 @@ export class TaskService {
         uiVisible: true,
         muxMetadata: { type: "family-message" },
       });
-      const appendResult = await this.historyService.appendToHistory(targetTaskId, payloadRow);
-      if (!appendResult.success) {
-        refundBudget();
-        return Err({ code: "send_failed" as const, message: appendResult.error });
+      // The target can be REMOVED between the config snapshot above and this
+      // append: removal (which runs under the task-tree lifecycle lock)
+      // deletes the target's session directory and config entry, and a late
+      // append would recreate the directory with an orphan assistant row —
+      // the lifecycle-locked trigger delivery below then returns not_found
+      // but leaves the orphan behind. Recheck existence + append under the
+      // same lifecycle lock so the payload either lands entirely before a
+      // removal (and is deleted with the rest of the session) or observes
+      // the removed entry and refunds.
+      // LOCK ORDER: familyMessageDeliveryLocks is strictly OUTER to the
+      // task-tree lifecycle lock; the (non-reentrant) lifecycle lock is held
+      // only for this recheck+append and released before
+      // sendMessageToDescendantAgentTask reacquires it for the trigger.
+      const appendOutcome = await this.withTaskTreeLifecycleLock(
+        targetTaskId,
+        async (): Promise<Result<void, SendAgentTaskMessageError>> => {
+          if (findWorkspaceEntry(this.config.loadConfigOrDefault(), targetTaskId) == null) {
+            refundBudget();
+            return Err({ code: "not_found" as const });
+          }
+          const appendResult = await this.historyService.appendToHistory(targetTaskId, payloadRow);
+          if (!appendResult.success) {
+            refundBudget();
+            return Err({ code: "send_failed" as const, message: appendResult.error });
+          }
+          return Ok(undefined);
+        }
+      );
+      if (!appendOutcome.success) {
+        return appendOutcome;
       }
       this.workspaceService.emitChatEvent(targetTaskId, { ...payloadRow, type: "message" });
 

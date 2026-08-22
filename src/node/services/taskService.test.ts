@@ -14174,6 +14174,106 @@ describe("TaskService", () => {
     expect(entry?.taskPrompt).not.toContain("IGNORE PRIOR INSTRUCTIONS");
   });
 
+  test("a sibling send racing target removal leaves no orphan session directory", async () => {
+    // The target can be removed between the sender's config snapshot and the
+    // payload append. Removal deletes the target's session directory and
+    // config entry; an unguarded append would RECREATE the directory with an
+    // orphan assistant row (the lifecycle-locked trigger delivery then
+    // returns not_found, but the orphan row/directory would remain).
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-sibling-remove-race";
+    const senderTaskId = "sender-sibling-remove-race";
+    const targetTaskId = "target-sibling-remove-race";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "sender", senderTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "target", targetTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService, historyService } = createTaskServiceHarness(config, {
+      workspaceService,
+    });
+    // Seed the target's session directory so a recreated-after-removal
+    // directory is distinguishable from one that never existed.
+    await historyService.appendToHistory(
+      targetTaskId,
+      createMuxMessage("seed-1", "user", "target brief", { historySequence: 1 })
+    );
+    const targetSessionDir = config.getSessionDir(targetTaskId);
+    await fsPromises.access(targetSessionDir);
+
+    // Stall the send between its config snapshot and the payload append by
+    // pre-holding the per-target delivery lock, then complete the target's
+    // removal inside that window. (Removal itself runs under the task-tree
+    // lifecycle lock, which is free while the send waits on the delivery
+    // lock, so a real removal can interleave exactly here.)
+    const deliveryLocks = (
+      taskService as unknown as {
+        familyMessageDeliveryLocks: {
+          withLock<T>(key: string, operation: () => Promise<T>): Promise<T>;
+        };
+      }
+    ).familyMessageDeliveryLocks;
+    let releaseWindow!: () => void;
+    const windowGate = new Promise<void>((resolve) => {
+      releaseWindow = resolve;
+    });
+    let windowOpen!: () => void;
+    const windowOpened = new Promise<void>((resolve) => {
+      windowOpen = resolve;
+    });
+    const holder = deliveryLocks.withLock(targetTaskId, async () => {
+      windowOpen();
+      await windowGate;
+    });
+    await windowOpened;
+
+    const sendPromise = taskService.sendMessageToSiblingAgentTask(
+      senderTaskId,
+      targetTaskId,
+      "late update",
+      "tool-end"
+    );
+    // Let the send pass its snapshot checks and block on the delivery lock.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    // The removal completes: config entry and session directory are gone.
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces = project.workspaces.filter((ws) => ws.id !== targetTaskId);
+      return cfg;
+    });
+    await fsPromises.rm(targetSessionDir, { recursive: true, force: true });
+
+    releaseWindow();
+    await holder;
+
+    expect(await sendPromise).toEqual(Err({ code: "not_found" }));
+    expect(sendMessage).not.toHaveBeenCalled();
+    // The vanished target's session directory must NOT be recreated by an
+    // orphan payload append.
+    const dirExists = await fsPromises.access(targetSessionDir).then(
+      () => true,
+      () => false
+    );
+    expect(dirExists).toBe(false);
+  });
+
   test("sendMessageToSiblingAgentTask enforces nuclear-family scoping", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
