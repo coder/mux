@@ -637,8 +637,25 @@ function annotateResult(result: unknown, annotation: string, pluginName: string)
 export async function readHookSourceCapped(hooksPath: string): Promise<string> {
   const handle = await fsPromises.open(hooksPath, "r");
   try {
-    const stat = await handle.stat();
-    if (stat.size > MAX_PLUGIN_HOOK_SOURCE_BYTES) {
+    const stat = await handle.stat({ bigint: true });
+    // The open above FOLLOWS symlinks. A managed update can replace a
+    // consented regular hooks.js with an absolute symlink to an existing
+    // file outside the plugin root — staged validation only rejects links
+    // into the managed container, and discovery treats the escaping link as
+    // a capability REMOVAL — so if discovery measured the old regular file
+    // and the swap landed before this open, the canonical pathname now names
+    // that link and the outside file would be evaluated as hook code.
+    // Require the opened object to BE the regular file a non-following lstat
+    // sees at this path: a symlink fails isFile(), and any concurrent
+    // replacement fails the dev/ino identity match (over-blocking is safe —
+    // the read is skipped and the next discovery re-measures).
+    const linkStat = await fsPromises.lstat(hooksPath, { bigint: true });
+    if (!linkStat.isFile() || linkStat.dev !== stat.dev || linkStat.ino !== stat.ino) {
+      throw new Error(
+        `hooks.js is not the regular file discovery measured (symlinked or replaced): ${hooksPath}`
+      );
+    }
+    if (stat.size > BigInt(MAX_PLUGIN_HOOK_SOURCE_BYTES)) {
       throw new Error(
         `hooks.js is too large (${stat.size} bytes; max ${MAX_PLUGIN_HOOK_SOURCE_BYTES})`
       );

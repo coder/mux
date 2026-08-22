@@ -170,6 +170,26 @@ describe("readHookSourceCapped", () => {
       expect((error as Error).message).toContain("too large");
     }
   });
+
+  test("refuses to follow a hooks.js that is a symlink at read time", async () => {
+    // A managed update can replace a consented regular hooks.js with an
+    // absolute symlink to a file OUTSIDE the plugin root (staged validation
+    // only rejects links into the managed container; the escaping link reads
+    // as a capability removal). Discovery that measured the old regular file
+    // must not have its consuming open follow the replacement link and
+    // evaluate the outside file as hook code.
+    using tmp = new DisposableTempDir("hook-source-symlink");
+    const outside = path.join(tmp.path, "outside.js");
+    await fs.writeFile(outside, "({ 'tool.execute.before': () => undefined })", "utf8");
+    const linkPath = path.join(tmp.path, "hooks.js");
+    await fs.symlink(outside, linkPath);
+    try {
+      await readHookSourceCapped(linkPath);
+      expect.unreachable("a symlinked hooks.js must be refused at read time");
+    } catch (error) {
+      expect((error as Error).message).toContain("regular file");
+    }
+  });
 });
 
 describe("AgentPluginHookService", () => {
