@@ -16,6 +16,7 @@ import {
   computeAgentPluginContainers,
   discoverAgentPlugins,
   MAX_PLUGIN_MANIFEST_BYTES,
+  readPluginFileWithinRootCapped,
 } from "./discovery";
 import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expansion";
 
@@ -556,19 +557,30 @@ export async function loadPluginMcpServers(
     return { servers: {}, diagnostics };
   };
 
+  // Size-cap before parsing: server summaries built from this document
+  // (command lines, env assignments, URLs) reach the install consent
+  // preview's IPC/render path, so one unbounded string must not be able to
+  // freeze the app before consent (same ceiling as plugin.json). The bounded
+  // handle read also revalidates containment + file identity AFTER the open:
+  // this document defines spawnable commands, so a replacement symlink
+  // promoted between discovery and this read (see
+  // readPluginFileWithinRootCapped) would otherwise let an outside file be
+  // parsed as server config and its command spawned before the mutation-epoch
+  // post-check can retire the stale result.
+  let text: string;
+  try {
+    text = await readPluginFileWithinRootCapped({
+      filePath: plugin.mcpConfigPath,
+      pluginRoot: plugin.rootPath,
+      maxBytes: MAX_PLUGIN_MANIFEST_BYTES,
+      label: "mcp.json",
+    });
+  } catch (error) {
+    return disableMcp(getErrorMessage(error));
+  }
   let raw: unknown;
   try {
-    // Size-cap before parsing: server summaries built from this document
-    // (command lines, env assignments, URLs) reach the install consent
-    // preview's IPC/render path, so one unbounded string must not be able to
-    // freeze the app before consent (same ceiling as plugin.json).
-    const stat = await fsPromises.stat(plugin.mcpConfigPath);
-    if (stat.size > MAX_PLUGIN_MANIFEST_BYTES) {
-      return disableMcp(
-        `mcp.json is too large (${stat.size} bytes; max ${MAX_PLUGIN_MANIFEST_BYTES})`
-      );
-    }
-    raw = JSON.parse(await fsPromises.readFile(plugin.mcpConfigPath, "utf8")) as unknown;
+    raw = JSON.parse(text) as unknown;
   } catch (error) {
     // §7.2.2 rule 2: invalid JSON disables MCP for this plugin only.
     return disableMcp(`mcp.json is not valid JSON: ${getErrorMessage(error)}`);

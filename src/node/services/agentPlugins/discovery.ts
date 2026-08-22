@@ -58,6 +58,66 @@ export const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
  */
 export const MAX_PLUGIN_HOOK_SOURCE_BYTES = 1024 * 1024;
 
+/**
+ * Read a consented plugin component file (hooks.js, mcp.json) through a
+ * bounded handle, revalidating containment and identity AFTER the open.
+ *
+ * Discovery's measurement and the consuming read are separated by an
+ * update-sized TOCTOU window: a managed update can promote a replacement
+ * tree where the canonical path — or any ANCESTOR component on it — became
+ * an absolute symlink to existing content outside the plugin root. Staged
+ * validation only rejects links into the managed container, and discovery
+ * treats the escaping link as a capability REMOVAL, so the swapped tree is
+ * permitted; a stale canonical path would then read (and execute/parse)
+ * attacker-chosen outside content. Two post-open checks close this (a
+ * promotion is a single swap, so a link the open followed is still present
+ * here):
+ * 1. Containment recheck: the fully-resolved path must stay inside the
+ *    plugin root, catching replacement links at any ancestor component.
+ * 2. Leaf identity: the opened object must BE the regular file a
+ *    non-following lstat sees at this path (a symlink fails isFile(); a
+ *    concurrent replacement fails the dev/ino match).
+ * The size ceiling is enforced on the same handle (fstat), and the read is
+ * bounded to the fstat-reported byte count so a file growing mid-read stays
+ * capped. Over-blocking is safe — the caller skips and re-measures on the
+ * next discovery.
+ */
+export async function readPluginFileWithinRootCapped(args: {
+  filePath: string;
+  pluginRoot: string;
+  maxBytes: number;
+  /** Component name used in error messages (e.g. "hooks.js"). */
+  label: string;
+}): Promise<string> {
+  const { filePath, pluginRoot, maxBytes, label } = args;
+  const handle = await fsPromises.open(filePath, "r");
+  try {
+    const stat = await handle.stat({ bigint: true });
+    await ensurePathContained(pluginRoot, filePath);
+    const linkStat = await fsPromises.lstat(filePath, { bigint: true });
+    if (!linkStat.isFile() || linkStat.dev !== stat.dev || linkStat.ino !== stat.ino) {
+      throw new Error(
+        `${label} is not the regular file discovery measured (symlinked or replaced): ${filePath}`
+      );
+    }
+    if (stat.size > BigInt(maxBytes)) {
+      throw new Error(`${label} is too large (${stat.size} bytes; max ${maxBytes})`);
+    }
+    const buffer = Buffer.alloc(Number(stat.size));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) {
+        break; // Truncated since the fstat: return what exists.
+      }
+      offset += bytesRead;
+    }
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 export interface AgentPluginContainer {
   /** Absolute host path of the container directory (e.g. `<projectRoot>/.xum/plugins`). */
   path: string;

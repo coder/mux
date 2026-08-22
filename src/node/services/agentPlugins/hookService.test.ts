@@ -29,6 +29,7 @@ import {
 import { collectFullHistory, replayVerifySession } from "@/node/services/replay/replayVerify";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import { AgentPluginHookService, readHookSourceCapped } from "./hookService";
+import { bumpContainerMutationEpoch, STAGING_DIR_NAME } from "./journals";
 import { AGENT_PLUGIN_SCHEMA_ID_1_0_0 } from "./manifest";
 
 const WORKSPACE_ID = "plugin-hooks-test";
@@ -638,5 +639,45 @@ describe("replay determinism with hooks active", () => {
     expect(result.turns[0].status).toBe("PASS");
 
     await harness.service.disposeWorkspace(REPLAY_FIXTURE_WORKSPACE_ID);
+  });
+});
+
+describe("epoch-based hook retirement", () => {
+  test("a managed plugin mutation (epoch bump) retires live hooks before the next invocation", async () => {
+    // An uninstall/update/install committed in ANY process bumps the managed
+    // container's mutation epoch. Already-registered hooks must stop seeing
+    // tool traffic at the next invocation — not survive until the workspace's
+    // next send calls ensureWorkspaceHooks — or a mid-stream uninstall would
+    // keep exposing tool args/results to (and accepting denials/rewrites
+    // from) the removed plugin.
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "epoch-demo",
+      "({ 'tool.execute.before': () => ({ deny: 'blocked by hook' }) })",
+      { tools: ["dangerous_tool"] }
+    );
+    await harness.ensure();
+
+    // Live: the hook denies the granted tool.
+    const before = makeToolCtx("dangerous_tool", { a: 1 });
+    await runTool(harness.spine, before);
+    expect(blockedError(before)).toContain("blocked by hook");
+
+    const stagingRoot = path.join(harness.tmp.path, STAGING_DIR_NAME);
+    await fs.mkdir(stagingRoot, { recursive: true });
+    await bumpContainerMutationEpoch(stagingRoot);
+
+    // Stale epoch: the registration is torn down before the hook sees input.
+    const after = makeToolCtx("dangerous_tool", { a: 2 });
+    await runTool(harness.spine, after);
+    expect(after.blocked).toBeUndefined();
+    expect(after.executed).toBe(true);
+
+    // The next ensure re-registers from disk with the fresh epoch.
+    await harness.ensure();
+    const reensured = makeToolCtx("dangerous_tool", { a: 3 });
+    await runTool(harness.spine, reensured);
+    expect(blockedError(reensured)).toContain("blocked by hook");
   });
 });
