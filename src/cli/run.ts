@@ -657,6 +657,15 @@ async function main(): Promise<number> {
     backgroundProcessManager,
     workspaceGoalService,
     keepBackgroundProcesses,
+    // Direct CLI registration bypasses WorkspaceService.create, so a
+    // preserved checkout could carry a stale `plugin:` MCP override into a
+    // same-name reinstall on the first send; sanitize before announcing.
+    sanitizeCliWorkspaceRegistration: (args) =>
+      workspaceService.sanitizeCliRegisteredWorkspace(
+        args.workspaceId,
+        args.workspacePath,
+        args.runtimeConfig
+      ),
   });
   // Register with WorkspaceService so TaskService operations that target the parent
   // workspace (e.g. resumeStream after sub-agent completion) reuse this session
