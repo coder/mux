@@ -14,6 +14,9 @@ export const EXIT_CODE_TOO_MANY_LINES = 43;
 /** Exit code for "path resolves outside the workspace" (e.g. a symlink escape). */
 export const EXIT_CODE_OUTSIDE_WORKSPACE = 44;
 
+/** Exit code for "path itself is a symlink". */
+export const EXIT_CODE_IS_SYMLINK = 45;
+
 /**
  * Size budget for whole-file clipboard copies. The IPC bash channel caps total
  * output at 1MiB (BASH_TRUNCATE_MAX_TOTAL_BYTES) and base64 expands by 4/3, so
@@ -210,6 +213,7 @@ awk_status=$?
 }
 ${anchorScript}
 [ -n "$anchor" ] || exit ${EXIT_CODE_OUTSIDE_WORKSPACE}
+[ -h ${file} ] && exit ${EXIT_CODE_IS_SYMLINK}
 resolved=$(mux_resolve_physical ${file})
 case "$resolved" in
   "$anchor"/*) ;;
@@ -270,6 +274,10 @@ export function processFileContents(output: string, exitCode: number): FileConte
 
   if (exitCode === EXIT_CODE_OUTSIDE_WORKSPACE) {
     return { type: "error", message: "File resolves outside the workspace." };
+  }
+
+  if (exitCode === EXIT_CODE_IS_SYMLINK) {
+    return { type: "error", message: "File is a symbolic link." };
   }
 
   const { size, base64 } = parseReadFileOutput(output);

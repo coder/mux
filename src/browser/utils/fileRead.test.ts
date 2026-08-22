@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   buildReadFileScript,
+  EXIT_CODE_IS_SYMLINK,
   EXIT_CODE_OUTSIDE_WORKSPACE,
   EXIT_CODE_TOO_LARGE,
   EXIT_CODE_TOO_MANY_LINES,
@@ -56,7 +57,8 @@ describe("buildReadFileScript", () => {
       const result = spawnSync("bash", ["-lc", buildReadFileScript("escape.txt")], {
         cwd: workspaceDir,
       });
-      expect(result.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+      // The final-component symlink check fires before containment resolution.
+      expect(result.status).toBe(EXIT_CODE_IS_SYMLINK);
       expect(result.stdout.toString()).not.toContain("outside secret");
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
@@ -64,7 +66,10 @@ describe("buildReadFileScript", () => {
     }
   });
 
-  test("still reads symlinks that stay inside the workspace", () => {
+  test("rejects symlinks even when their target stays inside the workspace", () => {
+    // A repo-controlled symlink to an in-repo ignored secret passes containment, and
+    // git renders a symlink as its target STRING, so following it would copy content
+    // the review never displayed. The final path component must not be a link.
     const workspaceDir = mkdtempSync(join(tmpdir(), "mux-file-read-ws-"));
 
     try {
@@ -74,10 +79,21 @@ describe("buildReadFileScript", () => {
       const result = spawnSync("bash", ["-lc", buildReadFileScript("link.txt")], {
         cwd: workspaceDir,
       });
-      expect(result.status).toBe(0);
-      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
-      // stat sizes the link inode itself (pre-existing quirk), so assert the decoded content.
-      expect(processed).toMatchObject({ type: "text", content: "inside contents\n" });
+      expect(result.status).toBe(EXIT_CODE_IS_SYMLINK);
+      expect(result.stdout.toString()).not.toContain("inside contents");
+
+      // Directory symlinks along the path (e.g. multi-project container entries)
+      // remain readable; only a link at the final component is rejected.
+      mkdirSync(join(workspaceDir, "realdir"));
+      writeFileSync(join(workspaceDir, "realdir", "file.txt"), "dir contents\n");
+      symlinkSync(join(workspaceDir, "realdir"), join(workspaceDir, "dirlink"));
+      const throughDir = spawnSync("bash", ["-lc", buildReadFileScript("dirlink/file.txt")], {
+        cwd: workspaceDir,
+      });
+      expect(throughDir.status).toBe(0);
+      expect(
+        processFileContents(throughDir.stdout.toString(), throughDir.status ?? 0)
+      ).toMatchObject({ type: "text", content: "dir contents\n" });
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
@@ -134,7 +150,8 @@ describe("buildReadFileScript", () => {
         ],
         { cwd: containerDir }
       );
-      expect(result.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+      // The final-component symlink check fires before containment resolution.
+      expect(result.status).toBe(EXIT_CODE_IS_SYMLINK);
       expect(result.stdout.toString()).not.toContain("outside secret");
     } finally {
       rmSync(containerDir, { recursive: true, force: true });
@@ -231,7 +248,7 @@ describe("buildReadFileScript", () => {
         "realpath() { return 127; }; " +
         'readlink() { if [ "$1" = "-f" ]; then return 127; fi; command readlink "$@"; }; ';
 
-      const okResult = spawnSync("bash", ["-lc", `${shims}${buildReadFileScript("link.txt")}`], {
+      const okResult = spawnSync("bash", ["-lc", `${shims}${buildReadFileScript("real.txt")}`], {
         cwd: workspaceDir,
       });
       expect(okResult.status).toBe(0);
@@ -246,7 +263,8 @@ describe("buildReadFileScript", () => {
         ["-lc", `${shims}${buildReadFileScript("escape.txt")}`],
         { cwd: workspaceDir }
       );
-      expect(escapeResult.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+      // The final-component symlink check fires before containment resolution.
+      expect(escapeResult.status).toBe(EXIT_CODE_IS_SYMLINK);
       expect(escapeResult.stdout.toString()).not.toContain("outside secret");
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
