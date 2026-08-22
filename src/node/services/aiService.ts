@@ -53,6 +53,7 @@ import {
 } from "@/node/runtime/runtimeHelpers";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
+import { isRlmModeEnabled } from "@/node/services/branchSummary";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getXumEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
@@ -78,7 +79,7 @@ import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { HistoryService } from "./historyService";
 import { delegatedToolCallManager } from "./delegatedToolCallManager";
 import { createErrorEvent, formatSendMessageError } from "./utils/sendMessageError";
-import { resolveWorkspaceModelFallbackChain } from "@/node/services/taskUtils";
+import { findWorkspaceEntry, resolveWorkspaceModelFallbackChain } from "@/node/services/taskUtils";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
@@ -124,6 +125,7 @@ import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/prov
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
+import { excludeKeepRecentTailForCompactionRequest } from "@/common/utils/messages/keepRecentTail";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
@@ -185,8 +187,13 @@ import {
   applyToolPolicyAndExperiments,
   captureMcpToolTelemetry,
   reconcileHookReplacedCodeExecution,
+  resolveBackendGatedPtcExperiments,
   retargetCodeExecution,
 } from "./toolAssembly";
+import {
+  createKernelFileLoader,
+  type KernelFileLoader,
+} from "@/node/services/tools/kernelFileLoad";
 import { eventSpine, type RequestAssembleContext } from "@/node/services/events/eventSpine";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
@@ -223,8 +230,12 @@ export function prepareProviderRequestMessages(
 } {
   // Workflow display rows are durable UI history, not main-agent context.
   const messagesWithoutWorkflowDisplay = filterWorkflowDisplayOnlyMessages(messages);
-  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
-    messagesWithoutWorkflowDisplay
+  // RLM keep-recent floor: a stamped compaction request summarizes only the
+  // older head; the stamped tail is preserved verbatim after the boundary.
+  // No-op (same reference) unless the trailing user row carries the durable
+  // stamp, so RLM-off requests and replay stay byte-identical.
+  const activeContextMessages = excludeKeepRecentTailForCompactionRequest(
+    sliceMessagesForProviderFromLatestContextBoundary(messagesWithoutWorkflowDisplay)
   );
   const contextBoundarySlicedCount =
     messagesWithoutWorkflowDisplay.length - activeContextMessages.length;
@@ -1079,6 +1090,7 @@ export class AIService extends EventEmitter {
     experiments: SendMessageOptions["experiments"];
     emitNestedToolEvent: (event: PTCEventWithParent) => void;
     workspaceId: string;
+    kernelFileLoader: KernelFileLoader;
   }): Promise<Record<string, Tool>> {
     const { preHookTools, postHookTools, workspaceId } = opts;
     const hookReplacedCodeExecution =
@@ -1102,7 +1114,11 @@ export class AIService extends EventEmitter {
       effectiveToolPolicy: opts.effectiveToolPolicy,
       experiments: opts.experiments,
       emitNestedToolEvent: opts.emitNestedToolEvent,
-      sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
+      sandbox: {
+        workspaceId,
+        sessionDir: this.config.getSessionDir(workspaceId),
+        kernelFileLoader: opts.kernelFileLoader,
+      },
     });
     // Reinstate a middleware-provided code_execution replacement over the
     // freshly built instance — but first graft the rebuilt bridge/mount onto
@@ -1394,7 +1410,7 @@ export class AIService extends EventEmitter {
       recordFileState,
       postCompactionAttachments,
       resolveMemoryContext,
-      experiments,
+      experiments: experimentsFromOptions,
       allowAgentSetGoal,
       workspaceGoalService,
       disableWorkspaceAgents,
@@ -1404,6 +1420,17 @@ export class AIService extends EventEmitter {
       minThinkingLevel: providedMinThinkingLevel,
       activeTurnThinkingOverride,
     } = opts;
+    // Backfill the PTC/RLM trio from the backend's persisted experiment
+    // overrides (same `?? isExperimentEnabled` pattern as the other
+    // backend-gated experiments below). A renderer with no origin-local
+    // override sends `undefined` for these flags, and the effective UI and
+    // /refine gate already resolve against the backend override — tool
+    // assembly must agree or a persisted-RLM workspace silently streams with
+    // the non-persistent flat/PTC toolset. Explicit false stays false.
+    const experiments: StreamMessageOptions["experiments"] = resolveBackendGatedPtcExperiments(
+      experimentsFromOptions,
+      (experimentId) => this.experimentsService?.isExperimentEnabled(experimentId) === true
+    );
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
     const pendingAbortController = new AbortController();
@@ -2658,6 +2685,21 @@ export class AIService extends EventEmitter {
         enableGoalTools: goalToolAvailability,
         // Only child workspaces (tasks) can report to a parent.
         enableAgentReport: Boolean(metadata.parentWorkspaceId),
+        // RLM family messaging: gate on the flags persisted on the task record at
+        // spawn — NOT the live send-options experiments — so a child spawned under RLM
+        // keeps task_message_parent/task_message_sibling across app restarts and
+        // frontend experiment toggles. Uses the full RLM predicate (rlm AND a PTC
+        // parent) rather than the bare rlm bit: the hidden sub-flag can stay true
+        // after its parent is disabled, and such children run outside RLM. Workflow-
+        // owned workers are excluded: they hand results to WorkflowRunner through the
+        // journal path.
+        enableFamilyMessaging:
+          Boolean(metadata.parentWorkspaceId) &&
+          metadata.workflowTask == null &&
+          isRlmModeEnabled(
+            findWorkspaceEntry(cfg, workspaceId)?.workspace.taskExperiments,
+            undefined
+          ),
         workflowAgentOutputSchema: metadata.workflowTask?.outputSchema,
         allowLegacyInvalidWorkflowAgentOutputSchema,
         // External edit detection callback
@@ -2798,6 +2840,14 @@ export class AIService extends EventEmitter {
         }
       };
 
+      // Host file loader backing mux.load (r12 bulk kernel ingestion). Built
+      // from the same cwd/runtime pair the file tools use so path resolution
+      // matches mux.file_read. Only honored by kernel-mode code_execution.
+      const kernelFileLoader = createKernelFileLoader({
+        cwd: toolsForModelConfig.cwd,
+        runtime: toolsForModelConfig.runtime,
+      });
+
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const applyToolPolicyAndExperimentsStartedAt = Date.now();
       let tools = await applyToolPolicyAndExperiments({
@@ -2806,7 +2856,11 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
         experiments,
         emitNestedToolEvent: emitNestedPtcToolEvent,
-        sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
+        sandbox: {
+          workspaceId,
+          sessionDir: this.config.getSessionDir(workspaceId),
+          kernelFileLoader,
+        },
       });
       recordStartupPhaseTiming(
         "applyToolPolicyAndExperimentsMs",
@@ -2924,6 +2978,7 @@ export class AIService extends EventEmitter {
             experiments,
             emitNestedToolEvent: emitNestedPtcToolEvent,
             workspaceId,
+            kernelFileLoader,
           });
         }
         // Tool-search state was classified from the pre-hook record; a hook
@@ -3547,7 +3602,11 @@ export class AIService extends EventEmitter {
                     effectiveToolPolicy,
                     experiments,
                     emitNestedToolEvent: emitNestedPtcToolEvent,
-                    sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
+                    sandbox: {
+                      workspaceId,
+                      sessionDir: this.config.getSessionDir(workspaceId),
+                      kernelFileLoader,
+                    },
                   });
                   // Tool search: keep the per-stream state consistent with the
                   // fallback model's re-assembled toolset. rebuildToolSearchState
@@ -3639,6 +3698,7 @@ export class AIService extends EventEmitter {
                         experiments,
                         emitNestedToolEvent: emitNestedPtcToolEvent,
                         workspaceId,
+                        kernelFileLoader,
                       });
                     }
                     // Same reconcile as the primary path: tool-search state

@@ -5,6 +5,7 @@ import type {
   LoadedSkillsSnapshotAttachment,
   EditedFilesReferenceAttachment,
   CompletedReportsIndexAttachment,
+  ReadFilesReferenceAttachment,
 } from "@/common/types/attachment";
 import {
   AGENT_SKILL_BODY_TRUNCATION_NOTE,
@@ -124,6 +125,29 @@ function renderCompletedReportsIndexWithBudget(
 }
 
 /**
+ * SECURITY AUDIT: serialize a repo-controlled path as explicitly untrusted
+ * data before it is embedded in a synthetic <system-update> block. Legal Unix
+ * paths can contain newlines and the characters needed to spell a closing
+ * </system-update> tag, so a crafted filename read by the agent could
+ * otherwise break out of the block and inject attacker text as instructions.
+ * JSON.stringify escapes control characters (no raw newlines survive) and the
+ * additional \u003c escape removes every literal "<", making tag injection
+ * impossible while keeping ordinary paths readable (just quoted).
+ */
+function serializeUntrustedPath(path: string): string {
+  return JSON.stringify(path).replace(/</g, "\\u003c");
+}
+
+/**
+ * Render the RLM read-files list compactly: paths only (newest-first), so the
+ * model knows which files it has already seen without re-reading them.
+ */
+function renderReadFilesReference(attachment: ReadFilesReferenceAttachment): string {
+  const serialized = attachment.paths.map(serializeUntrustedPath);
+  return `Files previously read (contents summarized away; re-read only if needed): ${serialized.join(", ")}`;
+}
+
+/**
  * Render an edited files reference attachment to content string.
  */
 function renderEditedFilesReference(attachment: EditedFilesReferenceAttachment): string {
@@ -157,6 +181,8 @@ export function renderAttachmentToContent(attachment: PostCompactionAttachment):
       return renderEditedFilesReference(attachment);
     case "completed_reports_index":
       return renderCompletedReportsIndex(attachment);
+    case "read_files_reference":
+      return renderReadFilesReference(attachment);
   }
 }
 
@@ -320,8 +346,9 @@ function sortAttachmentsForInjection(
     // Small, high-value handles go before the bulky skill/diff blocks so budget
     // truncation cannot drop them.
     completed_reports_index: 2,
-    loaded_skills_snapshot: 3,
-    edited_files_reference: 4,
+    read_files_reference: 3,
+    loaded_skills_snapshot: 4,
+    edited_files_reference: 5,
   };
 
   return attachments
@@ -409,6 +436,15 @@ export function renderAttachmentsToContentWithBudget(
       omittedLoadedSkills += omittedSkills;
 
       if (content) {
+        addBlock(wrapSystemUpdate(content));
+      }
+      continue;
+    }
+
+    if (attachment.type === "read_files_reference") {
+      // Compact one-liner (paths only) — include whole or not at all.
+      const content = renderReadFilesReference(attachment);
+      if (content.length <= remainingForContent) {
         addBlock(wrapSystemUpdate(content));
       }
       continue;

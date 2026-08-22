@@ -106,8 +106,8 @@ export const createMemoryTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: buildMemoryDescription(config),
     inputSchema: TOOL_DEFINITIONS.memory.schema,
-    execute: (input): Promise<MemoryToolResult> =>
-      executeMemoryCommand(memoryService, ctx, input, checkWriteAccess),
+    execute: (input, { toolCallId }): Promise<MemoryToolResult> =>
+      executeMemoryCommand(memoryService, ctx, input, checkWriteAccess, toolCallId),
   });
 };
 
@@ -122,12 +122,16 @@ export type MemoryCommandInput = z.infer<(typeof TOOL_DEFINITIONS.memory)["schem
  * scope restriction, op budget, dry-run interception). The guard runs for
  * every mutating command with the path(s) it would touch; returning a result
  * short-circuits the dispatch.
+ *
+ * `toolCallId` (absent for the consolidation runner) is threaded into the
+ * refinement journal row each mutating command appends (evidence attribution).
  */
 export async function executeMemoryCommand(
   memoryService: MemoryService,
   ctx: MemoryScopeContext,
   input: MemoryCommandInput,
-  checkWriteAccess: (virtualPath: string) => MemoryToolResult | null
+  checkWriteAccess: (virtualPath: string) => MemoryToolResult | null,
+  toolCallId?: string
 ): Promise<MemoryToolResult> {
   try {
     switch (input.command) {
@@ -146,7 +150,7 @@ export async function executeMemoryCommand(
         }
         return (
           checkWriteAccess(input.path) ??
-          (await memoryService.create(ctx, input.path, input.file_text, "agent"))
+          (await memoryService.create(ctx, input.path, input.file_text, "agent", toolCallId))
         );
       }
       case "str_replace": {
@@ -160,7 +164,8 @@ export async function executeMemoryCommand(
             input.path,
             input.old_str,
             input.new_str ?? "",
-            "agent"
+            "agent",
+            toolCallId
           ))
         );
       }
@@ -178,7 +183,8 @@ export async function executeMemoryCommand(
             input.path,
             input.insert_line,
             input.insert_text,
-            "agent"
+            "agent",
+            toolCallId
           ))
         );
       }
@@ -187,7 +193,8 @@ export async function executeMemoryCommand(
           return { success: false, error: "delete requires 'path'" };
         }
         return (
-          checkWriteAccess(input.path) ?? (await memoryService.deletePath(ctx, input.path, "agent"))
+          checkWriteAccess(input.path) ??
+          (await memoryService.deletePath(ctx, input.path, "agent", toolCallId))
         );
       }
       case "rename": {
@@ -199,7 +206,7 @@ export async function executeMemoryCommand(
         return (
           checkWriteAccess(oldPath) ??
           checkWriteAccess(input.new_path) ??
-          (await memoryService.rename(ctx, oldPath, input.new_path, "agent"))
+          (await memoryService.rename(ctx, oldPath, input.new_path, "agent", toolCallId))
         );
       }
     }

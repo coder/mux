@@ -293,6 +293,54 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("appendToHistoryIfTailMatches", () => {
+    it("appends when the expected tail is still current", async () => {
+      const workspaceId = "workspace1";
+      await service.appendToHistory(workspaceId, createMuxMessage("msg1", "user", "Hello"));
+      await service.appendToHistory(workspaceId, createMuxMessage("msg2", "assistant", "Hi"));
+
+      const result = await service.appendToHistoryIfTailMatches(
+        workspaceId,
+        createMuxMessage("msg3", "user", "Guarded"),
+        "msg2"
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.success && result.data).toBe("appended");
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages.map((m) => m.id)).toEqual(["msg1", "msg2", "msg3"]);
+      expect(messages[2].metadata?.historySequence).toBe(2);
+    });
+
+    it("skips the append when another row landed first", async () => {
+      const workspaceId = "workspace1";
+      await service.appendToHistory(workspaceId, createMuxMessage("msg1", "user", "Hello"));
+      await service.appendToHistory(workspaceId, createMuxMessage("msg2", "assistant", "Hi"));
+
+      const result = await service.appendToHistoryIfTailMatches(
+        workspaceId,
+        createMuxMessage("msg3", "user", "Guarded"),
+        "msg1"
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.success && result.data).toBe("tail-mismatch");
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages.map((m) => m.id)).toEqual(["msg1", "msg2"]);
+    });
+
+    it("skips the append when the workspace has no history", async () => {
+      const result = await service.appendToHistoryIfTailMatches(
+        "workspace-empty",
+        createMuxMessage("msg1", "user", "Guarded"),
+        "missing"
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.success && result.data).toBe("tail-mismatch");
+    });
+  });
+
   describe("updateHistory", () => {
     it("should update message by historySequence", async () => {
       const workspaceId = "workspace1";

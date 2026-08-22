@@ -815,6 +815,75 @@ export async function processSlashCommand(
           });
         return { clearInput: true, toastShown: true };
       }
+      case "refine": {
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        const refineClient = requireClient();
+        if (!refineClient) {
+          return { clearInput: false, toastShown: true };
+        }
+        // Fire-and-forget like /dream: the pass runs in the background and
+        // posts its own labeled summary row into the chat when edits were
+        // staged/applied. Only the settle toast is shown — an optimistic
+        // "started" toast would flash green-then-red when the backend rejects
+        // immediately (RLM off, run already in flight). Plain /refine only
+        // STAGES edits (security: model output is never auto-applied);
+        // /refine apply is the explicit approval step.
+        const refineWorkspaceId = context.workspaceId;
+        const refineApply = parsed.apply === true;
+        // Ride the renderer's effective experiment flags with the request:
+        // backend override persistence is asynchronous/best-effort, so a
+        // backend-only gate could refuse /refine while this client already
+        // offers the command and runs with the RLM kernel.
+        const refineExperiments = context.sendMessageOptions.experiments;
+        void (
+          refineApply
+            ? refineClient.refinements.apply({
+                workspaceId: refineWorkspaceId,
+                experiments: refineExperiments,
+              })
+            : refineClient.refinements.run({
+                workspaceId: refineWorkspaceId,
+                experiments: refineExperiments,
+              })
+        )
+          .then((result) => {
+            context.setToast(
+              result.success
+                ? {
+                    id: Date.now().toString(),
+                    type: "success",
+                    message: result.data.noOp
+                      ? refineApply
+                        ? "Refine: nothing was applied"
+                        : "Refine: nothing worth distilling"
+                      : refineApply
+                        ? // untrackedApplied: edits that succeeded but could not
+                          // be journaled (no rollback id) — still real, so counted.
+                          // Failed edits are surfaced too: an all-failed apply
+                          // must not read like a success.
+                          `Refine: ${result.data.applied.length + (result.data.untrackedApplied ?? 0)} edit(s) applied${
+                            result.data.failed !== undefined && result.data.failed.length > 0
+                              ? `, ${result.data.failed.length} failed`
+                              : ""
+                          } (see chat summary)`
+                        : `Refine: ${result.data.staged?.length ?? 0} edit(s) staged — approve with /refine apply`,
+                  }
+                : {
+                    id: Date.now().toString(),
+                    type: "error",
+                    message: `Refine failed: ${result.error}`,
+                  }
+            );
+          })
+          .catch((error: unknown) => {
+            context.setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: `Refine failed: ${String(error)}`,
+            });
+          });
+        return { clearInput: true, toastShown: true };
+      }
       case "fork":
         if (!requireClient()) {
           return { clearInput: false, toastShown: true };

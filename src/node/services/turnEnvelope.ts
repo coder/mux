@@ -168,62 +168,69 @@ export async function emitTurnEnvelope(params: {
   partialContinuationMessage?: MuxMessage | null;
 }): Promise<void> {
   try {
-    // Content-addressed: unchanged prompts across turns dedupe to one blob.
-    const { ref } = await params.journal.blobs.put(params.systemMessage);
+    // Blob puts and the append referencing them run under the journal blob
+    // lock: content addressing can share these hashes with reclaimable
+    // snapshot/handle payloads, and a concurrent reclamation pass must never
+    // observe the put→append window (see DurableEventJournal.withBlobLock).
+    await params.journal.withBlobLock(async () => {
+      // Content-addressed: unchanged prompts across turns dedupe to one blob.
+      const { ref } = await params.journal.blobs.put(params.systemMessage);
 
-    // Request-time inputs that reach the provider request must be logged too
-    // ("model-visible ⟹ logged"): blob-store the injected plan content and
-    // post-compaction attachments so replay can rebuild those turns.
-    let planTransitionContentHash: BlobRef | undefined;
-    if (params.planContentForTransition != null && params.planContentForTransition.length > 0) {
-      planTransitionContentHash = (await params.journal.blobs.put(params.planContentForTransition))
-        .ref;
-    }
-    let postCompactionAttachmentsHash: BlobRef | undefined;
-    if (params.postCompactionAttachments != null && params.postCompactionAttachments.length > 0) {
-      postCompactionAttachmentsHash = (
-        await params.journal.blobs.put(JSON.stringify(params.postCompactionAttachments))
-      ).ref;
-    }
-    let partialContinuationHash: BlobRef | undefined;
-    if (params.partialContinuationMessage != null) {
-      partialContinuationHash = (
-        await params.journal.blobs.put(JSON.stringify(params.partialContinuationMessage))
-      ).ref;
-    }
+      // Request-time inputs that reach the provider request must be logged too
+      // ("model-visible ⟹ logged"): blob-store the injected plan content and
+      // post-compaction attachments so replay can rebuild those turns.
+      let planTransitionContentHash: BlobRef | undefined;
+      if (params.planContentForTransition != null && params.planContentForTransition.length > 0) {
+        planTransitionContentHash = (
+          await params.journal.blobs.put(params.planContentForTransition)
+        ).ref;
+      }
+      let postCompactionAttachmentsHash: BlobRef | undefined;
+      if (params.postCompactionAttachments != null && params.postCompactionAttachments.length > 0) {
+        postCompactionAttachmentsHash = (
+          await params.journal.blobs.put(JSON.stringify(params.postCompactionAttachments))
+        ).ref;
+      }
+      let partialContinuationHash: BlobRef | undefined;
+      if (params.partialContinuationMessage != null) {
+        partialContinuationHash = (
+          await params.journal.blobs.put(JSON.stringify(params.partialContinuationMessage))
+        ).ref;
+      }
 
-    await params.journal.append({
-      kind: "turn-envelope",
-      workspaceId: params.workspaceId,
-      data: {
-        systemPromptHash: ref,
-        toolsetManifest: buildToolsetManifest(params.tools),
-        modelString: params.modelString,
-        // Hash only — resolved providerOptions may embed auth-adjacent config
-        // (headers, cache keys), so the raw object is never persisted.
-        providerOptionsHash: sha256Hex(stableStringify(params.providerOptions)),
-        thinkingLevel: params.thinkingLevel,
-        ...(params.requestHistorySequence != null && params.requestHistorySequence >= 0
-          ? { requestHistorySequence: params.requestHistorySequence }
-          : {}),
-        ...(params.sentinelToolNames != null
-          ? { sentinelToolNames: params.sentinelToolNames }
-          : {}),
-        ...(params.wireProviderName != null ? { wireProviderName: params.wireProviderName } : {}),
-        ...(params.anthropicCacheTtl != null
-          ? { anthropicCacheTtl: params.anthropicCacheTtl }
-          : {}),
-        ...(planTransitionContentHash !== undefined
-          ? {
-              planTransitionContentHash,
-              ...(params.planFilePath != null
-                ? { planTransitionFilePath: params.planFilePath }
-                : {}),
-            }
-          : {}),
-        ...(postCompactionAttachmentsHash !== undefined ? { postCompactionAttachmentsHash } : {}),
-        ...(partialContinuationHash !== undefined ? { partialContinuationHash } : {}),
-      },
+      await params.journal.append({
+        kind: "turn-envelope",
+        workspaceId: params.workspaceId,
+        data: {
+          systemPromptHash: ref,
+          toolsetManifest: buildToolsetManifest(params.tools),
+          modelString: params.modelString,
+          // Hash only — resolved providerOptions may embed auth-adjacent config
+          // (headers, cache keys), so the raw object is never persisted.
+          providerOptionsHash: sha256Hex(stableStringify(params.providerOptions)),
+          thinkingLevel: params.thinkingLevel,
+          ...(params.requestHistorySequence != null && params.requestHistorySequence >= 0
+            ? { requestHistorySequence: params.requestHistorySequence }
+            : {}),
+          ...(params.sentinelToolNames != null
+            ? { sentinelToolNames: params.sentinelToolNames }
+            : {}),
+          ...(params.wireProviderName != null ? { wireProviderName: params.wireProviderName } : {}),
+          ...(params.anthropicCacheTtl != null
+            ? { anthropicCacheTtl: params.anthropicCacheTtl }
+            : {}),
+          ...(planTransitionContentHash !== undefined
+            ? {
+                planTransitionContentHash,
+                ...(params.planFilePath != null
+                  ? { planTransitionFilePath: params.planFilePath }
+                  : {}),
+              }
+            : {}),
+          ...(postCompactionAttachmentsHash !== undefined ? { postCompactionAttachmentsHash } : {}),
+          ...(partialContinuationHash !== undefined ? { partialContinuationHash } : {}),
+        },
+      });
     });
   } catch (error) {
     log.warn("Failed to write turn-envelope durable event", {

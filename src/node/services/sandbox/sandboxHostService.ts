@@ -22,16 +22,224 @@
  */
 
 import assert from "node:assert";
+import type { BlobRef } from "@/common/types/durableEvent";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { resolveCapabilityGrants, type CapabilityGrants } from "@/common/types/capabilityGrants";
 import {
   sharedDurableEventJournal,
   type DurableEventJournal,
 } from "@/node/utils/journal/durableEventJournal";
+import {
+  canDeleteEvictedBlob,
+  makeSnapshotLatestResolver,
+  publishQuotaRetention,
+  walkBlobQuota,
+  type BlobQuotaEntry,
+} from "@/node/utils/journal/blobReclamation";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { log } from "@/node/services/log";
+import { TASK_TERMINAL_EVENT_TYPE } from "@/constants/sandboxEvents";
+import {
+  buildHandlePreview,
+  RESULT_HANDLE_BLOB_QUOTA_BYTES,
+  RESULT_HANDLE_OFFLOAD_THRESHOLD_BYTES,
+  RESULT_HANDLE_VARS_CAP_BYTES,
+  VARS_SNAPSHOT_MAX_BYTES,
+} from "@/constants/resultHandles";
+
+/**
+ * Thrown when a vars snapshot exceeds VARS_SNAPSHOT_MAX_BYTES. A distinct
+ * class so code_execution can surface a targeted "trim your vars" notice to
+ * the model instead of a generic snapshot failure.
+ */
+export class VarsSnapshotBudgetError extends Error {
+  constructor(sizeBytes: number) {
+    super(
+      `vars snapshot is ${sizeBytes} bytes, exceeding the ${VARS_SNAPSHOT_MAX_BYTES}-byte budget; ` +
+        `state was NOT persisted and this call's vars mutations (including any new handles or ` +
+        `loads) will NOT survive — remove or shrink large vars entries`
+    );
+    this.name = "VarsSnapshotBudgetError";
+  }
+}
+
+/**
+ * Per-journal incremental reclamation state (Codex round 6: both passes ran
+ * after EVERY kernel call and re-derived their candidates from the full
+ * journal, retrying deletions earlier passes already performed — quadratic
+ * work over a long session). Keyed by the journal instance, NOT the mount:
+ * mounts are rebuilt on grant/bridge changes without a process restart, and
+ * the shared journal is the one identity that lives exactly as long as the
+ * in-memory index this state depends on. A fresh process starts empty, so
+ * the first pass per concern runs a full recovery sweep — that is also what
+ * heals leftovers from crashes or failed best-effort deletions.
+ */
+interface JournalReclamationState {
+  /** Latest published snapshot ref per scope. A present key means this
+   * process already swept the scope, so each later persist reclaims exactly
+   * the one ref that just ceased being latest. */
+  latestSnapshotRef: Map<string, BlobRef>;
+  /** Handle payloads currently retained under the quota, newest first
+   * (bounded by quota/offload-threshold); null until the recovery sweep. */
+  retainedHandles: BlobQuotaEntry[] | null;
+  /** journal.blobIndexEpoch retainedHandles was derived at: foreign appends
+   * (debug CLI) move the epoch, and a stale list must be re-derived from the
+   * journal before it may authorize releases (round 14). */
+  retainedHandlesEpoch: number;
+}
+
+const reclamationStates = new WeakMap<DurableEventJournal, JournalReclamationState>();
+
+function reclamationStateFor(journal: DurableEventJournal): JournalReclamationState {
+  let state = reclamationStates.get(journal);
+  if (!state) {
+    state = { latestSnapshotRef: new Map(), retainedHandles: null, retainedHandlesEpoch: -1 };
+    reclamationStates.set(journal, state);
+  }
+  return state;
+}
+
+/**
+ * Delete blob payloads of superseded vars snapshots for one scope: only the
+ * LATEST snapshot per scope is ever restored, so older versions are pure
+ * disk growth. Incremental — after the first persist's recovery sweep, each
+ * pass considers exactly the previous latest ref (see
+ * JournalReclamationState). The whole decide→delete window holds the journal
+ * blob lock so a publisher's put→append window can never be observed.
+ *
+ * Exported for tests (restart/recovery interleavings need direct calls).
+ */
+export async function reclaimSupersededSnapshotBlobs(
+  journal: DurableEventJournal,
+  scopeKey: string,
+  latestRef: BlobRef
+): Promise<void> {
+  assert(scopeKey.length > 0, "reclaimSupersededSnapshotBlobs requires a scopeKey");
+  await journal.withBlobLock(async () => {
+    const state = reclamationStateFor(journal);
+    const previousRef = state.latestSnapshotRef.get(scopeKey);
+    // Record the new latest BEFORE deleting: a failed best-effort deletion
+    // must not be retried on every later persist (the next process's
+    // recovery sweep heals it instead).
+    state.latestSnapshotRef.set(scopeKey, latestRef);
+    if (previousRef === latestRef) return;
+
+    const index = await journal.blobMentionIndex();
+    const candidates =
+      previousRef !== undefined
+        ? [previousRef]
+        : // Recovery sweep: first persist for this scope since process start.
+          // A ref mentioned by a snapshot row of this scope IS some
+          // snapshot's blobHash — that is the kind's only ref-valued field.
+          [...index.entries()]
+            .filter(([ref, mentions]) => mentions.snapshotScopes.has(scopeKey) && ref !== latestRef)
+            .map(([ref]) => ref);
+    // Seed our own scope's latest (just published) so the common
+    // single-scope case never needs a journal read.
+    const resolveLatestSnapshot = makeSnapshotLatestResolver(journal, { scopeKey, ref: latestRef });
+    for (const ref of candidates) {
+      const deletable = await canDeleteEvictedBlob({
+        journal,
+        ref,
+        mentions: index.get(ref),
+        resolveLatestSnapshot,
+      });
+      if (!deletable) continue;
+      await journal.deleteBlobUnderLock(ref);
+    }
+  });
+}
+
+/**
+ * Enforce the per-session quota on retained result-handle blob bytes.
+ * Newest-first: recent handles keep their durable payloads (they may still be
+ * recoverable from vars or wanted for a follow-up read); once the cumulative
+ * size crosses the quota, older payloads are deleted. Incremental — pass the
+ * just-published handle and the quota walk runs over the in-memory retained
+ * list instead of the journal, so payloads evicted by earlier passes are
+ * never revisited. The first pass per process (or a call without
+ * `published`) runs a full recovery sweep. Reference safety and locking:
+ * see canDeleteEvictedBlob / reclaimSupersededSnapshotBlobs.
+ *
+ * Exported for tests (quota interleavings need synthetic event sizes).
+ */
+export async function reclaimExcessResultHandleBlobs(
+  journal: DurableEventJournal,
+  published?: BlobQuotaEntry
+): Promise<void> {
+  await journal.withBlobLock(async () => {
+    const state = reclamationStateFor(journal);
+    const index = await journal.blobMentionIndex();
+    // Epoch check AFTER blobMentionIndex(): that call detects foreign
+    // appends. A retained list from an older epoch may miss rows a foreign
+    // process (debug CLI) appended and must be re-derived from the journal.
+    const epoch = journal.blobIndexEpoch;
+    let entries: BlobQuotaEntry[];
+    if (
+      state.retainedHandles !== null &&
+      published !== undefined &&
+      state.retainedHandlesEpoch === epoch
+    ) {
+      entries = [published, ...state.retainedHandles];
+    } else {
+      // Recovery sweep: replay every result-handle row newest-first. Rows
+      // whose payloads were already reclaimed re-enter the walk, but their
+      // deletions are idempotent no-ops and this runs once per process (or
+      // per detected foreign append).
+      const events = await journal.read();
+      entries = [];
+      for (let i = events.length - 1; i >= 0; i--) {
+        const event = events[i];
+        if (event.kind !== "result-handle") continue;
+        entries.push({ ref: event.data.blobHash, size: event.data.size });
+      }
+    }
+    const { retained, evictable } = walkBlobQuota(entries, RESULT_HANDLE_BLOB_QUOTA_BYTES);
+    state.retainedHandles = retained;
+    state.retainedHandlesEpoch = epoch;
+    // Publish BEFORE deleting so joint retention decisions (ours and other
+    // quotas') always see this pass's eviction verdicts.
+    publishQuotaRetention(journal, "result-handle", new Set(retained.map((entry) => entry.ref)));
+    const resolveLatestSnapshot = makeSnapshotLatestResolver(journal);
+    for (const ref of evictable) {
+      const deletable = await canDeleteEvictedBlob({
+        journal,
+        ref,
+        mentions: index.get(ref),
+        resolveLatestSnapshot,
+      });
+      if (!deletable) continue;
+      await journal.deleteBlobUnderLock(ref);
+    }
+  });
+}
 
 export type SandboxMountLifetime = "ephemeral" | "persistent";
+
+/**
+ * Cap on undrained host events per mount. Guests that never call
+ * mux.events() must not grow the queue unboundedly across a long-lived
+ * workspace; oldest events are dropped first (the queue is best-effort —
+ * the durable terminal wake still reports every completion).
+ */
+const HOST_EVENT_QUEUE_CAP = 256;
+
+/** Terminal report of a spawned child task, delivered into the guest queue. */
+export interface TaskTerminalEventArgs {
+  taskId: string;
+  status: "completed";
+  reportMarkdown: string;
+}
+
+/** Payload for durably persisting an offloaded result handle (blob + event). */
+export interface ResultHandlePersistArgs {
+  /** Model-visible guest expression for the handle, e.g. "vars.__h3". */
+  handle: string;
+  /** Bounded excerpt; must be exactly the model-visible preview string. */
+  preview: string;
+  /** Full serialized value (JSON text) to store in the blob store. */
+  serialized: string;
+}
 
 export interface AcquireMountOptions {
   lifetime: SandboxMountLifetime;
@@ -59,6 +267,101 @@ export interface AcquireMountOptions {
   bridgeKey?: string;
 }
 
+/**
+ * Guest-side EXACT UTF-8 byte measurement (r24). Retention budgets are BYTE
+ * caps — persistVars enforces VARS_SNAPSHOT_MAX_BYTES with Buffer.byteLength
+ * — but managed-entry sizes were measured as JSON.stringify().length (UTF-16
+ * code units), under-counting multibyte payloads by up to 4x: ~3MB of
+ * CJK/emoji passed the 4MB retention cap unevicted while the real snapshot
+ * blew the 8MB byte budget, so persistVars threw VarsSnapshotBudgetError and
+ * the mount reset wiped unsnapshotted working state instead of retention
+ * evicting oldest entries.
+ *
+ * Counted with C-speed regex scans instead of a per-code-unit loop (multi-MB
+ * payloads would interpret millions of iterations) and replace("") length
+ * deltas instead of match() (which allocates one array element per match):
+ * base 1 byte per code unit; U+0080-07FF +1; U+0800-FFFF non-surrogate +2;
+ * surrogate PAIRS 4 bytes per 2 units (+1 per unit); LONE surrogates encode
+ * as the 3-byte replacement char (+2 per unit), matching Buffer.byteLength
+ * host-side.
+ */
+const GUEST_UTF8_LEN_SOURCE = `
+      function utf8Len(s) {
+        if (!/[\\u0080-\\uffff]/.test(s)) return s.length;
+        let bytes = s.length;
+        bytes += s.length - s.replace(/[\\u0080-\\u07ff]/g, "").length;
+        bytes += (s.length - s.replace(/[\\u0800-\\ud7ff\\ue000-\\uffff]/g, "").length) * 2;
+        const noPairs = s.replace(/[\\ud800-\\udbff][\\udc00-\\udfff]/g, "");
+        bytes += s.length - noPairs.length;
+        bytes += (noPairs.length - noPairs.replace(/[\\ud800-\\udfff]/g, "").length) * 2;
+        return bytes;
+      }
+      function measureVarBytes(key) {
+        // Unmeasurable (guest mutated the entry into a cycle, or deleted it)
+        // counts as 0; snapshotVars is where cycles crash-fast.
+        try {
+          const s = JSON.stringify(vars[key]);
+          return typeof s === "string" ? utf8Len(s) : 0;
+        } catch (err) {
+          return 0;
+        }
+      }
+`;
+
+/**
+ * Guest-side collision-free handle sequencing (r24). vars is guest-writable,
+ * so vars.__handleSeq can be clobbered (null, "garbage", 0, deleted,
+ * Infinity, MAX_SAFE_INTEGER). The old fallback `(isFinite ? floor : 0) + 1`
+ * restarted numbering at 1 — the next __hN handle OVERWROTE the oldest live
+ * handle — and an unsafe-integer counter lost precision on + 1. Recovery
+ * instead derives the next sequence from what actually exists: max of all
+ * live __hN keys, all __loadMeta seqs, and a sanitized
+ * (Number.isSafeInteger) counter, plus one. A clobbered counter therefore
+ * never reuses a live key — worst case it skips numbers.
+ *
+ * r27: max + 1 must not cross the safe-integer ceiling. A guest key at
+ * Number.MAX_SAFE_INTEGER (__h9007199254740991) makes the candidate unsafe;
+ * the sanitizers above then ignore the stored counter on every later call
+ * while the ceiling key keeps winning the scan, so the SAME oversized key
+ * would be minted forever — each offload overwriting the previous one.
+ * When the candidate is unsafe (or its key somehow already exists), fall
+ * back to probing for the smallest free positive integer instead: the probe
+ * is bounded by the live key count and only runs in this guest-adversarial
+ * case, at the cost of age-order accuracy for the recovered handle.
+ */
+const GUEST_NEXT_HANDLE_SEQ_SOURCE = `
+      function nextHandleSeq() {
+        let maxSeq = 0;
+        for (const k of Object.keys(vars)) {
+          const m = /^__h(\\d+)$/.exec(k);
+          if (m === null) continue;
+          const n = Number(m[1]);
+          if (Number.isSafeInteger(n) && n > maxSeq) maxSeq = n;
+        }
+        const metaRaw = vars.__loadMeta;
+        const meta = typeof metaRaw === "object" && metaRaw !== null ? metaRaw : {};
+        for (const k of Object.keys(meta)) {
+          const n = meta[k];
+          if (typeof n === "number" && Number.isSafeInteger(n) && n > maxSeq) maxSeq = n;
+        }
+        const seqRaw = vars.__handleSeq;
+        const current =
+          typeof seqRaw === "number" && Number.isSafeInteger(seqRaw) && seqRaw > 0 ? seqRaw : 0;
+        const candidate = Math.max(maxSeq, current) + 1;
+        if (
+          Number.isSafeInteger(candidate) &&
+          !Object.prototype.hasOwnProperty.call(vars, "__h" + candidate)
+        ) {
+          return candidate;
+        }
+        // Safe-integer ceiling (or key collision): probe the smallest free
+        // key instead of reusing one — see the r27 note above.
+        for (let n = 1; ; n++) {
+          if (!Object.prototype.hasOwnProperty.call(vars, "__h" + n)) return n;
+        }
+      }
+`;
+
 export class SandboxMount {
   private readonly hostEventQueue: unknown[] = [];
   private disposed = false;
@@ -74,7 +377,10 @@ export class SandboxMount {
      * serializes against scope disposal; ephemeral mounts get their own. */
     private readonly mutex: AsyncMutex = new AsyncMutex(),
     /** Effective bridge configuration identity; see AcquireMountOptions. */
-    public readonly bridgeKey?: string
+    public readonly bridgeKey?: string,
+    /** Bound by the host service; persists an offloaded result handle
+     * (full value blob + one result-handle durable event). */
+    private readonly persistHandle?: (args: ResultHandlePersistArgs) => Promise<void>
   ) {
     // Late capability settlements (fire-and-forget guest code) must not
     // re-enter the shared runtime while a later eval holds it: route their
@@ -119,6 +425,11 @@ export class SandboxMount {
   postHostEvent(event: unknown): void {
     this.assertNotDisposed("postHostEvent");
     assert(this.grants.hostEvents, "postHostEvent requires the hostEvents grant");
+    // Drop-oldest beyond the cap: a guest that never drains must not grow
+    // the queue unboundedly, and newer terminal events matter more.
+    while (this.hostEventQueue.length >= HOST_EVENT_QUEUE_CAP) {
+      this.hostEventQueue.shift();
+    }
     this.hostEventQueue.push(event);
   }
 
@@ -164,7 +475,209 @@ export class SandboxMount {
       "persistVars is only available on persistent mounts with a session dir"
     );
     const varsJson = await this.snapshotVars();
+    // Hard per-snapshot budget over ALL vars: retention only manages handle
+    // and load keys, but every key is guest-writable — without this bound a
+    // guest storing large changing values would grow the blob store without
+    // limit. Callers dispose the mount on failure, so the next acquire
+    // restores the last durable (in-budget) snapshot.
+    const sizeBytes = Buffer.byteLength(varsJson, "utf8");
+    if (sizeBytes > VARS_SNAPSHOT_MAX_BYTES) {
+      throw new VarsSnapshotBudgetError(sizeBytes);
+    }
     await this.persistSnapshot(varsJson);
+  }
+
+  /**
+   * Store an offloaded value in the guest `vars` namespace under the next
+   * monotonic handle key (__h1, __h2, ...). The sequence counter lives in
+   * vars.__handleSeq so it snapshots/restores with vars — handles stay
+   * monotonic per scope across restarts, and a guest-clobbered counter
+   * recovers without reusing live keys (GUEST_NEXT_HANDLE_SEQ_SOURCE).
+   * Returns the handle key.
+   *
+   * Also enforces `capBytes` on the total bytes retained by handle vars,
+   * evicting oldest-first (sizes measured as exact UTF-8 bytes of the JSON
+   * serialization — the unit persistVars enforces, so multibyte payloads
+   * cannot pass the cap while blowing the snapshot budget; see
+   * GUEST_UTF8_LEN_SOURCE). The just-stored handle is never evicted even
+   * when it alone exceeds the cap: the model is about to be told the handle
+   * exists and a follow-up call must find it, so the cap is soft by one
+   * entry. Eviction only drops the guest-local copy — the blob store keeps
+   * the durable one.
+   */
+  async storeResultHandle(serializedValue: string, capBytes: number): Promise<string> {
+    this.assertNotDisposed("storeResultHandle");
+    assert(this.lifetime === "persistent", "storeResultHandle requires a persistent mount");
+    assert(this.grants.vars, "storeResultHandle requires the vars grant");
+    assert(
+      Number.isSafeInteger(capBytes) && capBytes > 0,
+      "storeResultHandle: capBytes must be a positive integer"
+    );
+    const literal = JSON.stringify(serializedValue);
+    // The new handle's own size is known host-side: measure it in UTF-8
+    // bytes (the budget unit), not string length.
+    const serializedByteLength = Buffer.byteLength(serializedValue, "utf8");
+    const result = await this.runtime.eval(
+      `
+      ${GUEST_UTF8_LEN_SOURCE}
+      ${GUEST_NEXT_HANDLE_SEQ_SOURCE}
+      const value = JSON.parse(${literal});
+      // r28: a guest-primitive vars (vars = 1) silently swallows property
+      // writes in non-strict code — the handle assignment no-oped while the
+      // key was still returned, pointing the model at a handle that never
+      // existed (vars = null at least threw and failed cleanly). A
+      // primitive/null namespace is already unusable state (every read
+      // yields undefined or throws), so resetting it to a plain object is
+      // strictly an improvement — the same recovery setVarsProperty applies
+      // for loads.
+      if (typeof vars !== "object" || vars === null) vars = {};
+      const seq = nextHandleSeq();
+      vars.__handleSeq = seq;
+      const key = "__h" + seq;
+      vars[key] = value;
+      // Verify the write actually stored (a guest Proxy/setter can still
+      // swallow it): fail the eval so the caller degrades to a bounded
+      // truncated record instead of advertising a missing handle.
+      if (vars[key] !== value) throw new Error("vars handle assignment did not store");
+      const others = [];
+      for (const k of Object.keys(vars)) {
+        if (k === key) continue;
+        const m = /^__h(\\d+)$/.exec(k);
+        if (m === null) continue;
+        others.push({ key: k, n: Number(m[1]), bytes: measureVarBytes(k) });
+      }
+      others.sort((a, b) => a.n - b.n);
+      let total = ${serializedByteLength};
+      for (const h of others) total += h.bytes;
+      for (const h of others) {
+        if (total <= ${capBytes}) break;
+        delete vars[h.key];
+        total -= h.bytes;
+      }
+      return key;
+      `
+    );
+    assert(result.success, `storeResultHandle failed: ${result.error ?? "unknown error"}`);
+    const key = result.result;
+    assert(
+      typeof key === "string" && /^__h\d+$/.test(key),
+      "storeResultHandle: expected a handle key result"
+    );
+    return key;
+  }
+
+  /**
+   * r12: loads count toward the r4 vars retention cap. Registers this call's
+   * mux.load keys in `vars.__loadMeta` (key → seq from the shared
+   * `__handleSeq` counter, so handles and loads share one age order), then
+   * measures the live bytes of ALL managed entries (__hN handles + load
+   * keys) and evicts oldest-first until the total fits `capBytes`.
+   *
+   * `protectedKeys` (this call's new loads + the return handle the model was
+   * just told about) are never evicted — same "soft by current entries"
+   * rationale as storeResultHandle: the model must be able to find what it
+   * was just promised in a follow-up call. Evicting an OLD load drops only
+   * the guest-local copy the model deliberately named; unlike handles there
+   * is no blob backup, so the model must re-load the file if it still needs
+   * it (the eviction is bounded-state over convenience, mirroring r4).
+   */
+  async enforceVarsRetention(args: {
+    newLoadKeys: string[];
+    protectedKeys: string[];
+    capBytes: number;
+  }): Promise<void> {
+    this.assertNotDisposed("enforceVarsRetention");
+    assert(this.lifetime === "persistent", "enforceVarsRetention requires a persistent mount");
+    assert(this.grants.vars, "enforceVarsRetention requires the vars grant");
+    assert(
+      Number.isSafeInteger(args.capBytes) && args.capBytes > 0,
+      "enforceVarsRetention: capBytes must be a positive integer"
+    );
+    const result = await this.runtime.eval(
+      `
+      ${GUEST_UTF8_LEN_SOURCE}
+      ${GUEST_NEXT_HANDLE_SEQ_SOURCE}
+      const newLoads = ${JSON.stringify(args.newLoadKeys)};
+      const protectedKeys = ${JSON.stringify(args.protectedKeys)};
+      const cap = ${args.capBytes};
+      // Same guest-primitive recovery as storeResultHandle (r28): the
+      // registry writes below would silently no-op on a primitive vars.
+      if (typeof vars !== "object" || vars === null) vars = {};
+      const metaRaw = vars.__loadMeta;
+      // Rebuild the registry as a FRESH plain object every pass (r32): the
+      // guest can clobber vars.__loadMeta with a frozen object or a
+      // write-swallowing Proxy, and the registration writes below would then
+      // silently no-op in non-strict eval — new loads would never count
+      // toward the retention cap until the snapshot ceiling reset the
+      // kernel. Copy over only sane surviving entries; a hostile registry
+      // that throws on enumeration fails this eval (the host asserts
+      // success), an honest failure instead of a cap bypass.
+      const meta = {};
+      if (typeof metaRaw === "object" && metaRaw !== null) {
+        for (const k of Object.keys(metaRaw)) {
+          const v = metaRaw[k];
+          if (typeof v === "number" && isFinite(v)) meta[k] = v;
+        }
+      }
+      vars.__loadMeta = meta;
+      if (vars.__loadMeta !== meta) {
+        throw new Error("vars.__loadMeta write rejected by guest vars object");
+      }
+      for (const key of newLoads) {
+        const seq = nextHandleSeq();
+        vars.__handleSeq = seq;
+        meta[key] = seq;
+      }
+      // Drop registry entries whose key the guest already deleted.
+      for (const key of Object.keys(meta)) {
+        if (!Object.prototype.hasOwnProperty.call(vars, key)) delete meta[key];
+      }
+      const entries = [];
+      for (const k of Object.keys(vars)) {
+        const m = /^__h(\\d+)$/.exec(k);
+        if (m !== null) {
+          entries.push({ key: k, n: Number(m[1]), load: false, bytes: 0 });
+          continue;
+        }
+        if (Object.prototype.hasOwnProperty.call(meta, k)) {
+          const n = meta[k];
+          entries.push({
+            key: k,
+            n: typeof n === "number" && isFinite(n) ? n : 0,
+            load: true,
+            bytes: 0,
+          });
+        }
+      }
+      let total = 0;
+      for (const e of entries) {
+        e.bytes = measureVarBytes(e.key);
+        total += e.bytes;
+      }
+      entries.sort((a, b) => a.n - b.n);
+      const isProtected = {};
+      for (const k of protectedKeys) isProtected[k] = true;
+      for (const e of entries) {
+        if (total <= cap) break;
+        if (isProtected[e.key] === true) continue;
+        delete vars[e.key];
+        if (e.load) delete meta[e.key];
+        total -= e.bytes;
+      }
+      return true;
+      `
+    );
+    assert(result.success, `enforceVarsRetention failed: ${result.error ?? "unknown error"}`);
+  }
+
+  /** Durably persist an offloaded result: full-value blob + result-handle event. */
+  async persistResultHandle(args: ResultHandlePersistArgs): Promise<void> {
+    this.assertNotDisposed("persistResultHandle");
+    assert(
+      this.persistHandle,
+      "persistResultHandle is only available on persistent mounts with a session dir"
+    );
+    await this.persistHandle(args);
   }
 
   /** Per-call release: disposes ephemeral mounts, keeps persistent ones alive. */
@@ -201,6 +714,17 @@ export class SandboxHostService {
   /** Per-scope mutex serializing acquisition, exclusive runs, and disposal.
    * Kept for the process lifetime (bounded by workspace count). */
   private readonly scopeLocks = new Map<string, AsyncMutex>();
+  /**
+   * Scopes whose context reset has NOT been made durable yet: the mount was
+   * disposed but the empty-snapshot tombstone failed to publish. While a
+   * scope is pending, acquisition retries the tombstone and REFUSES to mount
+   * until it lands — restoring the latest snapshot would resurrect values
+   * the user explicitly cleared (potentially sensitive). In-memory only: a
+   * crash before the retry lands loses the flag, so the next process can
+   * still restore pre-reset state (unavoidable when durable storage is the
+   * failing component; the reset caller is told loudly).
+   */
+  private readonly pendingDiscards = new Set<string>();
 
   private lockFor(scopeKey: string): AsyncMutex {
     let lock = this.scopeLocks.get(scopeKey);
@@ -286,6 +810,21 @@ export class SandboxHostService {
     }
 
     const journal = this.journalFor(sessionDir);
+    if (this.pendingDiscards.has(scopeKey)) {
+      // A context reset disposed this scope but its durable invalidation
+      // never landed: retry it now and refuse the mount while it keeps
+      // failing (initializeVars below would otherwise restore — resurrect —
+      // the snapshot the user explicitly cleared).
+      try {
+        await this.publishDiscardTombstone(journal, scopeKey);
+      } catch (error) {
+        throw new Error(
+          `sandbox scope '${scopeKey}' is reset-pending: the context reset's durable ` +
+            `invalidation failed and retrying it failed again (mounting would resurrect ` +
+            `cleared vars): ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     const runtime = await options.runtimeFactory.create();
     const mount = new SandboxMount(
       runtime,
@@ -293,15 +832,45 @@ export class SandboxHostService {
       grants,
       scopeKey,
       async (varsJson) => {
-        const { ref, size } = await journal.blobs.put(varsJson);
-        await journal.append({
+        // Blob + event publish as one unit under the journal blob lock, so a
+        // concurrent reclamation pass can never observe the put→append window.
+        const { ref } = await journal.publishWithBlob(varsJson, (blobHash, size) => ({
           workspaceId: scopeKey,
           kind: "sandbox-vars-snapshot",
-          data: { scopeKey, blobHash: ref, size },
-        });
+          data: { scopeKey, blobHash, size },
+        }));
+        // Reclaim superseded snapshot blobs: only the LATEST snapshot per
+        // scope is ever restored, so older versions are pure disk growth
+        // (per-call persistence would otherwise retain every unique vars
+        // version for the life of the session). Failure must never fail the
+        // persist — reclamation is best-effort bookkeeping.
+        try {
+          await reclaimSupersededSnapshotBlobs(journal, scopeKey, ref);
+        } catch (error) {
+          log.debug("SandboxHostService: snapshot blob reclamation failed; continuing", { error });
+        }
       },
       lock,
-      options.bridgeKey
+      options.bridgeKey,
+      async ({ handle, preview, serialized }) => {
+        // The blob is the durable copy of the full offloaded value; the event
+        // row carries exactly the model-visible {handle, preview, size}. Both
+        // publish as one unit under the journal blob lock (see publishWithBlob).
+        const { ref, size } = await journal.publishWithBlob(serialized, (blobHash, blobSize) => ({
+          workspaceId: scopeKey,
+          kind: "result-handle",
+          data: { handle, preview, blobHash, size: blobSize },
+        }));
+        // Bound retained handle payloads per session (best-effort — failure
+        // must never fail the persist, mirroring snapshot reclamation).
+        try {
+          await reclaimExcessResultHandleBlobs(journal, { ref, size });
+        } catch (error) {
+          log.debug("SandboxHostService: result-handle blob reclamation failed; continuing", {
+            error,
+          });
+        }
+      }
     );
 
     if (grants.vars) {
@@ -325,6 +894,109 @@ export class SandboxHostService {
     const mount = this.persistentMounts.get(scopeKey);
     if (!mount || mount.isDisposed) return;
     await mount.persistVars();
+  }
+
+  /**
+   * Best-effort task-terminal delivery into a live persistent mount's
+   * host→guest queue (fire-and-forget sub-agents, Track 2 r5). No live mount
+   * / missing hostEvents grant => silently dropped: the queue is in-kernel
+   * ACCELERATION only — the durable top-level terminal wake still reports
+   * every completion, and an app restart dropping queued events is harmless
+   * for the same reason.
+   *
+   * Sub-threshold reports post synchronously (plain array push, no lock:
+   * single-threaded and drained only from inside guest evals). Oversized
+   * reports are offloaded to an r4 result handle, which requires guest evals
+   * under the scope lock — callers must NOT await behind that (a long-running
+   * eval may hold the lock), so the returned promise is intended to be
+   * consumed fire-and-forget with `.catch`.
+   */
+  async postTaskTerminalEvent(scopeKey: string, event: TaskTerminalEventArgs): Promise<void> {
+    assert(scopeKey.length > 0, "postTaskTerminalEvent requires a scopeKey");
+    assert(event.taskId.length > 0, "postTaskTerminalEvent requires a taskId");
+    const mount = this.persistentMounts.get(scopeKey);
+    if (!mount || mount.isDisposed || !mount.grants.hostEvents) return;
+
+    const size = Buffer.byteLength(event.reportMarkdown, "utf8");
+    if (size <= RESULT_HANDLE_OFFLOAD_THRESHOLD_BYTES) {
+      mount.postHostEvent({
+        type: TASK_TERMINAL_EVENT_TYPE,
+        taskId: event.taskId,
+        status: event.status,
+        reportMarkdown: event.reportMarkdown,
+      });
+      return;
+    }
+    await this.offloadTaskTerminalEvent(scopeKey, event, size);
+  }
+
+  /** Oversized-report path: store the full report at an r4 vars handle and
+   * post a {handle, preview, size} event instead of the full text. */
+  private async offloadTaskTerminalEvent(
+    scopeKey: string,
+    event: TaskTerminalEventArgs,
+    size: number
+  ): Promise<void> {
+    await using _guard = await this.lockFor(scopeKey).acquire();
+    // Re-resolve under the lock: the mount may have been rebuilt or disposed
+    // while we waited (grant change, archive). Vars survive rebuilds via
+    // snapshot/restore, so posting to the CURRENT mount stays correct.
+    const mount = this.persistentMounts.get(scopeKey);
+    if (!mount || mount.isDisposed || !mount.grants.hostEvents) return;
+
+    const preview = buildHandlePreview(event.reportMarkdown, size);
+    const base = { type: TASK_TERMINAL_EVENT_TYPE, taskId: event.taskId, status: event.status };
+    if (!mount.grants.vars) {
+      // No vars grant => nowhere to store the full report; deliver the
+      // bounded preview only (the preview text marks itself as truncated).
+      mount.postHostEvent({ ...base, reportMarkdown: preview });
+      return;
+    }
+    try {
+      const serialized = JSON.stringify(event.reportMarkdown);
+      const key = await mount.storeResultHandle(serialized, RESULT_HANDLE_VARS_CAP_BYTES);
+      const handle = `vars.${key}`;
+      try {
+        // The handle mutated vars outside an eval: persist so vars.__handleSeq
+        // stays monotonic on disk (a stale snapshot could reuse a handle
+        // number an earlier result-handle event already references).
+        await mount.persistVars();
+      } catch (error) {
+        // Same contract as the post-eval path: memory and disk must agree, so
+        // dispose and let the next acquire restore the last durable snapshot.
+        // The event is dropped with the runtime (best-effort queue), so the
+        // handle row/blob must NOT have been published yet (r28): a durable
+        // event claiming a handle the guest never learned about would corrupt
+        // provenance — publication happens below, after this commit.
+        log.warn(
+          "SandboxHostService: vars snapshot after task-terminal offload failed; disposing mount",
+          { scopeKey, error }
+        );
+        mount.dispose();
+        return;
+      }
+      try {
+        await mount.persistResultHandle({ handle, preview, serialized });
+      } catch (error) {
+        // Journaling failure only degrades durability of the FULL report; the
+        // guest handle and event still work (self-healing doctrine).
+        log.warn("SandboxHostService: task-terminal handle journaling failed; continuing", {
+          scopeKey,
+          error,
+        });
+      }
+      mount.postHostEvent({ ...base, reportHandle: { handle, preview, size } });
+    } catch (error) {
+      // Handle storage failed (e.g. guest memory limit): fall back to the
+      // bounded preview so the guest still learns of the completion.
+      log.warn("SandboxHostService: task-terminal offload failed; posting bounded preview", {
+        scopeKey,
+        error,
+      });
+      if (!mount.isDisposed) {
+        mount.postHostEvent({ ...base, reportMarkdown: preview });
+      }
+    }
   }
 
   /**
@@ -365,6 +1037,9 @@ export class SandboxHostService {
     await using _guard = await this.lockFor(scopeKey).acquire();
     const mount = this.persistentMounts.get(scopeKey);
     this.persistentMounts.delete(scopeKey);
+    // The caller is deleting the session dir: there is no snapshot left to
+    // invalidate, so a pending reset tombstone becomes moot.
+    this.pendingDiscards.delete(scopeKey);
     // The scope lock stays in the map (see scopeLocks doc): deleting it while
     // waiters hold references could let two locks govern the same scope.
     if (mount && !mount.isDisposed) {
@@ -377,6 +1052,12 @@ export class SandboxHostService {
    * WITHOUT snapshotting current vars, and supersede any earlier snapshot
    * with an empty one so the next mount starts fresh instead of restoring
    * pre-reset state. Rotation-by-append keeps the journal append-only.
+   *
+   * Throws when the tombstone cannot be made durable — the reset is only
+   * durably invalidated once the empty snapshot lands (a swallowed failure
+   * would let the next acquisition resurrect cleared, potentially sensitive
+   * values). The scope stays reset-pending (see pendingDiscards) and refuses
+   * to mount until an acquisition-time retry succeeds.
    */
   async discardScope(scopeKey: string, sessionDir: string): Promise<void> {
     await using _guard = await this.lockFor(scopeKey).acquire();
@@ -386,24 +1067,48 @@ export class SandboxHostService {
     if (mount && !mount.isDisposed) {
       mount.dispose();
     }
+    // Pending until the tombstone provably lands; cleared inside the helper.
+    this.pendingDiscards.add(scopeKey);
+    await this.publishDiscardTombstone(journal, scopeKey);
+  }
+
+  /**
+   * Publish the reset tombstone: an EMPTY vars snapshot superseding any
+   * earlier one, so restoration and replay reconstruction agree the scope
+   * was cleared. Clears the scope's reset-pending flag only after the row is
+   * durable. Caller must hold the scope lock.
+   */
+  private async publishDiscardTombstone(
+    journal: DurableEventJournal,
+    scopeKey: string
+  ): Promise<void> {
+    // Only write the empty snapshot when there is prior state to supersede;
+    // otherwise a reset in a sandbox-less workspace would create journal
+    // files for nothing.
+    const events = await journal.read();
+    const hasSnapshot = events.some(
+      (event) => event.kind === "sandbox-vars-snapshot" && event.data.scopeKey === scopeKey
+    );
+    if (!hasSnapshot) {
+      this.pendingDiscards.delete(scopeKey);
+      return;
+    }
+    const { ref } = await journal.publishWithBlob("{}", (blobHash, size) => ({
+      workspaceId: scopeKey,
+      kind: "sandbox-vars-snapshot",
+      data: { scopeKey, blobHash, size },
+    }));
+    this.pendingDiscards.delete(scopeKey);
     try {
-      // Only write the empty snapshot when there is prior state to supersede;
-      // otherwise a reset in a sandbox-less workspace would create journal
-      // files for nothing.
-      const events = await journal.read();
-      const hasSnapshot = events.some(
-        (event) => event.kind === "sandbox-vars-snapshot" && event.data.scopeKey === scopeKey
-      );
-      if (!hasSnapshot) return;
-      const { ref, size } = await journal.blobs.put("{}");
-      await journal.append({
-        workspaceId: scopeKey,
-        kind: "sandbox-vars-snapshot",
-        data: { scopeKey, blobHash: ref, size },
-      });
+      // The pre-reset snapshot is superseded like any other: reclaim it now
+      // so the per-journal latest-ref state stays true to the journal.
+      // Best-effort — a reclamation failure only delays disk cleanup and
+      // must not fail a reset whose invalidation IS durable.
+      await reclaimSupersededSnapshotBlobs(journal, scopeKey, ref);
     } catch (error) {
-      // Never let discard bookkeeping block a context reset.
-      log.warn(`SandboxHostService: vars discard failed for scope ${scopeKey}`, { error });
+      log.debug(`SandboxHostService: post-reset snapshot reclamation failed for ${scopeKey}`, {
+        error,
+      });
     }
   }
 

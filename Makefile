@@ -213,6 +213,9 @@ dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh XUM_ROOT 
 dev-server-sandbox: ## Start an isolated dev-server instance (fresh XUM_ROOT + free ports)
 	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
 
+rlm-eval: ## Run the RLM lever eval against a running dev-server sandbox (see scripts/rlm-eval/run.ts header)
+	@bun run scripts/rlm-eval/run.ts $(RLM_EVAL_ARGS)
+
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
 	@NODE_ENV=development XUM_PROFILE_REACT=$(XUM_PROFILE_REACT) bunx electron --remote-debugging-port=9222 .
 

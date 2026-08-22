@@ -1875,6 +1875,84 @@ export class HistoryService {
   }
 
   /**
+   * Append several messages as ONE durable write (a single JSONL append).
+   * Family-message delivery persists its payload row(s) and the trigger's
+   * user row atomically so a crash between separate appends cannot strand a
+   * payload without the turn that delivers it (r32) — in-process rollback
+   * cannot repair that window. Sequences are assigned in array order under
+   * the same per-workspace lock every other history mutation takes. Messages
+   * must not carry pre-assigned historySequence values.
+   */
+  async appendManyToHistory(workspaceId: string, messages: MuxMessage[]): Promise<Result<void>> {
+    assert(messages.length > 0, "appendManyToHistory requires at least one message");
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to append history",
+      async () => {
+        try {
+          const workspaceDir = this.config.getSessionDir(workspaceId);
+          await ensurePrivateDir(workspaceDir);
+          const historyPath = this.getChatHistoryPath(workspaceId);
+          for (const message of messages) {
+            assert(
+              message.metadata?.historySequence === undefined,
+              "appendManyToHistory messages must not carry pre-assigned historySequence values"
+            );
+            const nextSeqNum = await this.getNextHistorySequence(workspaceId);
+            assert(
+              isNonNegativeInteger(nextSeqNum),
+              "getNextHistorySequence must return a non-negative integer"
+            );
+            message.metadata = { ...message.metadata, historySequence: nextSeqNum };
+            this.sequenceCounters.set(workspaceId, nextSeqNum + 1);
+          }
+          await fs.appendFile(historyPath, this.serializeHistoryEntries(messages, workspaceId));
+          return Ok(undefined);
+        } catch (error) {
+          return Err(`Failed to append to history: ${getErrorMessage(error)}`);
+        }
+      }
+    );
+  }
+
+  /**
+   * Compare-and-append: append `message` only if the workspace's current tail
+   * message id still equals `expectedTailMessageId`, checked atomically under
+   * the same per-workspace lock every other history mutation takes. Used by
+   * background writers (abandoned-branch summaries) that must never land
+   * after unrelated rows: if anything else was appended (or history was
+   * rewritten) since the caller observed the tail, the append is skipped and
+   * `"tail-mismatch"` is returned instead of an error — losing the race is an
+   * expected outcome, not a failure.
+   */
+  async appendToHistoryIfTailMatches(
+    workspaceId: string,
+    message: MuxMessage,
+    expectedTailMessageId: string
+  ): Promise<Result<"appended" | "tail-mismatch">> {
+    assert(
+      expectedTailMessageId.length > 0,
+      "appendToHistoryIfTailMatches requires a non-empty expected tail id"
+    );
+    return this.withRecoveredHistoryResultLock<"appended" | "tail-mismatch">(
+      workspaceId,
+      "Failed to append history",
+      async () => {
+        const tail = await this.readLastMessagesFromFile(this.getChatHistoryPath(workspaceId), 1);
+        if (tail.length === 0 || tail[0].id !== expectedTailMessageId) {
+          return Ok("tail-mismatch");
+        }
+        const result = await this._appendToHistoryUnlocked(workspaceId, message);
+        if (!result.success) {
+          return Err(result.error);
+        }
+        await this.rotateAfterBoundaryWriteUnlocked(workspaceId, message);
+        return Ok("appended");
+      }
+    );
+  }
+
+  /**
    * Update an existing message in history by historySequence
    * Reads the active chat.jsonl, replaces the matching message, and rewrites the file.
    *
@@ -1954,6 +2032,115 @@ export class HistoryService {
         } catch (error) {
           const message = getErrorMessage(error);
           return Err(`Failed to update history: ${message}`);
+        }
+      }
+    );
+  }
+
+  /**
+   * Atomically persist a compaction boundary together with its preserved
+   * keep-recent tail copies (RLM keep-recent floor) in ONE file commit.
+   *
+   * Why one commit: the boundary write seals the previous epoch — request
+   * assembly starts at the new boundary and the summarizer already excluded
+   * the stamped tail rows from the summary. If the boundary became durable
+   * while the copies were appended row-by-row, a crash or failure between
+   * the two would leave the tail suffix permanently absent from provider
+   * context with no recovery marker. A single writeFileAtomic (temp+rename,
+   * the same primitive updateHistory relies on) commits the boundary and
+   * every copy together: either all of them land or none do.
+   *
+   * `updateExisting` selects update semantics for the summary row (streamed
+   * summaries already occupy their historySequence in the active epoch) vs
+   * append semantics; tail copies are always appended after the boundary so
+   * sealed-epoch rotation keeps them in the active file.
+   */
+  async persistBoundaryWithTailCopies(
+    workspaceId: string,
+    summaryMessage: MuxMessage,
+    tailCopies: readonly MuxMessage[],
+    updateExisting: boolean
+  ): Promise<Result<void>> {
+    assert(tailCopies.length > 0, "persistBoundaryWithTailCopies requires at least one tail copy");
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to persist compaction boundary with tail copies",
+      async () => {
+        try {
+          await ensurePrivateDir(this.config.getSessionDir(workspaceId));
+          const historyPath = this.getChatHistoryPath(workspaceId);
+          const messages = await this.readChatHistory(workspaceId);
+
+          let persistedSummary: MuxMessage | undefined;
+          if (updateExisting) {
+            // Same replace semantics as updateHistory: match by sequence and
+            // preserve boundary metadata already persisted on the row.
+            const targetSequence = summaryMessage.metadata?.historySequence;
+            if (targetSequence === undefined) {
+              return Err("Cannot update message without historySequence");
+            }
+            assert(
+              isNonNegativeInteger(targetSequence),
+              "persistBoundaryWithTailCopies requires a non-negative historySequence"
+            );
+            for (let i = 0; i < messages.length; i++) {
+              if (messages[i].metadata?.historySequence !== targetSequence) {
+                continue;
+              }
+              const preservedCompactionMetadata = getCompactionMetadataToPreserve(
+                workspaceId,
+                messages[i],
+                summaryMessage
+              );
+              messages[i] = {
+                ...summaryMessage,
+                metadata: {
+                  ...summaryMessage.metadata,
+                  ...(preservedCompactionMetadata ?? {}),
+                  historySequence: targetSequence,
+                },
+              };
+              persistedSummary = messages[i];
+              break;
+            }
+            if (persistedSummary === undefined) {
+              return Err(`No message found with historySequence ${targetSequence}`);
+            }
+          } else {
+            // Append semantics: assign the next sequence in place so callers
+            // observe it, exactly like appendToHistory does.
+            assert(
+              summaryMessage.metadata?.historySequence === undefined,
+              "persistBoundaryWithTailCopies append expects an unsequenced summary"
+            );
+            const nextSeqNum = await this.getNextHistorySequence(workspaceId);
+            summaryMessage.metadata = {
+              ...summaryMessage.metadata,
+              historySequence: nextSeqNum,
+            };
+            this.sequenceCounters.set(workspaceId, nextSeqNum + 1);
+            persistedSummary = summaryMessage;
+            messages.push(summaryMessage);
+          }
+
+          for (const copy of tailCopies) {
+            assert(
+              copy.metadata?.historySequence === undefined,
+              "persistBoundaryWithTailCopies expects unsequenced tail copies"
+            );
+            const seq = await this.getNextHistorySequence(workspaceId);
+            copy.metadata = { ...copy.metadata, historySequence: seq };
+            this.sequenceCounters.set(workspaceId, seq + 1);
+            messages.push(copy);
+          }
+
+          await writeFileAtomic(historyPath, this.serializeHistoryEntries(messages, workspaceId));
+
+          // Seal the previous epoch only after boundary + tail are durable.
+          await this.rotateAfterBoundaryWriteUnlocked(workspaceId, persistedSummary);
+          return Ok(undefined);
+        } catch (error) {
+          return Err(`Failed to persist boundary with tail copies: ${getErrorMessage(error)}`);
         }
       }
     );
@@ -2114,12 +2301,16 @@ export class HistoryService {
    *
    * By default this removes the target message and all subsequent messages. Callers can retain the
    * target message when branching a new workspace from a specific reply.
+   *
+   * Returns the removed tail (in history order) so branch-point callers (fork,
+   * edit-resend) can summarize the abandoned segment; computed under the
+   * history lock so it exactly matches what was cut.
    */
   async truncateAfterMessage(
     workspaceId: string,
     messageId: string,
     options?: { keepTargetMessage?: boolean }
-  ): Promise<Result<void>> {
+  ): Promise<Result<{ removedMessages: MuxMessage[] }>> {
     return this.withRecoveredHistoryResultLock(
       workspaceId,
       "Failed to truncate history",
@@ -2139,16 +2330,16 @@ export class HistoryService {
             return this.truncateAfterArchivedMessageUnlocked(
               workspaceId,
               messageId,
-              keepTargetMessage
+              keepTargetMessage,
+              messages
             );
           }
 
           // Response-level forks branch from the selected assistant turn, so they retain the target
           // message while discarding anything that came after it.
-          const truncatedMessages = messages.slice(
-            0,
-            keepTargetMessage ? messageIndex + 1 : messageIndex
-          );
+          const cutIndex = keepTargetMessage ? messageIndex + 1 : messageIndex;
+          const truncatedMessages = messages.slice(0, cutIndex);
+          const removedMessages = messages.slice(cutIndex);
 
           // Rewrite the history file with truncated messages
           const historyPath = this.getChatHistoryPath(workspaceId);
@@ -2192,7 +2383,7 @@ export class HistoryService {
           );
           this.sequenceCounters.set(workspaceId, nextSeq);
 
-          return Ok(undefined);
+          return Ok({ removedMessages });
         } catch (error) {
           const message = getErrorMessage(error);
           return Err(`Failed to truncate history: ${message}`);
@@ -2210,8 +2401,10 @@ export class HistoryService {
   private async truncateAfterArchivedMessageUnlocked(
     workspaceId: string,
     messageId: string,
-    keepTargetMessage: boolean
-  ): Promise<Result<void>> {
+    keepTargetMessage: boolean,
+    /** Active-epoch messages already read by the caller; all of them are discarded on this branch. */
+    activeEpochMessages: MuxMessage[]
+  ): Promise<Result<{ removedMessages: MuxMessage[] }>> {
     try {
       const archiveMessages = await this.readArchivedHistory(workspaceId);
       const messageIndex = archiveMessages.findIndex((msg) => msg.id === messageId);
@@ -2220,10 +2413,10 @@ export class HistoryService {
         return Err(`Message with ID ${messageId} not found in history`);
       }
 
-      const truncatedMessages = archiveMessages.slice(
-        0,
-        keepTargetMessage ? messageIndex + 1 : messageIndex
-      );
+      const cutIndex = keepTargetMessage ? messageIndex + 1 : messageIndex;
+      const truncatedMessages = archiveMessages.slice(0, cutIndex);
+      // The removed tail spans the archive remainder plus the whole active epoch.
+      const removedMessages = [...archiveMessages.slice(cutIndex), ...activeEpochMessages];
 
       await this.rewriteHistoryFilesUnlocked(
         workspaceId,
@@ -2262,7 +2455,7 @@ export class HistoryService {
       );
       this.sequenceCounters.set(workspaceId, nextSeq);
 
-      return Ok(undefined);
+      return Ok({ removedMessages });
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to truncate history: ${message}`);

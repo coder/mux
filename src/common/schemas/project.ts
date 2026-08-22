@@ -181,6 +181,10 @@ export const WorkspaceConfigSchema = z.object({
     .object({
       programmaticToolCalling: z.boolean().optional(),
       programmaticToolCallingExclusive: z.boolean().optional(),
+      // RLM mode is stamped at spawn so child sessions keep RLM-gated features
+      // (persistent sandbox kernel, family messaging tools) across app restarts
+      // without depending on live frontend experiment state.
+      rlm: z.boolean().optional(),
       advisorTool: z.boolean().optional(),
       dynamicWorkflows: z.boolean().optional(),
     })

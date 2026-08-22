@@ -506,12 +506,14 @@ export class AgentPluginHookService {
           data: { hookId, placement: "system-prompt", text: context },
         });
       } else {
-        const { ref } = await args.journal.blobs.put(context);
-        await args.journal.append({
+        // publishWithBlob: put + append under the journal blob lock so a
+        // concurrent reclamation pass can never treat the freshly stored
+        // blob as unreferenced (content addressing can share hashes).
+        await args.journal.publishWithBlob(context, (ref) => ({
           workspaceId: args.workspaceId,
           kind: "hook-context",
           data: { hookId, placement: "system-prompt", blobHash: ref },
-        });
+        }));
       }
     } catch (error) {
       log.warn(

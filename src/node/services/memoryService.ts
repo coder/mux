@@ -41,8 +41,21 @@ import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import {
+  memoryMutationLockKey,
+  withTargetMutationLock,
+} from "@/node/services/refinement/targetMutationLocks";
 import { memoryLogicalKey, type MemoryMetaService } from "@/node/services/memoryMeta";
+import {
+  REFINEMENT_CAPTURE_MAX_FILES,
+  REFINEMENT_CAPTURE_MAX_TOTAL_BYTES,
+  type MemoryRefinementAction,
+} from "@/common/types/refinement";
+import {
+  appendRefinementEvent,
+  type RefinementFileCapture,
+  type RefinementInverseDraft,
+} from "@/node/services/refinement/refinementJournal";
 import {
   escapeXmlAttribute,
   selectHotMemories,
@@ -119,11 +132,75 @@ interface ParsedMemoryPath {
 /** Thrown for expected, recoverable command errors; converted to { success: false }. */
 class MemoryCommandError extends Error {}
 
+/**
+ * Delete-inverse capture cannot represent the subtree faithfully (dotfile,
+ * non-regular entry, empty dir, over-budget): skip journaling, never the
+ * delete itself.
+ */
+class MemoryCaptureSkippedError extends Error {}
+
 // Rejected BEFORE resolution: URL-encoded '.', '/', '\' could smuggle traversal
 // through downstream decoding layers.
 const ENCODED_TRAVERSAL_PATTERN = /%2e|%2f|%5c/i;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_PATTERN = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Refuse renaming a directory to a destination equal to or inside its own
+ * subtree (r21): the source exists and the exact destination doesn't, so the
+ * existence checks alone accepted 'notes' -> 'notes/archive/notes' — the
+ * filesystem rejects the move only AFTER store.rename mkdirs the destination
+ * parent INSIDE the source (pollution), and a staged proposal consumed the
+ * approved set at apply. Shared verbatim by validateMutation and the real
+ * rename handler (round-19/20 zero-drift doctrine; both have store access).
+ *
+ * Two layers (r22): the lexical segment comparison ('notes-x' must not match
+ * 'notes') is a cheap first check, but it trusts SPELLING — on a
+ * case-insensitive filesystem 'Notes' -> 'notes/archive/notes' resolves to
+ * the same source dir and bypassed it, and an in-root symlink alias of the
+ * source bypasses any string comparison on any filesystem. The second layer
+ * therefore compares physical identities: every EXISTING ancestor of the
+ * destination is stat'ed (following symlinks) and refused when it is the
+ * source directory itself (same dev+ino) — case variants and aliases resolve
+ * to the source's identity regardless of spelling. Missing ancestors are
+ * skipped: a nonexistent path can't be (or contain) the live source dir.
+ */
+async function assertRenameDestinationOutsideDirSource(args: {
+  store: MemoryStore;
+  sourceKind: "file" | "dir";
+  sourceRelPath: string;
+  destRelPath: string;
+  sourceVirtualPath: string;
+  destVirtualPath: string;
+}): Promise<void> {
+  if (args.sourceKind !== "dir") return;
+  const refuse = (): never => {
+    throw new MemoryCommandError(
+      `Cannot rename ${args.sourceVirtualPath} to ${args.destVirtualPath}: a directory cannot be moved inside itself`
+    );
+  };
+  if (
+    args.destRelPath === args.sourceRelPath ||
+    args.destRelPath.startsWith(`${args.sourceRelPath}/`)
+  ) {
+    refuse();
+  }
+  const sourceStat = await fsPromises.stat(args.store.physicalPath(args.sourceRelPath));
+  const segments = args.destRelPath.split("/");
+  for (let depth = 1; depth <= segments.length; depth++) {
+    const ancestorRel = segments.slice(0, depth).join("/");
+    let ancestorStat;
+    try {
+      ancestorStat = await fsPromises.stat(args.store.physicalPath(ancestorRel));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (ancestorStat.dev === sourceStat.dev && ancestorStat.ino === sourceStat.ino) {
+      refuse();
+    }
+  }
+}
 
 /**
  * Parse + validate a virtual memory path. Throws MemoryCommandError with a
@@ -242,6 +319,8 @@ type MemoryEntryKind = "file" | "dir" | null;
 interface MemoryStore {
   /** Physical root; used as the mutex key. */
   readonly physicalRoot: string;
+  /** Absolute physical path of an entry (refinement inverses restore by exact path). */
+  physicalPath(relPath: string): string;
   /**
    * Validate the root before use without creating it. Host-local roots currently
    * need no root-level checks; path containment is enforced per target.
@@ -298,6 +377,10 @@ class LocalMemoryStore implements MemoryStore {
 
   private abs(relPath: string): string {
     return relPath === "" ? this.physicalRoot : path.join(this.physicalRoot, ...relPath.split("/"));
+  }
+
+  physicalPath(relPath: string): string {
+    return this.abs(relPath);
   }
 
   assertRootSafe(): Promise<void> {
@@ -456,8 +539,16 @@ export function extractMemoryDescription(content: string): string {
 // ---------------------------------------------------------------------------
 
 export class MemoryService extends EventEmitter {
-  /** Serializes mutating commands per physical root (agent tool + UI writes). */
-  private readonly locks = new MutexMap<string>();
+  /**
+   * Canonical key into the process-wide target mutation registry: mutating
+   * commands (agent tool + UI writes) share this lock with the refinement
+   * rollback engine's verify+apply window, so a rollback can never silently
+   * overwrite a write that landed after its divergence check (see
+   * targetMutationLocks.ts for key derivation and lock ordering).
+   */
+  private storeLockKey(store: MemoryStore): string {
+    return memoryMutationLockKey(this.config.rootDir, store.physicalRoot);
+  }
   constructor(
     private readonly config: Config,
     /** Host-local sidecar for pins + usage stats, recorded at this chokepoint. */
@@ -623,6 +714,141 @@ export class MemoryService extends EventEmitter {
     return parsed.scope;
   }
 
+  /**
+   * Append the invertible `refinement` row for one memory mutation (RLM r2).
+   *
+   * Rows land in the ACTING workspace's session journal even though memory
+   * files can be global/project-scoped: the journal is per-session, so
+   * cross-workspace edits to a shared file are attributed to (and invertible
+   * from) whichever workspace made them — the intended v1 scope. When the
+   * context has no workspace, there is no session journal; skip (log-only).
+   * Never throws: journaling failures must not fail the memory command.
+   */
+  private async journalRefinement(
+    ctx: MemoryScopeContext,
+    action: MemoryRefinementAction,
+    inverse: RefinementInverseDraft,
+    actor: MemoryActor,
+    toolCallId?: string,
+    postFiles?: RefinementFileCapture[]
+  ): Promise<void> {
+    if (!ctx.workspaceId) {
+      log.debug("[MemoryService] skipping refinement journal: no workspace session", {
+        op: action.op,
+      });
+      return;
+    }
+    await appendRefinementEvent({
+      sessionDir: this.config.getSessionDir(ctx.workspaceId),
+      workspaceId: ctx.workspaceId,
+      kind: "memory",
+      action,
+      inverse,
+      evidence: {
+        toolName: "memory",
+        actor,
+        ...(toolCallId !== undefined ? { toolCallId } : {}),
+      },
+      ...(postFiles !== undefined ? { postFiles } : {}),
+    });
+  }
+
+  /**
+   * Capture the restore payload for a delete (file or recursive directory)
+   * BEFORE it is removed. Returns null when capture fails or the subtree
+   * cannot be represented faithfully by a files-only text inverse: the delete
+   * then proceeds unjournaled (log-only) rather than failing the user-facing
+   * command. A PARTIAL inverse is worse than none — rollback would
+   * "successfully" restore a subset and permanently lose the rest — so the
+   * directory walk is strict (unlike listFiles, which silently drops
+   * dotfiles, truncates at the scope cap, and lists unreadable dirs as
+   * empty). Same doctrine as agent_skill_delete's capture.
+   */
+  private async captureDeleteInverse(
+    store: MemoryStore,
+    relPath: string,
+    kind: MemoryEntryKind
+  ): Promise<RefinementInverseDraft | null> {
+    try {
+      const capture = async (fileRelPath: string): Promise<RefinementFileCapture> => {
+        const content = await this.readBoundedTextFile(store, fileRelPath, fileRelPath);
+        // Lossy utf-8 decode (externally created binary file): restoring the
+        // decoded text would corrupt it on rollback. Files legitimately
+        // containing U+FFFD are a rare false positive whose only cost is an
+        // unjournaled delete.
+        if (content.includes("\uFFFD")) {
+          throw new MemoryCaptureSkippedError(`'${fileRelPath}' is not valid UTF-8 (binary)`);
+        }
+        return { path: store.physicalPath(fileRelPath), content };
+      };
+      if (kind === "file") {
+        return { op: "restore-files", files: [await capture(relPath)] };
+      }
+      // Directory: strict complete walk over the PHYSICAL subtree.
+      const fileRelPaths: string[] = [];
+      const walk = async (dirRel: string): Promise<void> => {
+        // An unreadable dir throws here → capture is skipped (never partial).
+        const entries = await fsPromises.readdir(store.physicalPath(dirRel), {
+          withFileTypes: true,
+        });
+        if (entries.length === 0) {
+          // restore-files recreates parent dirs of files only; an empty dir
+          // would silently vanish from a rollback-restored subtree.
+          throw new MemoryCaptureSkippedError(`'${dirRel}' is an empty directory`);
+        }
+        entries.sort((a, b) => (a.name < b.name ? -1 : 1));
+        for (const entry of entries) {
+          const childRel = `${dirRel}/${entry.name}`;
+          if (entry.name.startsWith(".")) {
+            // The memory grammar cannot address dotfiles, so a restored one
+            // could never be managed (or re-deleted) through MemoryService.
+            throw new MemoryCaptureSkippedError(`'${childRel}' is a dotfile`);
+          }
+          if (entry.isDirectory()) {
+            await walk(childRel);
+          } else if (entry.isFile()) {
+            if (fileRelPaths.length >= REFINEMENT_CAPTURE_MAX_FILES) {
+              throw new MemoryCaptureSkippedError(
+                `subtree has more than ${REFINEMENT_CAPTURE_MAX_FILES} files`
+              );
+            }
+            fileRelPaths.push(childRel);
+          } else {
+            // Symlink/socket/fifo: unrepresentable in a restore-files inverse.
+            throw new MemoryCaptureSkippedError(`'${childRel}' is not a regular file`);
+          }
+        }
+      };
+      await walk(relPath);
+      const captures: RefinementFileCapture[] = [];
+      let totalBytes = 0;
+      for (const file of fileRelPaths) {
+        const captured = await capture(file);
+        totalBytes += Buffer.byteLength(captured.content, "utf-8");
+        if (totalBytes > REFINEMENT_CAPTURE_MAX_TOTAL_BYTES) {
+          throw new MemoryCaptureSkippedError(
+            `subtree exceeds ${REFINEMENT_CAPTURE_MAX_TOTAL_BYTES} total bytes`
+          );
+        }
+        captures.push(captured);
+      }
+      return { op: "restore-files", files: captures };
+    } catch (error) {
+      if (error instanceof MemoryCaptureSkippedError) {
+        log.debug("[MemoryService] skipping delete inverse: unrepresentable subtree", {
+          relPath,
+          reason: error.message,
+        });
+        return null;
+      }
+      log.debug("[MemoryService] failed to capture delete inverse; delete proceeds unjournaled", {
+        relPath,
+        error,
+      });
+      return null;
+    }
+  }
+
   private emitChange(
     ctx: MemoryScopeContext,
     scope: MemoryScope,
@@ -701,7 +927,8 @@ export class MemoryService extends EventEmitter {
     ctx: MemoryScopeContext,
     virtualPath: string,
     fileText: string,
-    actor: MemoryActor
+    actor: MemoryActor,
+    toolCallId?: string
   ): Promise<MemoryCommandResult> {
     return this.runCommand(async () => {
       const parsed = parseMemoryPath(virtualPath);
@@ -709,7 +936,7 @@ export class MemoryService extends EventEmitter {
       assertWithinFileSizeCap(fileText);
       // create is a write: materialize the scope root on first use.
       const store = await this.resolveStore(ctx, scope, parsed.relPath, { createRoot: true });
-      return this.locks.withLock(store.physicalRoot, async () => {
+      return withTargetMutationLock(this.config.rootDir, this.storeLockKey(store), async () => {
         const existing = await store.kind(parsed.relPath);
         if (existing !== null) {
           throw new MemoryCommandError(
@@ -723,6 +950,15 @@ export class MemoryService extends EventEmitter {
           );
         }
         await store.writeFile(parsed.relPath, fileText);
+        // Row is written before the create is acknowledged (mutation → row → ack).
+        await this.journalRefinement(
+          ctx,
+          { op: "create", path: toVirtualPath(scope, parsed.relPath) },
+          { op: "delete-files", paths: [store.physicalPath(parsed.relPath)] },
+          actor,
+          toolCallId,
+          [{ path: store.physicalPath(parsed.relPath), content: fileText }]
+        );
         await this.recordUsage(ctx, scope, parsed.relPath, { write: true });
         this.emitChange(ctx, scope, parsed.relPath, actor);
         return {
@@ -738,7 +974,8 @@ export class MemoryService extends EventEmitter {
     virtualPath: string,
     oldStr: string,
     newStr: string,
-    actor: MemoryActor
+    actor: MemoryActor,
+    toolCallId?: string
   ): Promise<MemoryCommandResult> {
     return this.runCommand(async () => {
       const parsed = parseMemoryPath(virtualPath);
@@ -747,23 +984,23 @@ export class MemoryService extends EventEmitter {
         throw new MemoryCommandError("old_str must not be empty");
       }
       const store = await this.resolveStore(ctx, scope, parsed.relPath);
-      return this.locks.withLock(store.physicalRoot, async () => {
+      return withTargetMutationLock(this.config.rootDir, this.storeLockKey(store), async () => {
         const content = await this.readTextFileForEdit(store, parsed.relPath, virtualPath);
-        const occurrences = countOccurrences(content, oldStr);
-        if (occurrences === 0) {
-          throw new MemoryCommandError(
-            `No replacement was performed: old_str was not found in ${virtualPath}`
-          );
-        }
-        if (occurrences > 1) {
-          const lines = findMatchingLines(content, oldStr);
-          throw new MemoryCommandError(
-            `No replacement was performed: old_str matches ${occurrences} locations (lines ${lines.join(", ")}) in ${virtualPath}. Provide a longer, unique old_str.`
-          );
-        }
-        const updated = content.replace(oldStr, newStr);
+        const updated = computeStrReplaceUpdate(content, oldStr, newStr, virtualPath);
         assertWithinFileSizeCap(updated);
         await store.writeFile(parsed.relPath, updated);
+        // Row is written before the edit is acknowledged (mutation → row → ack).
+        await this.journalRefinement(
+          ctx,
+          { op: "str_replace", path: toVirtualPath(scope, parsed.relPath) },
+          {
+            op: "restore-files",
+            files: [{ path: store.physicalPath(parsed.relPath), content }],
+          },
+          actor,
+          toolCallId,
+          [{ path: store.physicalPath(parsed.relPath), content: updated }]
+        );
         await this.recordUsage(ctx, scope, parsed.relPath, { write: true });
         this.emitChange(ctx, scope, parsed.relPath, actor);
         return { success: true as const, output: `Edited ${toVirtualPath(scope, parsed.relPath)}` };
@@ -776,52 +1013,175 @@ export class MemoryService extends EventEmitter {
     virtualPath: string,
     insertLine: number,
     insertText: string,
-    actor: MemoryActor
+    actor: MemoryActor,
+    toolCallId?: string
   ): Promise<MemoryCommandResult> {
     return this.runCommand(async () => {
       const parsed = parseMemoryPath(virtualPath);
       const scope = this.requireFilePath(parsed, virtualPath);
       const store = await this.resolveStore(ctx, scope, parsed.relPath);
-      return this.locks.withLock(store.physicalRoot, async () => {
+      return withTargetMutationLock(this.config.rootDir, this.storeLockKey(store), async () => {
         const content = await this.readTextFileForEdit(store, parsed.relPath, virtualPath);
-        const lines = content === "" ? [] : content.split("\n");
-        if (insertLine < 0 || insertLine > lines.length) {
-          throw new MemoryCommandError(
-            `insert_line must be between 0 and ${lines.length} (0 inserts at the top; N inserts after line N)`
-          );
-        }
-        const insertedLines = insertText.split("\n");
-        // Trailing newline in insert_text would otherwise produce a stray blank line.
-        if (insertedLines.at(-1) === "") insertedLines.pop();
-        lines.splice(insertLine, 0, ...insertedLines);
-        const updated = lines.join("\n");
+        const { updated, insertedLineCount } = computeInsertUpdate(content, insertLine, insertText);
         assertWithinFileSizeCap(updated);
         await store.writeFile(parsed.relPath, updated);
+        // Row is written before the edit is acknowledged (mutation → row → ack).
+        await this.journalRefinement(
+          ctx,
+          { op: "insert", path: toVirtualPath(scope, parsed.relPath) },
+          {
+            op: "restore-files",
+            files: [{ path: store.physicalPath(parsed.relPath), content }],
+          },
+          actor,
+          toolCallId,
+          [{ path: store.physicalPath(parsed.relPath), content: updated }]
+        );
         await this.recordUsage(ctx, scope, parsed.relPath, { write: true });
         this.emitChange(ctx, scope, parsed.relPath, actor);
         return {
           success: true as const,
-          output: `Inserted ${insertedLines.length} line(s) into ${toVirtualPath(scope, parsed.relPath)} after line ${insertLine}`,
+          output: `Inserted ${insertedLineCount} line(s) into ${toVirtualPath(scope, parsed.relPath)} after line ${insertLine}`,
         };
       });
     });
   }
 
+  /**
+   * Non-mutating validation for a proposed mutation: runs the same
+   * path/arg/occurrence checks as the real command and simulates the
+   * RESULTING file against the size cap (reading the current target for
+   * state-dependent commands) without writing, journaling, or recording
+   * usage. Used by refine staging so a proposal the write path would reject
+   * can never be staged, rendered, and approved. Advisory by design: no
+   * mutation lock is taken (the state can change between staging and apply,
+   * where the real command re-validates authoritatively).
+   */
+  async validateMutation(
+    ctx: MemoryScopeContext,
+    command:
+      | { command: "create"; path: string; file_text: string }
+      | { command: "str_replace"; path: string; old_str: string; new_str: string }
+      | { command: "insert"; path: string; insert_line: number; insert_text: string }
+      | { command: "delete"; path: string }
+      | { command: "rename"; path: string; new_path: string }
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const result = await this.runCommand(async () => {
+      const parsed = parseMemoryPath(command.path);
+      const scope = this.requireFilePath(parsed, command.path);
+      switch (command.command) {
+        case "create": {
+          assertWithinFileSizeCap(command.file_text);
+          // No createRoot: validation must not materialize scope roots.
+          const store = this.getStore(ctx, scope);
+          await store.assertContained(parsed.relPath);
+          const existing = await store.kind(parsed.relPath);
+          if (existing !== null) {
+            throw new MemoryCommandError(
+              `A ${existing === "dir" ? "directory" : "file"} already exists at ${command.path}. To overwrite a file, delete it first, then create it.`
+            );
+          }
+          // Mirrors create(): a full scope rejects new files (same listFiles
+          // source; listFiles tolerates a missing root by returning []).
+          const files = await store.listFiles();
+          if (files.length >= MEMORY_MAX_FILES_PER_SCOPE) {
+            throw new MemoryCommandError(
+              `The ${scope} memory scope is full (${MEMORY_MAX_FILES_PER_SCOPE} files); delete unused files first`
+            );
+          }
+          break;
+        }
+        case "str_replace": {
+          if (command.old_str.length === 0) {
+            throw new MemoryCommandError("old_str must not be empty");
+          }
+          const store = await this.resolveStore(ctx, scope, parsed.relPath);
+          const content = await this.readTextFileForEdit(store, parsed.relPath, command.path);
+          assertWithinFileSizeCap(
+            computeStrReplaceUpdate(content, command.old_str, command.new_str, command.path)
+          );
+          break;
+        }
+        case "insert": {
+          const store = await this.resolveStore(ctx, scope, parsed.relPath);
+          const content = await this.readTextFileForEdit(store, parsed.relPath, command.path);
+          assertWithinFileSizeCap(
+            computeInsertUpdate(content, command.insert_line, command.insert_text).updated
+          );
+          break;
+        }
+        case "delete": {
+          // Mirrors deletePath: the target must exist (file or directory).
+          const store = await this.resolveStore(ctx, scope, parsed.relPath);
+          const kind = await store.kind(parsed.relPath);
+          if (kind === null) {
+            throw new MemoryCommandError(`No memory file or directory at ${command.path}`);
+          }
+          break;
+        }
+        case "rename": {
+          // Mirrors rename: same-scope only, existing source, free destination.
+          const newParsed = parseMemoryPath(command.new_path);
+          this.requireFilePath(newParsed, command.new_path);
+          if (newParsed.scope !== scope) {
+            throw new MemoryCommandError(
+              `Cannot rename across memory scopes (${scope} -> ${String(newParsed.scope)}); create the file in the target scope instead`
+            );
+          }
+          const store = await this.resolveStore(ctx, scope, parsed.relPath);
+          await store.assertContained(newParsed.relPath);
+          const oldKind = await store.kind(parsed.relPath);
+          if (oldKind === null) {
+            throw new MemoryCommandError(`No memory file or directory at ${command.path}`);
+          }
+          await assertRenameDestinationOutsideDirSource({
+            store,
+            sourceKind: oldKind,
+            sourceRelPath: parsed.relPath,
+            destRelPath: newParsed.relPath,
+            sourceVirtualPath: command.path,
+            destVirtualPath: command.new_path,
+          });
+          const newKind = await store.kind(newParsed.relPath);
+          if (newKind !== null) {
+            throw new MemoryCommandError(`Destination ${command.new_path} already exists`);
+          }
+          break;
+        }
+      }
+      return { success: true as const, output: "valid" };
+    });
+    return result.success ? { ok: true } : { ok: false, error: result.error };
+  }
+
   async deletePath(
     ctx: MemoryScopeContext,
     virtualPath: string,
-    actor: MemoryActor
+    actor: MemoryActor,
+    toolCallId?: string
   ): Promise<MemoryCommandResult> {
     return this.runCommand(async () => {
       const parsed = parseMemoryPath(virtualPath);
       const scope = this.requireFilePath(parsed, virtualPath);
       const store = await this.resolveStore(ctx, scope, parsed.relPath);
-      return this.locks.withLock(store.physicalRoot, async () => {
+      return withTargetMutationLock(this.config.rootDir, this.storeLockKey(store), async () => {
         const kind = await store.kind(parsed.relPath);
         if (kind === null) {
           throw new MemoryCommandError(`No memory file or directory at ${virtualPath}`);
         }
+        // Prior contents must be captured before removal; the row itself is
+        // written after the mutation succeeds and before it is acknowledged.
+        const inverse = await this.captureDeleteInverse(store, parsed.relPath, kind);
         await store.remove(parsed.relPath);
+        if (inverse !== null) {
+          await this.journalRefinement(
+            ctx,
+            { op: "delete", path: toVirtualPath(scope, parsed.relPath) },
+            inverse,
+            actor,
+            toolCallId
+          );
+        }
         await this.recordDelete(ctx, scope, parsed.relPath);
         this.emitChange(ctx, scope, parsed.relPath, actor);
         return {
@@ -836,7 +1196,8 @@ export class MemoryService extends EventEmitter {
     ctx: MemoryScopeContext,
     oldVirtualPath: string,
     newVirtualPath: string,
-    actor: MemoryActor
+    actor: MemoryActor,
+    toolCallId?: string
   ): Promise<MemoryCommandResult> {
     return this.runCommand(async () => {
       const oldParsed = parseMemoryPath(oldVirtualPath);
@@ -851,16 +1212,43 @@ export class MemoryService extends EventEmitter {
       }
       const store = await this.resolveStore(ctx, scope, oldParsed.relPath);
       await store.assertContained(newParsed.relPath);
-      return this.locks.withLock(store.physicalRoot, async () => {
+      return withTargetMutationLock(this.config.rootDir, this.storeLockKey(store), async () => {
         const oldKind = await store.kind(oldParsed.relPath);
         if (oldKind === null) {
           throw new MemoryCommandError(`No memory file or directory at ${oldVirtualPath}`);
         }
+        // Pre-flight (mirrored in validateMutation): store.rename would mkdir
+        // the destination parent INSIDE the source before the filesystem
+        // rejects the move — refuse cleanly instead of polluting the source.
+        await assertRenameDestinationOutsideDirSource({
+          store,
+          sourceKind: oldKind,
+          sourceRelPath: oldParsed.relPath,
+          destRelPath: newParsed.relPath,
+          sourceVirtualPath: oldVirtualPath,
+          destVirtualPath: newVirtualPath,
+        });
         const newKind = await store.kind(newParsed.relPath);
         if (newKind !== null) {
           throw new MemoryCommandError(`Destination ${newVirtualPath} already exists`);
         }
         await store.rename(oldParsed.relPath, newParsed.relPath);
+        // Row is written before the rename is acknowledged (mutation → row → ack).
+        await this.journalRefinement(
+          ctx,
+          {
+            op: "rename",
+            path: toVirtualPath(scope, oldParsed.relPath),
+            newPath: toVirtualPath(scope, newParsed.relPath),
+          },
+          {
+            op: "rename",
+            from: store.physicalPath(newParsed.relPath),
+            to: store.physicalPath(oldParsed.relPath),
+          },
+          actor,
+          toolCallId
+        );
         await this.recordRename(ctx, scope, oldParsed.relPath, newParsed.relPath);
         this.emitChange(ctx, scope, oldParsed.relPath, actor);
         this.emitChange(ctx, scope, newParsed.relPath, actor);
@@ -961,37 +1349,41 @@ export class MemoryService extends EventEmitter {
       assertWithinFileSizeCap(content);
       // UI save can create new files: materialize the scope root on first use.
       const store = await this.resolveStore(ctx, scope, parsed.relPath, { createRoot: true });
-      return await this.locks.withLock(store.physicalRoot, async () => {
-        const kind = await store.kind(parsed.relPath);
-        if (kind === "dir") {
-          throw new MemoryCommandError(`${virtualPath} is a directory, not a file`);
+      return await withTargetMutationLock(
+        this.config.rootDir,
+        this.storeLockKey(store),
+        async () => {
+          const kind = await store.kind(parsed.relPath);
+          if (kind === "dir") {
+            throw new MemoryCommandError(`${virtualPath} is a directory, not a file`);
+          }
+          if (expectedSha256 === null) {
+            if (kind !== null) {
+              return conflict(`A file already exists at ${virtualPath}; reload before saving`);
+            }
+            const files = await store.listFiles();
+            if (files.length >= MEMORY_MAX_FILES_PER_SCOPE) {
+              throw new MemoryCommandError(
+                `The ${scope} memory scope is full (${MEMORY_MAX_FILES_PER_SCOPE} files); delete unused files first`
+              );
+            }
+          } else {
+            if (kind === null) {
+              return conflict(`${virtualPath} no longer exists; it may have been deleted`);
+            }
+            const current = await this.readBoundedTextFile(store, parsed.relPath, virtualPath);
+            if (sha256Hex(current) !== expectedSha256) {
+              return conflict(
+                `${virtualPath} changed since it was loaded; reload and re-apply your edits`
+              );
+            }
+          }
+          await store.writeFile(parsed.relPath, content);
+          await this.recordUsage(ctx, scope, parsed.relPath, { write: true });
+          this.emitChange(ctx, scope, parsed.relPath, actor);
+          return { success: true as const, data: { sha256: sha256Hex(content) } };
         }
-        if (expectedSha256 === null) {
-          if (kind !== null) {
-            return conflict(`A file already exists at ${virtualPath}; reload before saving`);
-          }
-          const files = await store.listFiles();
-          if (files.length >= MEMORY_MAX_FILES_PER_SCOPE) {
-            throw new MemoryCommandError(
-              `The ${scope} memory scope is full (${MEMORY_MAX_FILES_PER_SCOPE} files); delete unused files first`
-            );
-          }
-        } else {
-          if (kind === null) {
-            return conflict(`${virtualPath} no longer exists; it may have been deleted`);
-          }
-          const current = await this.readBoundedTextFile(store, parsed.relPath, virtualPath);
-          if (sha256Hex(current) !== expectedSha256) {
-            return conflict(
-              `${virtualPath} changed since it was loaded; reload and re-apply your edits`
-            );
-          }
-        }
-        await store.writeFile(parsed.relPath, content);
-        await this.recordUsage(ctx, scope, parsed.relPath, { write: true });
-        this.emitChange(ctx, scope, parsed.relPath, actor);
-        return { success: true as const, data: { sha256: sha256Hex(content) } };
-      });
+      );
     } catch (error) {
       const message =
         error instanceof MemoryCommandError
@@ -1156,6 +1548,51 @@ export function formatMemoryIndexForToolDescription(
 
 function sha256Hex(content: string): string {
   return createHash("sha256").update(content, "utf-8").digest("hex");
+}
+
+/**
+ * Pure update computations shared by the mutating commands and
+ * validateMutation, so staging-time validation can never drift from what the
+ * real write path enforces. Both throw MemoryCommandError with the exact
+ * write-path messages.
+ */
+function computeStrReplaceUpdate(
+  content: string,
+  oldStr: string,
+  newStr: string,
+  virtualPath: string
+): string {
+  const occurrences = countOccurrences(content, oldStr);
+  if (occurrences === 0) {
+    throw new MemoryCommandError(
+      `No replacement was performed: old_str was not found in ${virtualPath}`
+    );
+  }
+  if (occurrences > 1) {
+    const lines = findMatchingLines(content, oldStr);
+    throw new MemoryCommandError(
+      `No replacement was performed: old_str matches ${occurrences} locations (lines ${lines.join(", ")}) in ${virtualPath}. Provide a longer, unique old_str.`
+    );
+  }
+  return content.replace(oldStr, newStr);
+}
+
+function computeInsertUpdate(
+  content: string,
+  insertLine: number,
+  insertText: string
+): { updated: string; insertedLineCount: number } {
+  const lines = content === "" ? [] : content.split("\n");
+  if (insertLine < 0 || insertLine > lines.length) {
+    throw new MemoryCommandError(
+      `insert_line must be between 0 and ${lines.length} (0 inserts at the top; N inserts after line N)`
+    );
+  }
+  const insertedLines = insertText.split("\n");
+  // Trailing newline in insert_text would otherwise produce a stray blank line.
+  if (insertedLines.at(-1) === "") insertedLines.pop();
+  lines.splice(insertLine, 0, ...insertedLines);
+  return { updated: lines.join("\n"), insertedLineCount: insertedLines.length };
 }
 
 function assertWithinFileSizeCap(content: string): void {

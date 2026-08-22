@@ -41,6 +41,7 @@ import {
 } from "@/common/orpc/schemas/memory";
 import { defaultModel } from "@/common/utils/ai/models";
 import { resolveAgentAiSettings } from "@/common/utils/ai/resolveAgentAiSettings";
+import { deriveSideChannelModelCandidates } from "@/node/services/branchSummary";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getErrorMessage } from "@/common/utils/errors";
 import { Err, Ok } from "@/common/types/result";
@@ -112,14 +113,22 @@ export function resolveDreamModelString(config: Config, workspaceId: string): st
     : undefined;
   // Model-only: the dream runtime ignores thinking and reasoning parameters.
   const dreamBucket = workspaceEntry?.aiSettingsByAgent?.dream;
+  // Route confinement (r31 security): absent an explicit dream override
+  // (workspace bucket above, global dream default inside the resolver), the
+  // fallback must stay on the workspace's SELECTED route. The old fallback
+  // read only legacy `aiSettings`, which updateAgentAISettings never rewrites
+  // — a workspace whose current model is a per-agent private/gateway route
+  // could fall through a stale legacy model (or the built-in default) and
+  // ship transcript-derived content off-route. Same candidate derivation as
+  // branch summaries: selected agent's model, other per-agent models, then
+  // the legacy model as a compatibility fallback.
+  const fallbackModels = workspaceEntry ? deriveSideChannelModelCandidates(workspaceEntry) : [];
   return resolveAgentAiSettings({
     targetAgentId: "dream",
     profile: "interactive",
     agentAiDefaults: cfg.agentAiDefaults,
     targetWorkspaceSettings: dreamBucket ? { model: dreamBucket.model } : undefined,
-    fallbacks: workspaceEntry?.aiSettings?.model
-      ? [{ model: workspaceEntry.aiSettings.model }]
-      : undefined,
+    fallbacks: fallbackModels.length > 0 ? fallbackModels.map((model) => ({ model })) : undefined,
     defaultModel,
   }).selected.model;
 }

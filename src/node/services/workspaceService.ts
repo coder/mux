@@ -99,6 +99,11 @@ import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers"
 import { deriveTodoStatus } from "@/common/utils/todoList";
 import { createContextResetBoundaryMessageId } from "@/node/services/utils/messageIds";
 import { fileExists } from "@/node/utils/runtime/fileExists";
+import {
+  clearPendingBranchSummary,
+  deriveSideChannelModelCandidates,
+  startAbandonedBranchSummaryInBackground,
+} from "@/node/services/branchSummary";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import {
   ADDITIONAL_SYSTEM_CONTEXT_DISABLED_FILENAME,
@@ -262,6 +267,8 @@ import type {
 } from "@/node/services/backgroundProcessManager";
 import { BashMonitorRegistryStore } from "@/node/services/bashMonitorRegistryStore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import { acquireProcessFileLock } from "@/node/utils/concurrency/fileLock";
+import { REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS } from "@/constants/refine";
 import {
   BashMonitorWakeStore,
   buildBashMonitorWakeMetadata,
@@ -2726,6 +2733,8 @@ export class WorkspaceService extends EventEmitter {
   private workspaceGoalService?: WorkspaceGoalService;
   /** Narrow DevTools cleanup surface; wired by coreServices when a DevToolsService exists. */
   private devToolsService?: { removeWorkspaceData(workspaceId: string): Promise<void> };
+  /** Cancels running /refine passes before removal deletes the session dir; wired post-construction (RefineService is built later). */
+  private refinePassCanceller?: { cancelInFlightRefinePass(workspaceId: string): Promise<void> };
 
   setTimelineRecorder(recorder: TimelineRecorder): void {
     this.timelineRecorder = recorder;
@@ -2794,6 +2803,41 @@ export class WorkspaceService extends EventEmitter {
   /** DevTools debug-log cleanup on archive/remove; wired by coreServices. */
   setDevToolsService(service: { removeWorkspaceData(workspaceId: string): Promise<void> }): void {
     this.devToolsService = service;
+  }
+
+  /** Refine-pass cancellation on remove; wired by the service container. */
+  setRefinePassCanceller(service: {
+    cancelInFlightRefinePass(workspaceId: string): Promise<void>;
+  }): void {
+    this.refinePassCanceller = service;
+  }
+
+  /**
+   * Serialize a context-discarding history mutation (reset, full clear,
+   * destructive replace) with refine staging/apply, which hold the same
+   * per-workspace lockfile across their recheck-and-publish write sections.
+   * Without it, a refine pass could recheck before the mutation and publish
+   * after it, landing a proposal distilled from the discarded rows where the
+   * approval-hash scan accepts it. Callers must cancel+drain in-flight
+   * passes BEFORE acquiring (a drained pass may be waiting on this lock).
+   */
+  private async acquireRefineSerializationLock(
+    workspaceId: string,
+    operation: string
+  ): Promise<Result<AsyncDisposable>> {
+    try {
+      return Ok(
+        await acquireProcessFileLock({
+          lockPath: path.join(this.config.getSessionDir(workspaceId), "refine-apply.lock"),
+          timeoutMs: REFINE_APPLY_CROSS_PROCESS_LOCK_TIMEOUT_MS,
+          label: `refine serialization lock (${operation})`,
+        })
+      );
+    } catch (error) {
+      return Err(
+        `Cannot ${operation} while a refine operation is in progress: ${getErrorMessage(error)}`
+      );
+    }
   }
 
   private getWorktreeArchiveBehavior(): "keep" | "delete" | "snapshot" {
@@ -3549,6 +3593,8 @@ export class WorkspaceService extends EventEmitter {
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
       backgroundProcessManager: this.backgroundProcessManager,
+      // Branch-summary side-channel spend recording (edit-resend path).
+      sessionUsageService: this.sessionUsageService,
       onCompactionComplete: (metadata) => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
         // Compaction marks a long session with accumulated learnings: harvest
@@ -5004,6 +5050,29 @@ export class WorkspaceService extends EventEmitter {
             )
           );
 
+        parentWorkspaceId = metadata.parentWorkspaceId ?? null;
+        childTaskModelString = metadata.taskModelString;
+        childTaskThinkingLevel = coerceThinkingLevel(metadata.taskThinkingLevel);
+
+        // Cancel and drain BOTH background producers BEFORE any disk
+        // mutation below. Two invariants depend on this ordering:
+        // (1) an admitted /refine apply runs to completion and can write
+        //     project skills into the CHECKOUT — draining after
+        //     runtime.deleteWorkspace() let that write race checkout
+        //     deletion (recreating .mux/skills in a deleted tree, or failing
+        //     midway with the failure swallowed);
+        // (2) a draining producer records headless usage as it settles, so
+        //     the usage rollup below must read its snapshot only after both
+        //     drains (spend landing later is lost — the child is deleted
+        //     with no second rollup).
+        // Trade-off: a force=false deletion failure below keeps the
+        // workspace but its producers were already drained. That loss is
+        // recoverable (rerun /refine, refork); a checkout write racing
+        // deletion is not. Both calls are idempotent; they run again later
+        // for the phantom-metadata path.
+        await clearPendingBranchSummary(workspaceId);
+        await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
           const deleteErrors: string[] = [];
@@ -5233,12 +5302,15 @@ export class WorkspaceService extends EventEmitter {
           // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
         }
 
-        parentWorkspaceId = metadata.parentWorkspaceId ?? null;
-        childTaskModelString = metadata.taskModelString;
-        childTaskThinkingLevel = coerceThinkingLevel(metadata.taskThinkingLevel);
-
-        // If this workspace is a sub-agent/task, roll its accumulated timing into the parent BEFORE
-        // deleting ~/.xum/sessions/<workspaceId>/session-timing.json.
+        // Roll accumulated child timing/usage into the parent only AFTER runtime deletion is
+        // committed (every force=false early return is behind us) and BEFORE the session
+        // directory (session-timing.json / session-usage.json) is deleted below. rolledUpFrom
+        // is a one-shot idempotency guard: rolling up before a failed non-forced deletion left
+        // the child usable, and its post-failure spend was permanently skipped by the eventual
+        // successful removal. Crash-safety is preserved: a crash between deletion and these
+        // rollups keeps config + session files, and retrying removal re-runs deletion (a no-op
+        // for an already-missing checkout) before rolling up, so drained spend is not lost.
+        // Both producer drains above already ran, so the snapshots read here are complete.
         if (parentWorkspaceId && this.sessionTimingService) {
           try {
             // Flush any last timing write (e.g. from stream-abort) before reading.
@@ -5253,8 +5325,6 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
-        // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
-        // deleting ~/.xum/sessions/<workspaceId>/session-usage.json.
         if (parentWorkspaceId && this.sessionUsageService) {
           try {
             const childUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
@@ -5304,6 +5374,19 @@ export class WorkspaceService extends EventEmitter {
       // the resulting stream-abort event would otherwise be recorded on the timeline after the
       // delete, recreating the session directory for a workspace the user removed.
       this.disposeSession(workspaceId);
+
+      // Cancel and drain any background branch-summary writer BEFORE deleting
+      // the session directory: a mid-flight append could otherwise recreate
+      // the directory after removal, leaving an orphaned session. This also
+      // drops the retained registration a fork that never sent would leak.
+      // Normally already drained before the usage rollup above (idempotent);
+      // this covers the phantom-metadata path, which skips that block.
+      await clearPendingBranchSummary(workspaceId);
+
+      // Same posture for a running /refine pass: abort + drain so its
+      // tool-driven memory/skill writes and summary-row append cannot land
+      // after the session directory is deleted.
+      await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
 
       // Drop any persistent sandbox mount BEFORE deleting the session
       // directory: dropScope disposes the runtime without disk writes and
@@ -8217,6 +8300,9 @@ export class WorkspaceService extends EventEmitter {
       const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
 
+      // Removed tail captured inside the try, summarized only after setup
+      // survives the rollback window (see the comment at the capture site).
+      let abandonedBranchMessages: MuxMessage[] | null = null;
       try {
         const historyCopyResult = await this.historyService.copyHistorySnapshotToNewWorkspace(
           sourceWorkspaceId,
@@ -8260,6 +8346,16 @@ export class WorkspaceService extends EventEmitter {
           } else {
             await fsPromises.rm(path.join(newSessionDir, "session-timing.json"), { force: true });
           }
+
+          // The abandoned tail is summarized in the background — but only
+          // AFTER the failure-prone fork setup below completes (see the
+          // startAbandonedBranchSummaryInBackground call past the catch).
+          // Starting the writer here let a setup failure delete newSessionDir
+          // without cancelling the registration: a racing append could
+          // recreate the failed fork's session dir, and an early-settling
+          // summary left its map entry permanently unconsumed because the
+          // fork never returned.
+          abandonedBranchMessages = truncateResult.data.removedMessages;
         }
 
         await materializeForkedPartialSnapshot({
@@ -8384,6 +8480,37 @@ export class WorkspaceService extends EventEmitter {
 
       await this.config.addWorkspace(foundProjectPath, metadata);
       await this.workspaceGoalService?.inheritFromFork(sourceWorkspaceId, newWorkspaceId);
+
+      if (sourceMessageId && abandonedBranchMessages !== null) {
+        // RLM mode: summarize the abandoned tail into a durable labeled row on
+        // the fork. Runs in the BACKGROUND so the user-facing fork returns
+        // immediately (a synchronous wait stalled forks for the full deadline
+        // when generation missed it). Ordering stays safe: the fork's first
+        // send awaits the pending summary before building its request, and
+        // the tail guard drops the row if anything else landed first.
+        // Deliberately started only AFTER every failure-prone setup step and
+        // config registration: a rollback can no longer race the writer, and
+        // once the workspace is in config, removal can always cancel + drain
+        // the registration. Also keeps the summary's recorded usage from
+        // being wiped by resetForkedSessionUsage above. Fork IPC carries no
+        // send-option experiments, so gating falls back to the persisted
+        // machine overrides. Best-effort — never fails the fork.
+        startAbandonedBranchSummaryInBackground({
+          historyService: this.historyService,
+          aiService: this.aiService,
+          workspaceId: newWorkspaceId,
+          abandonedMessages: abandonedBranchMessages,
+          isExperimentEnabled: (experimentId) => this.isExperimentEnabled(experimentId),
+          guardTailMessageId: sourceMessageId,
+          // The fork target's metadata carries no model settings yet (its
+          // first send would populate them, but that send awaits this very
+          // summary), so candidates must be snapshotted from the SOURCE
+          // workspace or generation silently no-ops on an empty list.
+          modelCandidates: deriveSideChannelModelCandidates(sourceMetadata),
+          // Side-channel spend must reach session usage / the cost UI.
+          ...(this.sessionUsageService ? { sessionUsageService: this.sessionUsageService } : {}),
+        });
+      }
 
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
       session.emitMetadata(enrichedMetadata);
@@ -8625,6 +8752,13 @@ export class WorkspaceService extends EventEmitter {
       cancelState?: { canceledBeforeAcceptance: boolean };
       /** Cancels a synthetic send even after it has left MessageQueue for PREPARING. */
       cancelSignal?: AbortSignal;
+      /**
+       * Synthetic assistant rows persisted just before the turn's user row
+       * (family-message payloads). Delivered atomically with the message —
+       * queued alongside it when the workspace is busy — so they never land
+       * inside another turn's PREPARING window (see AgentSession.sendMessage).
+       */
+      preTurnMessages?: MuxMessage[];
       /** Return once the user message is accepted; stream startup continues asynchronously. */
       startStreamInBackground?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
@@ -8876,6 +9010,7 @@ export class WorkspaceService extends EventEmitter {
             onCanceled: continuationSendState.onCanceled,
             onAccepted: internal?.onAccepted,
             onAcceptedPreStreamFailure: continuationSendState.onAcceptedPreStreamFailure,
+            preTurnMessages: internal?.preTurnMessages,
           }
         );
 
@@ -8956,6 +9091,7 @@ export class WorkspaceService extends EventEmitter {
         onCanceled: continuationSendState.onCanceled,
         onAccepted: internal?.onAccepted,
         onAcceptedPreStreamFailure,
+        preTurnMessages: internal?.preTurnMessages,
       });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
@@ -9858,6 +9994,25 @@ export class WorkspaceService extends EventEmitter {
 
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
+    // A full clear discards the transcript a streaming refine pass may be
+    // distilling — and unlike a reset it appends NO boundary marker, so the
+    // pass's boundary identity stays null-to-null; only its segment-anchor
+    // recheck (first-row identity) catches the mutation. Drain the pass and
+    // hold the shared refine lock across the truncation so the recheck and
+    // this mutation cannot interleave (see acquireRefineSerializationLock).
+    let refineLock: AsyncDisposable | null = null;
+    if (isFullClear) {
+      await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+      const refineLockResult = await this.acquireRefineSerializationLock(
+        workspaceId,
+        "clear history"
+      );
+      if (!refineLockResult.success) {
+        return Err(refineLockResult.error);
+      }
+      refineLock = refineLockResult.data;
+    }
+    await using _refineLock = refineLock;
     if (effectivePercentage > 0) {
       session?.clearUsageState();
     }
@@ -9901,6 +10056,38 @@ export class WorkspaceService extends EventEmitter {
         return Err(getErrorMessage(error));
       }
       this.sessions.get(workspaceId)?.clearFileState();
+      // Same new-segment invariant as resetContext: pre-clear read/skill
+      // carryover must not be injected after the transcript is gone, and the
+      // discard must be durable before the clear reports success (a stale
+      // persisted file would re-inject pre-clear context after a restart).
+      try {
+        await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+      } catch (error) {
+        return Err(
+          `History was cleared, but the persisted post-compaction carryover could not be ` +
+            `durably discarded (${getErrorMessage(error)}). Pre-clear read/skill context may ` +
+            `be re-injected after a restart; retry once the session storage is writable.`
+        );
+      }
+      // The persistent RLM sandbox holds context DERIVED from the cleared
+      // transcript (vars populated by code execution), and its latest durable
+      // snapshot would restore it after a restart — later turns could read
+      // data from the supposedly cleared context through the kernel. Same
+      // durable invalidation + partial-failure posture as resetContext.
+      try {
+        await sandboxHostService.discardScope(workspaceId, this.config.getSessionDir(workspaceId));
+      } catch (error) {
+        log.error(
+          `Failed to durably invalidate sandbox state for ${workspaceId} after history clear; ` +
+            `the sandbox kernel stays unavailable until invalidation succeeds`,
+          error
+        );
+        return Err(
+          `History was cleared, but the sandbox kernel state could not be durably invalidated ` +
+            `(${getErrorMessage(error)}). The sandbox stays unavailable and cleared variables ` +
+            `may reappear after a restart; retry once the session storage is writable.`
+        );
+      }
     }
 
     return Ok(undefined);
@@ -9926,6 +10113,29 @@ export class WorkspaceService extends EventEmitter {
         );
       }
 
+      // A refine pass distills the PRE-reset transcript. Letting it stream on
+      // and publish AFTER the boundary lands would make its proposal the
+      // newest hashed row of the post-reset segment — approvable edits
+      // derived from the very context this reset discards. Cancel and drain
+      // it first (never rejects): a pass already in its write section
+      // finishes before the boundary is appended, leaving its proposal
+      // pre-boundary where the approval-hash scan refuses it.
+      await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+      // The one-shot drain cannot exclude a pass admitted right after it, so
+      // the rest of the reset runs under the SAME per-workspace lockfile the
+      // refine staging/apply write sections hold. That forces an ordering: a
+      // pass that wins the lock publishes BEFORE the boundary lands (its
+      // proposal stays pre-boundary, refused by the approval-hash scan), and
+      // a pass that loses rechecks the boundary/anchor identity after
+      // release and fails closed. The drain stays BEFORE acquisition —
+      // draining while holding the lock would deadlock against a pass
+      // waiting for it.
+      const refineLockResult = await this.acquireRefineSerializationLock(workspaceId, "reset");
+      if (!refineLockResult.success) {
+        return Err(refineLockResult.error);
+      }
+      await using _refineLock = refineLockResult.data;
+
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
       if (!historyResult.success) {
         return Err(`Failed to read active context before reset: ${historyResult.error}`);
@@ -9935,6 +10145,37 @@ export class WorkspaceService extends EventEmitter {
         historyResult.data
       );
       if (!hasProviderEligibleMessages(activeContextMessages)) {
+        // An earlier reset may have failed AFTER writing its boundary but
+        // BEFORE its durable cleanup landed (the partial-failure Errs below).
+        // A retry then reaches this branch — no provider-eligible rows after
+        // the boundary — so pending cleanup must be re-attempted before the
+        // no-op is reported, or the UI claims success while a restart can
+        // still restore pre-reset carryover or kernel vars across the reset
+        // boundary. Both steps are idempotent: the pending-state unlink
+        // treats ENOENT as success and a discard tombstone re-publish is
+        // harmless, so a genuinely clean no-op stays a no-op.
+        try {
+          await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+        } catch (error) {
+          return Err(
+            `Nothing to reset, but persisted post-compaction carryover from an earlier partial ` +
+              `reset could not be durably discarded (${getErrorMessage(error)}). Pre-reset ` +
+              `read/skill context may be re-injected after a restart; retry once the session ` +
+              `storage is writable.`
+          );
+        }
+        try {
+          await sandboxHostService.discardScope(
+            workspaceId,
+            this.config.getSessionDir(workspaceId)
+          );
+        } catch (error) {
+          return Err(
+            `Nothing to reset, but the sandbox kernel state could not be durably invalidated ` +
+              `(${getErrorMessage(error)}). The sandbox stays unavailable and cleared variables ` +
+              `may reappear after a restart; retry once the session storage is writable.`
+          );
+        }
         return Ok("noop");
       }
 
@@ -9968,12 +10209,56 @@ export class WorkspaceService extends EventEmitter {
         log.error("Failed to require goal acknowledgment after context reset:", error);
       }
       this.sessions.get(workspaceId)?.clearFileState();
+      // A reset starts a NEW context segment: cumulative post-compaction
+      // carryover (read-file paths, loaded skills, pending diff snapshot)
+      // summarizes PRE-reset epochs and must not be injected into later
+      // turns. getOrCreateSession so the persisted pending state is
+      // discarded even when no session exists yet (e.g. reset right after
+      // an app restart).
+      try {
+        await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+      } catch (error) {
+        // Same partial-failure posture as the sandbox invalidation below:
+        // the chat-side reset applied, but the stale persisted carryover
+        // would re-inject pre-reset context after a restart, so success must
+        // not be reported while the discard is not durable.
+        log.error(
+          `Failed to durably discard post-compaction carryover for ${workspaceId} after context reset`,
+          error
+        );
+        return Err(
+          `Context was reset, but the persisted post-compaction carryover could not be durably ` +
+            `discarded (${getErrorMessage(error)}). Pre-reset read/skill context may be ` +
+            `re-injected after a restart; retry once the session storage is writable.`
+        );
+      }
 
       // Persistent sandbox mounts are scoped to the workspace session; a
       // context reset ends that session, so sandbox state is DISCARDED (not
       // snapshotted) — vars must not survive a reset the way they survive
       // archive/un-archive.
-      await sandboxHostService.discardScope(workspaceId, this.config.getSessionDir(workspaceId));
+      try {
+        await sandboxHostService.discardScope(workspaceId, this.config.getSessionDir(workspaceId));
+      } catch (error) {
+        // The chat-side reset already applied, but the sandbox invalidation
+        // is NOT durable: the empty-snapshot tombstone failed to publish, and
+        // the only remaining record is the in-memory reset-pending guard,
+        // which blocks mounts and retries for THIS process only. A crash
+        // before a retry lands would let the next process restore — resurrect
+        // — the pre-reset snapshot the user explicitly cleared. Invalidation
+        // must be durable before success is reported, so surface the partial
+        // failure to the caller instead of returning Ok.
+        log.error(
+          `Failed to durably invalidate sandbox state for ${workspaceId} after context reset; ` +
+            `the sandbox kernel stays unavailable until invalidation succeeds`,
+          error
+        );
+        return Err(
+          `Context was reset, but the sandbox kernel state could not be durably invalidated ` +
+            `(${getErrorMessage(error)}). The sandbox stays unavailable and cleared variables ` +
+            `may reappear after a restart; retry once the session storage is writable.`
+        );
+      }
 
       return Ok("reset");
     } finally {
@@ -10063,6 +10348,23 @@ export class WorkspaceService extends EventEmitter {
           `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
         );
 
+        // Same context-discard boundary as a full clear: drain + serialize
+        // with refine so a mid-pass proposal cannot publish into the
+        // replaced history (compaction replaces are exempt — they preserve
+        // context and the compaction boundary flips the recheck identity).
+        let refineLock: AsyncDisposable | null = null;
+        if (!isCompaction) {
+          await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+          const refineLockResult = await this.acquireRefineSerializationLock(
+            workspaceId,
+            "replace history"
+          );
+          if (!refineLockResult.success) {
+            return Err(refineLockResult.error);
+          }
+          refineLock = refineLockResult.data;
+        }
+        await using _refineLock = refineLock;
         this.sessions.get(workspaceId)?.clearUsageState();
         const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(
           workspaceId,
@@ -10071,6 +10373,46 @@ export class WorkspaceService extends EventEmitter {
         );
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);
+        }
+        if (!isCompaction) {
+          // A destructive non-compaction replace (e.g. "start here") begins a
+          // new context segment: discard pre-boundary post-compaction
+          // carryover like resetContext does, durable-or-fail for the same
+          // reason (a stale persisted file re-injects after a restart).
+          // Compaction summaries instead RELY on the pending post-compaction
+          // state persisted for them.
+          try {
+            await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+          } catch (error) {
+            return Err(
+              `History was cleared, but the persisted post-compaction carryover could not be ` +
+                `durably discarded (${getErrorMessage(error)}). Pre-boundary read/skill context ` +
+                `may be re-injected after a restart; retry once the session storage is writable.`
+            );
+          }
+          // Same boundary as the full-clear path above: a destructive
+          // non-compaction replace discards the transcript, so kernel vars
+          // derived from it must not stay readable (or restorable from the
+          // durable snapshot) afterwards. Compaction replaces instead KEEP
+          // sandbox state — surviving compaction is the kernel's purpose.
+          try {
+            await sandboxHostService.discardScope(
+              workspaceId,
+              this.config.getSessionDir(workspaceId)
+            );
+          } catch (error) {
+            log.error(
+              `Failed to durably invalidate sandbox state for ${workspaceId} after destructive ` +
+                `history replace; the sandbox kernel stays unavailable until invalidation succeeds`,
+              error
+            );
+            return Err(
+              `History was replaced, but the sandbox kernel state could not be durably ` +
+                `invalidated (${getErrorMessage(error)}). The sandbox stays unavailable and ` +
+                `cleared variables may reappear after a restart; retry once the session storage ` +
+                `is writable.`
+            );
+          }
         }
         this.timelineRecorder.record(workspaceId, {
           kind: "history.cleared",

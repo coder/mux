@@ -4,7 +4,11 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "ai";
 
-import { MEMORY_CONSOLIDATION_OP_BUDGET } from "@/common/constants/memory";
+import {
+  MEMORY_CONSOLIDATION_OP_BUDGET,
+  MEMORY_MAX_FILE_BYTES,
+  MEMORY_MAX_FILES_PER_SCOPE,
+} from "@/common/constants/memory";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { Config } from "@/node/config";
 import { createConsolidationMemoryTool, type MemoryConsolidationOp } from "./memoryConsolidation";
@@ -335,6 +339,203 @@ describe("consolidation memory tool rails", () => {
       path: "/memories/global/proposed.md",
     });
     expect(overBudget.success).toBe(false);
+  });
+
+  it("dry-run rejects proposals the real write path would reject", async () => {
+    // Codex round 18: the dry-run staging path returned before
+    // executeMemoryCommand, skipping the real service's arg validation and
+    // the memory file cap — an oversized/invalid mutation staged
+    // successfully, was rendered into chat, and /refine apply later rejected
+    // it through the real handler, consuming the staged set as a no-op after
+    // the user approved.
+    using fixture = await createFixture({ dryRun: true });
+
+    // Over the real write cap: must fail staging with the real cap error.
+    const overCap = await execute(fixture.tool, {
+      command: "create",
+      path: "/memories/global/too-big.md",
+      file_text: "x".repeat(MEMORY_MAX_FILE_BYTES + 1),
+    });
+    expect(overCap.success).toBe(false);
+    if (!overCap.success) expect(overCap.error).toContain(`${MEMORY_MAX_FILE_BYTES}`);
+
+    // Missing required args: must fail staging with the real arg error.
+    const missingArgs = await execute(fixture.tool, {
+      command: "create",
+      path: "/memories/global/no-text.md",
+    });
+    expect(missingArgs.success).toBe(false);
+    if (!missingArgs.success) expect(missingArgs.error).toContain("file_text");
+
+    // Both rejections journal as unapplied with the error, never as staged.
+    expect(fixture.journal.every((op) => !op.applied && op.note !== "dry-run")).toBe(true);
+  });
+
+  it("dry-run rejects state-dependent mutations whose RESULT exceeds the cap", async () => {
+    // Codex round 19: the round-18 check measured only the NEW text, but the
+    // real write path caps the RESULTING file — inserting 2KiB into a 99KiB
+    // file staged successfully, rendered approvable, then apply rejected it
+    // and consumed the proposal. Validation must simulate the result.
+    using fixture = await createFixture({ dryRun: true });
+    const nearCap = `UNIQUE_MARKER${"x".repeat(MEMORY_MAX_FILE_BYTES - 1024)}`;
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "near-cap.md"), nearCap);
+
+    const smallInsert = await execute(fixture.tool, {
+      command: "insert",
+      path: "/memories/global/near-cap.md",
+      insert_line: 0,
+      insert_text: "y".repeat(2 * 1024),
+    });
+    expect(smallInsert.success).toBe(false);
+    if (!smallInsert.success) expect(smallInsert.error).toContain(`${MEMORY_MAX_FILE_BYTES}`);
+
+    // Same result-size rule for str_replace growth on an existing file
+    // (unique old_str so the failure is the cap, not the occurrence check).
+    const growingReplace = await execute(fixture.tool, {
+      command: "str_replace",
+      path: "/memories/global/near-cap.md",
+      old_str: "UNIQUE_MARKER",
+      new_str: "y".repeat(2 * 1024),
+    });
+    expect(growingReplace.success).toBe(false);
+    if (!growingReplace.success) {
+      expect(growingReplace.error).toContain(`${MEMORY_MAX_FILE_BYTES}`);
+    }
+
+    // A result that stays under the cap still stages.
+    const fits = await execute(fixture.tool, {
+      command: "insert",
+      path: "/memories/global/near-cap.md",
+      insert_line: 0,
+      insert_text: "small note",
+    });
+    expect(fits.success).toBe(true);
+    // Dry-run: the target file is untouched.
+    const onDisk = await fsPromises.readFile(
+      path.join(fixture.globalMemoryDir, "near-cap.md"),
+      "utf-8"
+    );
+    expect(onDisk).toBe(nearCap);
+  });
+
+  it("dry-run rejects a create into a full memory scope", async () => {
+    // Codex round 20: validateMutation accepted a create whenever the target
+    // was free, but the real create() also rejects when the scope already
+    // holds MEMORY_MAX_FILES_PER_SCOPE files — the proposal staged, rendered
+    // approvable, then apply rejected it and consumed the set.
+    using fixture = await createFixture({ dryRun: true });
+    await Promise.all(
+      Array.from({ length: MEMORY_MAX_FILES_PER_SCOPE }, (_, i) =>
+        fsPromises.writeFile(path.join(fixture.globalMemoryDir, `filler-${i}.md`), "x\n")
+      )
+    );
+
+    const intoFull = await execute(fixture.tool, {
+      command: "create",
+      path: "/memories/global/one-more.md",
+      file_text: "must not stage\n",
+    });
+    expect(intoFull.success).toBe(false);
+    if (!intoFull.success) expect(intoFull.error).toContain("full");
+  });
+
+  it("dry-run rejects renaming a directory into its own subtree", async () => {
+    // Codex round 21: source exists and the exact destination doesn't, so
+    // 'notes' -> 'notes/archive/notes' staged, rendered approvable, then the
+    // filesystem rejected moving a dir into itself at apply — consuming the
+    // approved set. Segment-aware: 'notes-x' must not match 'notes'.
+    using fixture = await createFixture({ dryRun: true });
+    await fsPromises.mkdir(path.join(fixture.globalMemoryDir, "notes"), { recursive: true });
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "notes", "a.md"), "a\n");
+
+    const intoSelf = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/notes",
+      new_path: "/memories/global/notes/archive/notes",
+    });
+    expect(intoSelf.success).toBe(false);
+    if (!intoSelf.success) expect(intoSelf.error).toContain("inside itself");
+
+    // Segment-aware sibling: 'notes-x' shares the prefix but is NOT inside
+    // 'notes' — it must stage normally.
+    const sibling = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/notes",
+      new_path: "/memories/global/notes-x",
+    });
+    expect(sibling.success).toBe(true);
+  });
+
+  it("dry-run rejects own-subtree renames reached through an aliased path", async () => {
+    // Codex round 22 (mirrors the memoryService handler test): staging
+    // validation shares the physical-identity guard, so an aliased spelling
+    // of the source (case variant on case-insensitive hosts; symlink here,
+    // which CI can exercise) must refuse at staging instead of consuming the
+    // approved set at apply.
+    using fixture = await createFixture({ dryRun: true });
+    await fsPromises.mkdir(path.join(fixture.globalMemoryDir, "notes"), { recursive: true });
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "notes", "a.md"), "a\n");
+    await fsPromises.symlink("notes", path.join(fixture.globalMemoryDir, "alias"));
+
+    const throughAlias = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/notes",
+      new_path: "/memories/global/alias/archive/notes",
+    });
+    expect(throughAlias.success).toBe(false);
+    if (!throughAlias.success) expect(throughAlias.error).toContain("inside itself");
+  });
+
+  it("dry-run rejects delete/rename proposals the real handlers would reject", async () => {
+    // Codex round 20: delete/rename skipped staging validation entirely —
+    // deleting a nonexistent path, renaming a missing source, or renaming
+    // onto an existing destination staged and presented for approval, then
+    // failed at apply and consumed the set.
+    using fixture = await createFixture({ dryRun: true });
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "exists-a.md"), "a\n");
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "exists-b.md"), "b\n");
+
+    // Rename onto an existing destination: refused with the real error.
+    const ontoExisting = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/exists-a.md",
+      new_path: "/memories/global/exists-b.md",
+    });
+    expect(ontoExisting.success).toBe(false);
+    if (!ontoExisting.success) expect(ontoExisting.error).toContain("already exists");
+
+    // Rename of a missing source: refused.
+    const missingSource = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/missing.md",
+      new_path: "/memories/global/fresh.md",
+    });
+    expect(missingSource.success).toBe(false);
+
+    // Delete of a nonexistent path: refused.
+    const missingDelete = await execute(fixture.tool, {
+      command: "delete",
+      path: "/memories/global/never-existed.md",
+    });
+    expect(missingDelete.success).toBe(false);
+    if (!missingDelete.success) {
+      expect(missingDelete.error).toContain("No memory file or directory");
+    }
+
+    // Valid delete/rename still stage — and touch nothing on disk.
+    const validRename = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/exists-a.md",
+      new_path: "/memories/global/renamed-a.md",
+    });
+    expect(validRename.success).toBe(true);
+    const validDelete = await execute(fixture.tool, {
+      command: "delete",
+      path: "/memories/global/exists-b.md",
+    });
+    expect(validDelete.success).toBe(true);
+    expect(await pathExists(path.join(fixture.globalMemoryDir, "exists-a.md"))).toBe(true);
+    expect(await pathExists(path.join(fixture.globalMemoryDir, "exists-b.md"))).toBe(true);
   });
 
   it("journals failed dispatches as unapplied with the error note", async () => {

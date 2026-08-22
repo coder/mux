@@ -64,6 +64,7 @@ import {
 } from "@/node/runtime/coderLifecycleHooks";
 import { createWorktreeArchiveHook } from "@/node/runtime/worktreeLifecycleHooks";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { RefineService } from "@/node/services/refinement/refineService";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
 import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
@@ -99,6 +100,7 @@ export class ServiceContainer {
   public readonly memoryService: CoreServices["memoryService"];
   public readonly memoryMetaService: CoreServices["memoryMetaService"];
   public readonly memoryConsolidationService: CoreServices["memoryConsolidationService"];
+  public readonly refineService: RefineService;
   private readonly extensionMetadata: CoreServices["extensionMetadata"];
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
@@ -271,6 +273,27 @@ export class ServiceContainer {
       this.historyService,
       this.experimentsService
     );
+    // /refine trajectory distillation (RLM r11). Chat emission routes through
+    // WorkspaceService so a live session renders the appended summary row
+    // immediately (the row itself is already durable in chat.jsonl).
+    this.refineService = new RefineService(
+      config,
+      this.memoryService,
+      this.memoryMetaService,
+      this.historyService,
+      this.aiService,
+      this.experimentsService,
+      {
+        timelineService: this.timelineService,
+        sessionUsageService: this.sessionUsageService,
+        emitChatMessage: (workspaceId, message) =>
+          this.workspaceService.emitChatEvent(workspaceId, { ...message, type: "message" }),
+      }
+    );
+    // Removal must be able to abort + drain a running /refine pass before it
+    // deletes the session directory (post-construction wiring: RefineService
+    // is built after WorkspaceService).
+    this.workspaceService.setRefinePassCanceller(this.refineService);
     this.workspaceService.setTimelineRecorder(this.timelineService);
     this.taskService.setTimelineRecorder(this.timelineService);
     this.heartbeatService.setTimelineRecorder(this.timelineService);
@@ -600,6 +623,7 @@ export class ServiceContainer {
       memoryService: this.memoryService,
       memoryMetaService: this.memoryMetaService,
       memoryConsolidationService: this.memoryConsolidationService,
+      refineService: this.refineService,
       devToolsService: this.devToolsService,
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,

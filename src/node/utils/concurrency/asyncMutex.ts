@@ -30,6 +30,12 @@ export class AsyncMutex {
     return new AsyncMutexLock(this);
   }
 
+  /** True while some caller holds the lock (for defensive assertions only —
+   * it cannot tell WHO holds it, so never use it as a locking substitute). */
+  get isLocked(): boolean {
+    return this.locked;
+  }
+
   /**
    * Release the lock and wake up next waiter in queue
    * @internal - Should only be called by AsyncMutexLock

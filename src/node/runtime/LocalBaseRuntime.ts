@@ -216,8 +216,7 @@ export abstract class LocalBaseRuntime implements Runtime {
     return { stdout, stderr, stdin, exitCode, duration };
   }
 
-  readFile(filePath: string, _abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
-    // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
+  readFile(filePath: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
     // Expand tildes before reading (Node.js fs doesn't expand ~)
     const expandedPath = expandTilde(filePath);
     const nodeStream = fs.createReadStream(expandedPath);
@@ -225,18 +224,51 @@ export abstract class LocalBaseRuntime implements Runtime {
     // Handle errors by wrapping in a transform
     // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
+    const reader = webStream.getReader();
 
+    // r19: honor caller aborts (kernel deadline, workspace removal), not just
+    // consumer cancellation — a FIFO or blocked network-mounted file can
+    // stall before yielding enough bytes for a consumer-side ceiling to
+    // cancel, leaving the pending read and its fd blocked forever. Aborting
+    // cancels the inner reader, which destroys the node stream and settles
+    // the pinned read.
+    const onAbort = () => {
+      void reader.cancel(abortSignal?.reason).catch(() => undefined);
+    };
+    if (abortSignal?.aborted) {
+      onAbort();
+    } else {
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+    }
+    const cleanupAbortForwarder = () => {
+      abortSignal?.removeEventListener("abort", onAbort);
+    };
+
+    // Pull-based (not an eager start loop): consumers control the read rate
+    // (backpressure), and cancellation can reach the source — the old eager
+    // loop had no cancel callback, so a cancelled wrapper (e.g. mux.load's
+    // byte ceiling on /dev/zero) abandoned the reader and leaked the open
+    // file handle (r18).
     return new ReadableStream<Uint8Array>({
-      async start(controller: ReadableStreamDefaultController<Uint8Array>) {
+      pull: async (controller: ReadableStreamDefaultController<Uint8Array>) => {
         try {
-          const reader = webStream.getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.enqueue(value);
+          const { done, value } = await reader.read();
+          // reader.cancel() settles a pinned read as {done: true}; surface
+          // the abort as an error rather than a clean EOF so consumers do
+          // not mistake a truncated read for the whole file.
+          if (abortSignal?.aborted) {
+            cleanupAbortForwarder();
+            controller.error(new RuntimeErrorClass(`Read of ${filePath} aborted`, "file_io"));
+            return;
           }
-          controller.close();
+          if (done) {
+            cleanupAbortForwarder();
+            controller.close();
+            return;
+          }
+          controller.enqueue(value);
         } catch (err) {
+          cleanupAbortForwarder();
           controller.error(
             new RuntimeErrorClass(
               `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
@@ -245,6 +277,11 @@ export abstract class LocalBaseRuntime implements Runtime {
             )
           );
         }
+      },
+      cancel: async (reason: unknown) => {
+        cleanupAbortForwarder();
+        // Destroys the underlying node stream and closes the fd.
+        await reader.cancel(reason);
       },
     });
   }
