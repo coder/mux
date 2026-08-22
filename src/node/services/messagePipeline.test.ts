@@ -270,6 +270,23 @@ describe("reasoning replay in built provider requests", () => {
     ]);
   });
 
+  it("omits a bare xAI itemId from an interrupted stream (store=false, unresolvable)", async () => {
+    const result = await buildRequest(
+      "xai",
+      "high",
+      historyWith([
+        {
+          type: "reasoning",
+          text: "interrupted thoughts",
+          providerOptions: { xai: { itemId: "rs_partial" } },
+        },
+        { type: "text", text: "answer" },
+      ])
+    );
+
+    expect(JSON.stringify(result)).not.toContain("rs_partial");
+  });
+
   it("bridges legacy signature-only histories to a replayable Anthropic signature", async () => {
     const result = await buildRequest(
       "anthropic",

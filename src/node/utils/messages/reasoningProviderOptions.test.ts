@@ -168,6 +168,8 @@ describe("attachReasoningReplayMetadata", () => {
         providerOptions: {
           anthropic: "not-an-object",
           openai: { itemId: 42, reasoningEncryptedContent: "enc_ok" },
+          // Malformed encrypted content leaves a bare xai itemId, which the
+          // store=false drop rule then removes as unresolvable.
           xai: { itemId: "rs_ok", reasoningEncryptedContent: { nested: true } },
           google: { thoughtSignature: "" },
         } as unknown as MuxReasoningPart["providerOptions"],
@@ -178,7 +180,38 @@ describe("attachReasoningReplayMetadata", () => {
 
     expect(reasoningParts(output)[0].providerMetadata).toEqual({
       openai: { reasoningEncryptedContent: "enc_ok" },
-      xai: { itemId: "rs_ok" },
+    });
+  });
+
+  test("drops a bare xAI itemId left behind by an interrupted stream", () => {
+    // store=false means the server never kept the item; replaying the bare
+    // reference would fail every subsequent request.
+    const input = assistantMessage([
+      { type: "reasoning", text: "cut off", providerOptions: { xai: { itemId: "rs_partial" } } },
+    ]);
+
+    const [output] = attachReasoningReplayMetadata([input]);
+
+    expect(output).toBe(input);
+    expect("providerMetadata" in reasoningParts(output)[0]).toBe(false);
+  });
+
+  test("keeps complete xAI replay metadata and other namespaces alongside a dropped bare itemId", () => {
+    const input = assistantMessage([
+      {
+        type: "reasoning",
+        text: "mixed",
+        providerOptions: {
+          xai: { itemId: "rs_partial" },
+          anthropic: { signature: "sig_keep" },
+        },
+      },
+    ]);
+
+    const [output] = attachReasoningReplayMetadata([input]);
+
+    expect(reasoningParts(output)[0].providerMetadata).toEqual({
+      anthropic: { signature: "sig_keep" },
     });
   });
 

@@ -148,6 +148,19 @@ export function attachReasoningReplayMetadata(messages: MuxMessage[]): MuxMessag
       );
       if (!replayMetadata) return part;
 
+      // xAI always runs Responses with store=false (see providerOptions.ts), so a
+      // bare itemId from an interrupted stream (reasoning-end never delivered the
+      // encrypted content) is unresolvable server-side and would fail every
+      // subsequent request. Drop it at replay time only; stream-time accumulation
+      // keeps partial metadata so reasoning-end can still complete it.
+      if (
+        replayMetadata.xai &&
+        nonEmptyString(replayMetadata.xai.reasoningEncryptedContent) == null
+      ) {
+        delete replayMetadata.xai;
+        if (Object.keys(replayMetadata).length === 0) return part;
+      }
+
       changed = true;
       const bridged: ReasoningPartWithReplayMetadata = {
         ...part,
