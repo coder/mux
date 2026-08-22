@@ -330,6 +330,46 @@ exit 1
       expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
     });
 
+    it("removes only .git when a plain create wins the same pre-existing directory", async () => {
+      const projectPath = path.join(tempDir, "plain-vs-initgit");
+      await fs.mkdir(projectPath);
+
+      // Deterministic interleaving: queue the plain registration so the initGit
+      // create's snapshot misses it (git init runs) while its transform hits the
+      // duplicate re-check; the loser must strip its .git from the winner's project.
+      const registerPlain = config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { workspaces: [] });
+        return cfg;
+      });
+      const result = await service.create(projectPath, { initGit: true });
+      await registerPlain;
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain("already exists");
+      expect((await fs.stat(projectPath)).isDirectory()).toBe(true);
+      expect(fs.stat(path.join(projectPath, ".git"))).rejects.toThrow();
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
+    });
+
+    it("serializes concurrent gitInit calls for the same directory", async () => {
+      const projectPath = path.join(tempDir, "concurrent-gitinit");
+      await fs.mkdir(projectPath);
+
+      const [first, second] = await Promise.all([
+        service.gitInit(projectPath),
+        service.gitInit(projectPath),
+      ]);
+
+      const outcomes = [first, second];
+      expect(outcomes.filter((r) => r.success)).toHaveLength(1);
+      const loser = outcomes.find((r) => !r.success);
+      expect(loser && !loser.success ? loser.error : "").toContain("already initializing");
+      // The winner's repository survives with exactly its initial commit.
+      expect(
+        execSync("git rev-list --count HEAD", { cwd: projectPath, encoding: "utf-8" }).trim()
+      ).toBe("1");
+    });
+
     it("removes only .git when a descendant wins registration during an initGit create", async () => {
       const parentPath = path.join(tempDir, "late-descendant-parent");
       const descendantPath = path.join(parentPath, "child-project");

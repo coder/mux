@@ -739,10 +739,15 @@ export class ProjectService {
       // depth and parent-only hierarchy rejections leave the directory ours to remove.
       if (transformFailure === "depth" || transformFailure === "hierarchy-changed") {
         await cleanupCreatedDirectory();
-      } else if (transformFailure === "hierarchy-changed-descendant" && initializedGitDir) {
-        // The winning descendant owns the files, but the .git this losing request
-        // created would wrap the winner's checkout in an unregistered outer repository
-        // (changing its git discovery) and make retries fail the non-empty check.
+      } else if (
+        (transformFailure === "hierarchy-changed-descendant" || transformFailure === "duplicate") &&
+        initializedGitDir
+      ) {
+        // The winning registration owns the files (a duplicate winner registered this
+        // exact pre-existing directory; a descendant winner lives inside it), but the
+        // .git this losing request created would silently turn the winner's project
+        // into a repository it never asked for, or wrap its checkout in an
+        // unregistered outer repository that changes git discovery.
         await fsPromises
           .rm(path.join(normalizedPath, ".git"), { recursive: true, force: true })
           .catch((cleanupError: unknown) => {
@@ -1564,17 +1569,33 @@ export class ProjectService {
     if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
       return Err("Project path is required");
     }
+    let claimKey: string | null = null;
     try {
       const validation = await validateProjectPath(projectPath);
       if (!validation.valid) {
         return Err(validation.error ?? "Invalid project path");
       }
-      const result = await this.initializeGitRepository(validation.expandedPath!);
+      const normalizedPath = validation.expandedPath!;
+      // Same exclusive claim as create(): concurrent initializations of one directory
+      // could double-commit or let one call's failure rollback delete the other's .git.
+      const canonicalPath = await resolveRealProjectPath(normalizedPath).catch(
+        () => normalizedPath
+      );
+      if (this.activeGitInits.has(canonicalPath)) {
+        return Err("Another project creation is already initializing this directory");
+      }
+      this.activeGitInits.add(canonicalPath);
+      claimKey = canonicalPath;
+      const result = await this.initializeGitRepository(normalizedPath);
       return result.success ? Ok(undefined) : result;
     } catch (error) {
       const message = getErrorMessage(error);
       log.error("Failed to initialize git repository:", error);
       return Err(`Failed to initialize git repository: ${message}`);
+    } finally {
+      if (claimKey) {
+        this.activeGitInits.delete(claimKey);
+      }
     }
   }
 
