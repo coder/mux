@@ -997,10 +997,22 @@ export class Config {
           }
         });
 
+        // A reused sidecar from an older build may be world-readable; tighten it to 0600
+        // before trusting it as the backup. If tightening fails (e.g. owned by another
+        // user), fall through and create a fresh restricted sidecar instead.
+        let reusedPath: string | null = null;
         if (duplicate) {
           const duplicatePath = path.join(configDir, duplicate.name);
-          backupStatus = `Backup skipped because identical bytes already exist at ${duplicatePath}.`;
-          backupDetail = duplicatePath;
+          try {
+            fs.chmodSync(duplicatePath, 0o600);
+            reusedPath = duplicatePath;
+          } catch {
+            reusedPath = null;
+          }
+        }
+        if (reusedPath) {
+          backupStatus = `Backup skipped because identical bytes already exist at ${reusedPath}.`;
+          backupDetail = reusedPath;
         } else {
           // Write the bytes that actually failed parsing (not a re-read of the file, which
           // another process may have replaced), leaving the corrupt source in place so
@@ -1029,7 +1041,11 @@ export class Config {
         const backupErrorMessage =
           backupError instanceof Error ? backupError.message : String(backupError);
         backupStatus = `Backup failed (${backupErrorMessage}); it will be retried on the next load, and settings changes will not overwrite config.json until a backup succeeds.`;
-        backupDetail = `failed: ${backupErrorMessage}`;
+        // Node fs errors embed the attempted (timestamped) sidecar path in the message, so
+        // dedupe on the stable errno code where present or repeated ENOSPC/EACCES failures
+        // would log on every load.
+        const backupErrorCode = (backupError as NodeJS.ErrnoException).code;
+        backupDetail = `failed: ${backupErrorCode ?? backupErrorMessage}`;
       }
     }
     // Until a sidecar is confirmed for these exact bytes, enqueueConfigEdit refuses to
@@ -1860,17 +1876,40 @@ export class Config {
   private enqueueConfigEdit(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
     const run = this.editConfigQueue.then(async () => {
       const config = this.loadConfigOrDefault();
-      // If that load just failed and no sidecar backup is confirmed for the corrupt bytes,
-      // writing would permanently destroy the only copy of the user's settings. Skip the
-      // write (matching saveConfig's log-and-swallow contract) until a backup lands.
-      const failureState = configLoadFailureStates.get(this.configFile);
-      if (failureState?.backupSignature === null) {
-        log.error(
-          `Skipping config write to ${this.configFile}: the existing corrupt config has no confirmed backup yet. Fix the reported backup failure or move the corrupt file aside, then retry.`
-        );
-        return;
-      }
       const newConfig = fn(config);
+      // If that load failed, writing would replace the corrupt file with defaults. Only
+      // proceed when the bytes on disk right now are the ones with a confirmed sidecar:
+      // no confirmed backup, a concurrent replacement since the load, or an unreadable
+      // file all skip the write (matching saveConfig's log-and-swallow contract). A
+      // missing file is safe to overwrite. This cannot fully close the cross-process
+      // race (that needs file locking, which editConfig has never had); it binds the
+      // approval to the current bytes and shrinks the window to the atomic write itself.
+      const failureState = configLoadFailureStates.get(this.configFile);
+      if (failureState) {
+        if (failureState.backupSignature === null) {
+          log.error(
+            `Skipping config write to ${this.configFile}: the existing corrupt config has no confirmed backup yet. Fix the reported backup failure or move the corrupt file aside, then retry.`
+          );
+          return;
+        }
+        try {
+          const currentBytes = fs.readFileSync(this.configFile);
+          const currentSignature = crypto.createHash("sha256").update(currentBytes).digest("hex");
+          if (currentSignature !== failureState.backupSignature) {
+            log.error(
+              `Skipping config write to ${this.configFile}: the file changed after this edit loaded it and the new content has no confirmed backup. Retry the settings change.`
+            );
+            return;
+          }
+        } catch (readError) {
+          if ((readError as NodeJS.ErrnoException).code !== "ENOENT") {
+            log.error(
+              `Skipping config write to ${this.configFile}: the file could not be re-read before writing (${readError instanceof Error ? readError.message : String(readError)}). Retry the settings change.`
+            );
+            return;
+          }
+        }
+      }
       await this.saveConfig(newConfig);
       // Backend-initiated config edits (for example gateway auth changes) use this signal
       // so frontend subscribers can refresh derived state without polling.

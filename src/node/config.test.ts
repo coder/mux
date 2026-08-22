@@ -403,6 +403,85 @@ describe("Config", () => {
       }
     });
 
+    it("tightens permissions on a reused permissive sidecar", () => {
+      if (process.platform === "win32") {
+        return;
+      }
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      const prevUmask = process.umask(0o022);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      try {
+        fs.writeFileSync(configFile, corruptData);
+        // A byte-identical sidecar left by an older build without the 0600 fix.
+        const stale = `${configFile}.corrupt-1`;
+        fs.writeFileSync(stale, corruptData);
+        fs.chmodSync(stale, 0o644);
+
+        config.loadConfigOrDefault();
+
+        expect(corruptBackups()).toHaveLength(1);
+        expect(fs.statSync(stale).mode & 0o777).toBe(0o600);
+      } finally {
+        process.umask(prevUmask);
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("aborts an edit write when the corrupt file changed after the edit loaded it", async () => {
+      const configFile = configFilePath();
+      const corruptA = '{ "projects": ';
+      const corruptB = '{ "taskSettings": ';
+      fs.writeFileSync(configFile, corruptA);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      // Simulate a concurrent writer replacing the file between this edit's load and write.
+      await config.editConfig((cfg) => {
+        fs.writeFileSync(configFile, corruptB);
+        return cfg;
+      });
+
+      // The write was skipped: B is still on disk instead of a defaults rewrite.
+      expect(fs.readFileSync(configFile, "utf-8")).toBe(corruptB);
+
+      // The next edit's own load backs up B, so it may proceed.
+      await config.setUpdateChannel("nightly");
+      const contents = corruptBackups().map((p) => fs.readFileSync(p, "utf-8"));
+      expect(contents).toContain(corruptA);
+      expect(contents).toContain(corruptB);
+      const rewritten = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(rewritten.updateChannel).toBe("nightly");
+      errorSpy.mockRestore();
+    });
+
+    it("dedupes repeated backup failures whose messages embed the generated path", () => {
+      const configFile = configFilePath();
+      fs.writeFileSync(configFile, '{ "projects": ');
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      const nowSpy = spyOn(Date, "now");
+      const origWrite = fs.writeFileSync.bind(fs);
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+        if (typeof file === "string" && file.includes(".corrupt-")) {
+          throw Object.assign(new Error(`ENOSPC: no space left on device, open '${file}'`), {
+            code: "ENOSPC",
+          });
+        }
+        origWrite(file, data, options);
+      });
+
+      nowSpy.mockReturnValue(1000);
+      config.loadConfigOrDefault();
+      nowSpy.mockReturnValue(2000);
+      config.loadConfigOrDefault();
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      writeSpy.mockRestore();
+      nowSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
     it("logs a corrupt config once across Config instances on the same path", () => {
       const corruptData = '{ "projects": ';
       fs.writeFileSync(configFilePath(), corruptData);
