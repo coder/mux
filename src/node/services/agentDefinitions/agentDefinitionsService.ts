@@ -335,13 +335,14 @@ async function readAgentDescriptorFromFile(
   let byteSize: number;
   if (pluginRoot != null) {
     try {
-      content = await readPluginFileWithinRootCapped({
+      const result = await readPluginFileWithinRootCapped({
         filePath,
         pluginRoot,
         maxBytes: MAX_FILE_SIZE,
         label: `plugin agent '${agentId}'`,
       });
-      byteSize = Buffer.byteLength(content, "utf8");
+      content = result.content;
+      byteSize = result.byteSize;
     } catch (err) {
       log.warn(`Failed to read plugin agent definition ${filePath}: ${getErrorMessage(err)}`);
       return null;
@@ -629,13 +630,14 @@ export async function readAgentDefinition(
         // This frontmatter controls agent policy (runnable/base/tools), so a
         // replacement symlink promoted after isPluginAgentContained must not
         // have its outside target read here.
-        content = await readPluginFileWithinRootCapped({
+        const result = await readPluginFileWithinRootCapped({
           filePath,
           pluginRoot: candidate.pluginRoot,
           maxBytes: MAX_FILE_SIZE,
           label: `plugin agent '${agentId}'`,
         });
-        byteSize = Buffer.byteLength(content, "utf8");
+        content = result.content;
+        byteSize = result.byteSize;
       } else {
         const stat = await candidate.runtime.stat(filePath);
         if (stat.isDirectory) {

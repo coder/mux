@@ -329,12 +329,14 @@ async function resolvePluginWorkflowScript(
   // and accept an outside file as executable workflow source.
   let source: string;
   try {
-    source = await readPluginFileWithinRootCapped({
-      filePath: resolvedPath,
-      pluginRoot: plugin.rootPath,
-      maxBytes: MAX_FILE_SIZE,
-      label: "plugin workflow script",
-    });
+    source = (
+      await readPluginFileWithinRootCapped({
+        filePath: resolvedPath,
+        pluginRoot: plugin.rootPath,
+        maxBytes: MAX_FILE_SIZE,
+        label: "plugin workflow script",
+      })
+    ).content;
   } catch (error) {
     throw new Error(`Plugin workflow script not readable: ${getErrorMessage(error)}`);
   }

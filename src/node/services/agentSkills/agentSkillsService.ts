@@ -460,13 +460,14 @@ async function readSkillDescriptorFromDir(
     // and a managed update promoted in between could otherwise have the
     // stale canonical path read an outside SKILL.md.
     try {
-      content = await readPluginFileWithinRootCapped({
+      const result = await readPluginFileWithinRootCapped({
         filePath: skillFilePath,
         pluginRoot: options.pluginRoot,
         maxBytes: MAX_FILE_SIZE,
         label: `plugin skill '${directoryName}' SKILL.md`,
       });
-      byteSize = Buffer.byteLength(content, "utf8");
+      content = result.content;
+      byteSize = result.byteSize;
     } catch (err) {
       const message = getErrorMessage(err);
       log.warn(`Failed to read plugin SKILL.md for ${directoryName}: ${message}`);
@@ -889,13 +890,14 @@ async function readAgentSkillFromDir(
     // Plugin skills are host-local by construction (plugin scan candidates
     // pin a LocalRuntime): bounded post-open revalidation — see the
     // pluginRoot doc on ResolvedAgentSkill.
-    content = await readPluginFileWithinRootCapped({
+    const result = await readPluginFileWithinRootCapped({
       filePath: skillFilePath,
       pluginRoot,
       maxBytes: MAX_FILE_SIZE,
       label: `plugin skill '${directoryName}' SKILL.md`,
     });
-    byteSize = Buffer.byteLength(content, "utf8");
+    content = result.content;
+    byteSize = result.byteSize;
   } else {
     const stat = await runtime.stat(skillFilePath);
     if (stat.isDirectory) {

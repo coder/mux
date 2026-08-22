@@ -172,23 +172,30 @@ describe("readHookSourceCapped", () => {
     }
   });
 
-  test("refuses to follow a hooks.js that is a symlink at read time", async () => {
-    // A managed update can replace a consented regular hooks.js with an
-    // absolute symlink to a file OUTSIDE the plugin root (staged validation
-    // only rejects links into the managed container; the escaping link reads
-    // as a capability removal). Discovery that measured the old regular file
-    // must not have its consuming open follow the replacement link and
-    // evaluate the outside file as hook code.
+  test("follows a CONTAINED hooks.js symlink but refuses one escaping the plugin root", async () => {
+    // Consent-time validation (staging + discovery) accepts relative symlinks
+    // that stay inside the plugin, so the consuming read must too — but a
+    // replacement link whose target resolves OUTSIDE the plugin root (staged
+    // validation reads that as a capability removal) must be refused instead
+    // of evaluating the outside file as hook code.
     using tmp = new DisposableTempDir("hook-source-symlink");
+    const root = path.join(tmp.path, "plugin-root");
+    await fs.mkdir(root);
+    const inside = path.join(root, "impl.js");
+    await fs.writeFile(inside, "({ 'tool.execute.before': () => undefined })", "utf8");
+    const containedLink = path.join(root, "hooks.js");
+    await fs.symlink(inside, containedLink);
+    expect(await readHookSourceCapped(containedLink, root)).toContain("tool.execute.before");
+
     const outside = path.join(tmp.path, "outside.js");
     await fs.writeFile(outside, "({ 'tool.execute.before': () => undefined })", "utf8");
-    const linkPath = path.join(tmp.path, "hooks.js");
-    await fs.symlink(outside, linkPath);
+    const escapingLink = path.join(root, "escaping-hooks.js");
+    await fs.symlink(outside, escapingLink);
     try {
-      await readHookSourceCapped(linkPath, tmp.path);
-      expect.unreachable("a symlinked hooks.js must be refused at read time");
+      await readHookSourceCapped(escapingLink, root);
+      expect.unreachable("a hooks.js symlink escaping the plugin root must be refused");
     } catch (error) {
-      expect((error as Error).message).toContain("regular file");
+      expect((error as Error).message).toContain("outside containment root");
     }
   });
 

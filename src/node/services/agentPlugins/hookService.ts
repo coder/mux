@@ -708,12 +708,13 @@ function annotateResult(result: unknown, annotation: string, pluginName: string)
  * the file grows mid-read. Exported for tests.
  */
 export async function readHookSourceCapped(hooksPath: string, pluginRoot: string): Promise<string> {
-  return readPluginFileWithinRootCapped({
+  const result = await readPluginFileWithinRootCapped({
     filePath: hooksPath,
     pluginRoot,
     maxBytes: MAX_PLUGIN_HOOK_SOURCE_BYTES,
     label: "hooks.js",
   });
+  return result.content;
 }
 
 /** Process-wide singleton (mirrors eventSpine/sandboxHostService). */

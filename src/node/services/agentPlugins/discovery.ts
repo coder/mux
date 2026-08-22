@@ -58,29 +58,48 @@ export const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
  */
 export const MAX_PLUGIN_HOOK_SOURCE_BYTES = 1024 * 1024;
 
+export interface PluginFileReadResult {
+  content: string;
+  /** Bytes actually returned (handle-read), for pagination/size metadata. */
+  byteSize: number;
+  /** Modification time from the SAME handle's fstat as the content read. */
+  modifiedTime: Date;
+}
+
 /**
- * Read a consented plugin component file (hooks.js, mcp.json) through a
- * bounded handle, revalidating containment and identity AFTER the open.
+ * Read a consented plugin component file (hooks.js, mcp.json, agents/*.md,
+ * SKILL.md + referenced skill files, workflows/*.js) through a bounded
+ * handle, revalidating containment and identity AFTER the open.
  *
  * Discovery's measurement and the consuming read are separated by an
- * update-sized TOCTOU window: a managed update can promote a replacement
- * tree where the canonical path — or any ANCESTOR component on it — became
- * an absolute symlink to existing content outside the plugin root. Staged
- * validation only rejects links into the managed container, and discovery
- * treats the escaping link as a capability REMOVAL, so the swapped tree is
- * permitted; a stale canonical path would then read (and execute/parse)
- * attacker-chosen outside content. Two post-open checks close this (a
- * promotion is a single swap, so a link the open followed is still present
- * here):
- * 1. Containment recheck: the fully-resolved path must stay inside the
+ * update-sized TOCTOU window: a managed update (or a checkout flipping an
+ * unmanaged project plugin) can replace the canonical path — or any ANCESTOR
+ * component on it, including the plugin root itself — with a symlink to
+ * existing content outside the plugin root. Staged validation only rejects
+ * links into the managed container, and discovery treats the escaping link
+ * as a capability REMOVAL, so the swapped tree is permitted; a stale
+ * canonical path would then read (and execute/parse) attacker-chosen outside
+ * content. Three post-open checks close this (a promotion is a single swap,
+ * so a link the open followed is still present here):
+ * 1. Root identity: `pluginRoot` is the CANONICAL root discovery resolved
+ *    (legitimate committed root symlinks were already followed there), so it
+ *    must still be fully physical: realpath(pluginRoot) must equal
+ *    pluginRoot. Were the root — or ANY ancestor of it — now a link,
+ *    realpathing root and file would resolve BOTH into the replacement tree
+ *    and containment below would vacuously pass.
+ * 2. Containment recheck: the fully-resolved file path must stay inside the
  *    plugin root, catching replacement links at any ancestor component.
- * 2. Leaf identity: the opened object must BE the regular file a
- *    non-following lstat sees at this path (a symlink fails isFile(); a
- *    concurrent replacement fails the dev/ino match).
+ * 3. Leaf identity at the RESOLVED path: the opened object must BE the
+ *    regular file a non-following lstat sees at the fully-resolved pathname.
+ *    Consent-time validation accepts contained relative symlinks (e.g. a
+ *    SKILL.md linking elsewhere inside the plugin), so a contained link is
+ *    legitimate — resolution already proved it stays inside — while a
+ *    concurrent replacement fails the dev/ino match.
  * The size ceiling is enforced on the same handle (fstat), and the read is
  * bounded to the fstat-reported byte count so a file growing mid-read stays
- * capped. Over-blocking is safe — the caller skips and re-measures on the
- * next discovery.
+ * capped. Returned metadata comes from that same handle so callers never
+ * pair post-open content with pre-open stat results. Over-blocking is safe —
+ * the caller skips and re-measures on the next discovery.
  */
 export async function readPluginFileWithinRootCapped(args: {
   filePath: string;
@@ -88,13 +107,19 @@ export async function readPluginFileWithinRootCapped(args: {
   maxBytes: number;
   /** Component name used in error messages (e.g. "hooks.js"). */
   label: string;
-}): Promise<string> {
+}): Promise<PluginFileReadResult> {
   const { filePath, pluginRoot, maxBytes, label } = args;
   const handle = await fsPromises.open(filePath, "r");
   try {
     const stat = await handle.stat({ bigint: true });
-    await ensurePathContained(pluginRoot, filePath);
-    const linkStat = await fsPromises.lstat(filePath, { bigint: true });
+    const rootReal = await fsPromises.realpath(pluginRoot);
+    if (rootReal !== pluginRoot) {
+      throw new Error(
+        `${label} cannot be read: the plugin root pathname no longer resolves to itself (replaced since discovery): ${pluginRoot}`
+      );
+    }
+    const resolvedPath = await ensurePathContained(pluginRoot, filePath);
+    const linkStat = await fsPromises.lstat(resolvedPath, { bigint: true });
     if (!linkStat.isFile() || linkStat.dev !== stat.dev || linkStat.ino !== stat.ino) {
       throw new Error(
         `${label} is not the regular file discovery measured (symlinked or replaced): ${filePath}`
@@ -112,7 +137,11 @@ export async function readPluginFileWithinRootCapped(args: {
       }
       offset += bytesRead;
     }
-    return buffer.subarray(0, offset).toString("utf8");
+    return {
+      content: buffer.subarray(0, offset).toString("utf8"),
+      byteSize: offset,
+      modifiedTime: stat.mtime,
+    };
   } finally {
     await handle.close();
   }

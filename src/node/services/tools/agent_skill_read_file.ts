@@ -239,6 +239,13 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
         }
 
         let fullContent: string;
+        // Default: the preliminary stat above. For plugin reads these are
+        // overwritten with metadata from the SAME validated handle as the
+        // content — a legitimate in-root replacement promoted between that
+        // stat and the bounded open must not pair new content with the old
+        // file's size/mtime (wrong pagination/size for the model and UI).
+        let resultFileSize = stat.size;
+        let resultModifiedTime = stat.modifiedTime.toISOString();
         try {
           // Plugin skills retain plugin provenance: the consuming read must
           // revalidate containment + file identity against the PLUGIN root
@@ -248,15 +255,19 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           // outside directory; skill-dir-relative resolution above would
           // then canonicalize through that same link and serve outside
           // files as skill references.
-          fullContent =
-            resolvedSkill.pluginRoot != null
-              ? await readPluginFileWithinRootCapped({
-                  filePath: targetPath,
-                  pluginRoot: resolvedSkill.pluginRoot,
-                  maxBytes: MAX_FILE_SIZE,
-                  label: `plugin skill file '${filePath}'`,
-                })
-              : await readFileString(skillRuntime, targetPath);
+          if (resolvedSkill.pluginRoot != null) {
+            const pluginRead = await readPluginFileWithinRootCapped({
+              filePath: targetPath,
+              pluginRoot: resolvedSkill.pluginRoot,
+              maxBytes: MAX_FILE_SIZE,
+              label: `plugin skill file '${filePath}'`,
+            });
+            fullContent = pluginRead.content;
+            resultFileSize = pluginRead.byteSize;
+            resultModifiedTime = pluginRead.modifiedTime.toISOString();
+          } else {
+            fullContent = await readFileString(skillRuntime, targetPath);
+          }
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
@@ -269,8 +280,8 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
 
         return readContentWithFileReadLimits({
           fullContent,
-          fileSize: stat.size,
-          modifiedTime: stat.modifiedTime.toISOString(),
+          fileSize: resultFileSize,
+          modifiedTime: resultModifiedTime,
           offset,
           limit,
         });

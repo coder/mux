@@ -569,12 +569,14 @@ export async function loadPluginMcpServers(
   // post-check can retire the stale result.
   let text: string;
   try {
-    text = await readPluginFileWithinRootCapped({
-      filePath: plugin.mcpConfigPath,
-      pluginRoot: plugin.rootPath,
-      maxBytes: MAX_PLUGIN_MANIFEST_BYTES,
-      label: "mcp.json",
-    });
+    text = (
+      await readPluginFileWithinRootCapped({
+        filePath: plugin.mcpConfigPath,
+        pluginRoot: plugin.rootPath,
+        maxBytes: MAX_PLUGIN_MANIFEST_BYTES,
+        label: "mcp.json",
+      })
+    ).content;
   } catch (error) {
     return disableMcp(getErrorMessage(error));
   }
