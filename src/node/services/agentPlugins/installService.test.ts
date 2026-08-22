@@ -2194,6 +2194,101 @@ describe("AgentPluginInstallService", () => {
     expect(doc.pendingOverridePrunes).toBeUndefined();
   });
 
+  test("tombstone retries prune live workspaces the record never held", async () => {
+    // A workspace registered during an uninstall can miss the durable
+    // tombstone entirely (the post-commit union write can fail after the
+    // delta was known only in memory, or a crash mid-prune loses it). The
+    // tombstone's PRESENCE is the retry record: retries must re-enumerate
+    // live workspaces and only clear after the full sweep succeeded.
+    const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
+    const prunedIds: string[] = [];
+    const overridesStub = {
+      prunePluginOverrideKeys: (workspaceId: string) => {
+        prunedIds.push(workspaceId);
+        return Promise.resolve();
+      },
+    };
+    const serviceWithOverrides = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      workspaceMcpOverridesService: overridesStub as unknown as WorkspaceMcpOverridesService,
+    });
+    // Live workspaces: the recorded ws-1 plus a delta workspace the record
+    // never held.
+    const metadataSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() =>
+      Promise.resolve([
+        { id: "ws-1", runtimeConfig: { type: "local" } },
+        { id: "ws-delta", runtimeConfig: { type: "worktree" } },
+      ] as unknown as Awaited<ReturnType<Config["getAllWorkspaceMetadata"]>>)
+    );
+
+    await fsPromises.writeFile(
+      registryFile(),
+      JSON.stringify({
+        plugins: [],
+        pendingOverridePrunes: [{ prefix: `plugin:${instanceId}:`, workspaceIds: ["ws-1"] }],
+      })
+    );
+
+    try {
+      // The reinstall gate's retry must sweep BOTH workspaces before
+      // unblocking the install.
+      const preview = await serviceWithOverrides.preview({ input: remoteDir });
+      await serviceWithOverrides.install({
+        source: preview.source,
+        expectedSha: preview.lockedSha,
+      });
+      expect(prunedIds).toContain("ws-1");
+      expect(prunedIds).toContain("ws-delta");
+    } finally {
+      metadataSpy.mockRestore();
+    }
+  });
+
+  test("section-open retry durably records a failed delta prune the tombstone never held", async () => {
+    // Same recorded/failed COUNT, different membership: recorded ws-1 prunes
+    // fine while the unrecorded ws-delta fails. The retry must rewrite the
+    // tombstone to name ws-delta — a length comparison would skip the write
+    // and the next successful ws-1-only retry would clear the record while
+    // ws-delta still holds the stale enable.
+    const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
+    const overridesStub = {
+      prunePluginOverrideKeys: (workspaceId: string) =>
+        workspaceId === "ws-delta"
+          ? Promise.reject(new Error("checkout unavailable"))
+          : Promise.resolve(),
+    };
+    const serviceWithOverrides = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      workspaceMcpOverridesService: overridesStub as unknown as WorkspaceMcpOverridesService,
+    });
+    const metadataSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() =>
+      Promise.resolve([
+        { id: "ws-1", runtimeConfig: { type: "local" } },
+        { id: "ws-delta", runtimeConfig: { type: "local" } },
+      ] as unknown as Awaited<ReturnType<Config["getAllWorkspaceMetadata"]>>)
+    );
+
+    await fsPromises.writeFile(
+      registryFile(),
+      JSON.stringify({
+        plugins: [],
+        pendingOverridePrunes: [{ prefix: `plugin:${instanceId}:`, workspaceIds: ["ws-1"] }],
+      })
+    );
+
+    try {
+      await serviceWithOverrides.list();
+      const doc = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+        pendingOverridePrunes?: Array<{ prefix: string; workspaceIds: string[] }>;
+      };
+      expect(doc.pendingOverridePrunes).toEqual([
+        { prefix: `plugin:${instanceId}:`, workspaceIds: ["ws-delta"] },
+      ]);
+    } finally {
+      metadataSpy.mockRestore();
+    }
+  });
+
   test("tombstone rewrites preserve unknown variants and fields from newer builds", async () => {
     // A newer build's tombstone variant (unrecognized shape) plus a
     // recognized tombstone carrying an unknown field, for an unrelated

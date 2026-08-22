@@ -150,15 +150,25 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
         opts.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS) === true,
     }),
   });
+  const overridesServiceForInvalidation = opts.workspaceMcpOverridesService;
   const mcpServerManager = new MCPServerManager(
     mcpConfigService,
     {
       // A plugin update/uninstall in a sibling process (desktop app alongside
       // `xum server`) bumps the installer's mutation epoch; managers retire
-      // cached plugin instances before serving them again.
+      // cached plugin instances before serving them again. The sibling's
+      // uninstall also pruned plugin keys from workspace override files, so
+      // the sweep refreshes cached override snapshots from disk.
       pluginInvalidation: {
         keyPrefix: PLUGIN_SERVER_KEY_PREFIX,
         readToken: () => readMutationEpochToken(path.join(mcpConfig.rootDir, STAGING_DIR_NAME)),
+        ...(overridesServiceForInvalidation !== undefined
+          ? {
+              readWorkspaceOverrides: async (workspaceId: string) =>
+                (await overridesServiceForInvalidation.getOverridesForWorkspace(workspaceId))
+                  .overrides,
+            }
+          : {}),
       },
       ...opts.mcpServerManagerOptions,
     },

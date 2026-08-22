@@ -2730,24 +2730,27 @@ export class AgentPluginInstallService {
       // saved and fold the delta in. A failed re-enumeration skips the
       // tombstone shrink below, keeping the pessimistic record.
       let pruneIds = workspaceIdsToPrune;
-      let deltaEnumerated = true;
+      let postCommitEnumerated = true;
+      let deltaRecordFailure: string | undefined;
       try {
         const postCommitIds = await this.listWorkspaceIdsForOverridePruning();
         pruneIds = [...new Set([...workspaceIdsToPrune, ...postCommitIds])];
       } catch (error) {
-        deltaEnumerated = false;
+        postCommitEnumerated = false;
         log.warn(
           "Failed to re-enumerate workspaces after uninstall commit; keeping the pessimistic tombstone",
           { error: getErrorMessage(error) }
         );
       }
       // Delta workspaces are NOT in the commit-time tombstone. Persist the
-      // union BEFORE pruning: a crash between here and their prune would
-      // otherwise leave their previously accepted enable with no durable
-      // retry record, and a same-name reinstall would reactivate the
-      // replacement server. A failed persist skips the shrink below so no
-      // write can narrow the record to less than what still needs pruning.
-      if (deltaEnumerated && pruneIds.length > workspaceIdsToPrune.length) {
+      // union BEFORE pruning so a crash between here and their prune keeps a
+      // precise durable record. A failed persist is still covered as long as
+      // ANY tombstone for this prefix exists: retryPrune re-enumerates live
+      // workspaces on every retry, so the pessimistic commit-time record
+      // reaches the delta too. Only when no tombstone exists at all (zero
+      // workspaces at commit time) is the delta unrecorded — surfaced to the
+      // user at the end, after all remaining cleanup ran.
+      if (postCommitEnumerated && pruneIds.length > workspaceIdsToPrune.length) {
         try {
           const { envelope: envelopeDelta, rawEntries: entriesDelta } =
             await this.readRegistryDocument("strict");
@@ -2758,7 +2761,9 @@ export class AgentPluginInstallService {
           );
           await this.writePendingOverridePrunes(envelopeDelta, entriesDelta, pendingDelta);
         } catch (error) {
-          deltaEnumerated = false;
+          if (workspaceIdsToPrune.length === 0) {
+            deltaRecordFailure = `The plugin was uninstalled, but recording override cleanup for workspaces registered during the uninstall failed (${getErrorMessage(error)}). If reinstalling this plugin, first check the MCP settings of workspaces ${pruneIds.join(", ")} for stale entries.`;
+          }
           log.warn(
             "Failed to persist post-commit workspace delta into the prune tombstone; keeping the pessimistic record",
             { error: getErrorMessage(error) }
@@ -2771,9 +2776,11 @@ export class AgentPluginInstallService {
       // tombstone is already durable (commit write above). Shrink it to what
       // actually failed — best-effort: a failed shrink leaves the over-broad
       // tombstone, which self-heals on the next retry (section open or the
-      // reinstall gate).
+      // reinstall gate). The shrink is gated on the re-enumeration only, not
+      // on the delta persist above: failedPruneIds covers the full union, so
+      // a successful shrink IS the durable record for failed delta prunes.
       const failedPruneIds = await this.pruneWorkspaceOverrides(serverKeyPrefix, pruneIds);
-      if (pruneIds.length > 0 && deltaEnumerated) {
+      if (pruneIds.length > 0 && postCommitEnumerated) {
         // STRICT re-read for the shrink: a lenient read degrading a transient
         // I/O error or corruption to an empty document would make this write
         // rewrite plugins.json with an empty plugin list, orphaning every
@@ -2788,6 +2795,10 @@ export class AgentPluginInstallService {
             failedPruneIds
           );
           await this.writePendingOverridePrunes(envelopeAfter, entriesAfter, pendingAfter);
+          // This write durably recorded every still-failing prune (the
+          // failed list covers the delta), so the earlier delta persist
+          // failure no longer needs surfacing.
+          deltaRecordFailure = undefined;
         } catch (error) {
           log.warn("Failed to shrink pending override prune tombstone (kept pessimistic)", {
             serverKeyPrefix,
@@ -2801,8 +2812,11 @@ export class AgentPluginInstallService {
       // Thrown LAST so the remaining cleanup above (invalidation, override
       // pruning) still ran; the uninstall itself is committed and the message
       // says so.
-      if (dataDeletionFailure !== undefined) {
-        throw new Error(dataDeletionFailure);
+      const commitFailures = [dataDeletionFailure, deltaRecordFailure].filter(
+        (message): message is string => message !== undefined
+      );
+      if (commitFailures.length > 0) {
+        throw new Error(commitFailures.join(" "));
       }
     });
   }
@@ -3020,23 +3034,30 @@ export class AgentPluginInstallService {
   }
 
   /**
-   * Retry one tombstone's pruning. Workspaces that no longer exist in the
-   * config are dropped first — a deleted workspace's overrides can never
-   * reactivate anything, so keeping its ID would block reinstall forever.
-   * Returns the IDs that still need pruning (existing workspaces whose
-   * prune failed, or everything when metadata enumeration itself failed).
+   * Retry one tombstone's pruning. The tombstone's PRESENCE — not its exact
+   * workspace-ID list — is the durable retry record: workspaces registered
+   * between an uninstall's pre-commit enumeration and its post-commit
+   * re-enumeration may exist only in memory when the union write fails, and
+   * a crash mid-prune loses them entirely. Every retry therefore
+   * re-enumerates the CURRENT local/worktree workspaces and prunes that
+   * full set, so a tombstone can only clear after a complete live sweep
+   * succeeded. Recorded workspaces that no longer exist drop out implicitly
+   * — a deleted workspace's overrides can never reactivate anything, so
+   * keeping its ID would block reinstall forever. Returns the IDs that
+   * still need pruning; when enumeration itself fails, the recorded list is
+   * returned unshrunk even if its prunes succeeded, because unenumerated
+   * delta workspaces cannot be ruled out (over-blocking is safe).
    */
   private async retryPrune(prune: { prefix: string; workspaceIds: string[] }): Promise<string[]> {
-    let liveWorkspaceIds = prune.workspaceIds;
+    let liveWorkspaceIds: string[];
     try {
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const knownIds = new Set(allMetadata.map((metadata) => metadata.id));
-      liveWorkspaceIds = prune.workspaceIds.filter((workspaceId) => knownIds.has(workspaceId));
+      liveWorkspaceIds = await this.listWorkspaceIdsForOverridePruning();
     } catch (error) {
-      // Enumeration failed: keep the full list (over-blocking is safe).
-      log.warn("Failed to reconcile pending override prune against workspaces", {
+      log.warn("Failed to enumerate workspaces for pending override prune retry", {
         error: getErrorMessage(error),
       });
+      await this.pruneWorkspaceOverrides(prune.prefix, prune.workspaceIds);
+      return prune.workspaceIds;
     }
     return this.pruneWorkspaceOverrides(prune.prefix, liveWorkspaceIds);
   }
@@ -3110,7 +3131,12 @@ export class AgentPluginInstallService {
       let progressed = false;
       for (const prune of pending) {
         const failed = await this.retryPrune(prune);
-        if (failed.length !== prune.workspaceIds.length) {
+        // Set comparison, not length: retryPrune re-enumerates live
+        // workspaces, so `failed` can contain IDs the record never held
+        // (delta workspaces) — those must be folded in durably too.
+        const recorded = new Set(prune.workspaceIds);
+        const changed = failed.length !== recorded.size || failed.some((id) => !recorded.has(id));
+        if (changed) {
           progressed = true;
           rawPending = this.updateRawPendingPrunes(rawPending, prune.prefix, failed);
         }

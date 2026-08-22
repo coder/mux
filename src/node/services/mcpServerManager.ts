@@ -1051,6 +1051,15 @@ export interface MCPServerManagerOptions {
   pluginInvalidation?: {
     keyPrefix: string;
     readToken: () => Promise<string | undefined>;
+    /**
+     * Disk-authoritative workspace override read. A sibling's uninstall also
+     * pruned plugin keys from workspace override FILES; the sweep uses this
+     * to refresh every cached override snapshot (latestWorkspaceOverrides
+     * and lastWorkspaceRequestOptions) so no pre-prune enable survives in
+     * memory. When absent or failing, the affected cached state is dropped
+     * instead.
+     */
+    readWorkspaceOverrides?: (workspaceId: string) => Promise<WorkspaceMCPOverrides | undefined>;
   };
 }
 
@@ -1170,20 +1179,72 @@ export class MCPServerManager {
       }
       log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
       // A sibling's uninstall also PRUNED plugin keys from workspace override
-      // files on disk. This manager's latestWorkspaceOverrides cache overlays
-      // every serve's caller snapshot, so a stale cached enable would
-      // permanently shadow the pruned disk state — and a same-name reinstall
-      // would start its server without new consent. Disk is authoritative
-      // after a cross-process mutation (every override write persists before
-      // publishing), so drop the cache and let callers' fresh disk snapshots
-      // through.
-      this.latestWorkspaceOverrides.clear();
+      // files on disk. Disk is authoritative after a cross-process mutation
+      // (every override write persists before publishing), so refresh every
+      // cached override snapshot from it — BOTH caches: a stale
+      // latestWorkspaceOverrides entry would shadow the pruned disk state on
+      // the next serve, and a stale lastWorkspaceRequestOptions entry would
+      // feed a pre-prune enable into getPrompt()'s refresh, starting a
+      // same-name reinstall's replacement server without new consent.
+      await this.refreshCachedOverridesFromDisk();
       await this.stopServersWithKeyPrefix(invalidation.keyPrefix);
       this.lastPluginInvalidationToken = token;
     };
     const next = this.pluginInvalidationQueue.then(run, run);
     this.pluginInvalidationQueue = next.catch(() => undefined);
     return next;
+  }
+
+  /**
+   * Reload cached workspace override snapshots from disk after a sibling
+   * process's plugin mutation. Workspaces whose disk state cannot be read
+   * (no reader wired, read failure) get their cached state DROPPED instead
+   * so nothing stale survives — callers then supply fresh snapshots on their
+   * next serve, and prompt refreshes for such workspaces stay disabled until
+   * then. Off-host workspaces (SSH/devcontainer) are skipped: plugin servers
+   * are never offered there, so a stale plugin enable is inert, and reading
+   * their override files would exec remotely inside the serialized sweep.
+   */
+  private async refreshCachedOverridesFromDisk(): Promise<void> {
+    const readOverrides = this.pluginInvalidation?.readWorkspaceOverrides;
+    for (const [workspaceId, recorded] of [...this.lastWorkspaceRequestOptions]) {
+      const execsOffHost =
+        recorded.runtime instanceof RemoteRuntime ||
+        recorded.runtime instanceof DevcontainerRuntime;
+      if (execsOffHost) {
+        continue;
+      }
+      let fresh: WorkspaceMCPOverrides | undefined;
+      let readFailed = readOverrides === undefined;
+      if (readOverrides !== undefined) {
+        try {
+          fresh = await readOverrides(workspaceId);
+        } catch (error) {
+          readFailed = true;
+          log.warn("[MCP] Failed to reload workspace overrides after sibling plugin mutation", {
+            workspaceId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+      if (readFailed) {
+        this.latestWorkspaceOverrides.delete(workspaceId);
+        this.lastWorkspaceRequestOptions.delete(workspaceId);
+      } else {
+        this.latestWorkspaceOverrides.set(workspaceId, fresh);
+        this.lastWorkspaceRequestOptions.set(workspaceId, { ...recorded, overrides: fresh });
+      }
+      // In-flight prompt refresh loops must re-run against the new state.
+      this.bumpWorkspaceOptionsMutationCount(workspaceId);
+    }
+    // Entries without recorded options carry no runtime/identity to refresh
+    // from; drop them so callers' fresh disk snapshots pass through.
+    for (const workspaceId of [...this.latestWorkspaceOverrides.keys()]) {
+      if (!this.lastWorkspaceRequestOptions.has(workspaceId)) {
+        this.latestWorkspaceOverrides.delete(workspaceId);
+        this.bumpWorkspaceOptionsMutationCount(workspaceId);
+      }
+    }
   }
 
   /**
@@ -1559,24 +1620,35 @@ export class MCPServerManager {
   async getToolsForWorkspace(
     options: MCPWorkspaceRequestOptions
   ): Promise<MCPToolsForWorkspaceResult> {
-    const result = await this.ensureWorkspaceServers(options, true);
     // Post-publication token recheck: a sibling mutation that BEGAN after
     // the preflight read (retireCrossProcessPluginInstances inside
     // ensureWorkspaceServers) is invisible to the in-process invalidation
     // epoch, and the installer's discovery bracket cannot flag a mutation
     // that starts after its scan completed — this serve could otherwise
     // return instances from the replaced tree and use them indefinitely.
-    // The instances are published now, so the sweep can retire them; rebuild
-    // once from the new tree. A mutation racing the rebuild is caught by the
-    // next serve's preflight (its instances were closed by that sweep).
-    if (this.pluginInvalidation !== undefined && this.pluginInvalidationTokenSeen) {
-      const token = await this.pluginInvalidation.readToken();
-      if (token !== this.lastPluginInvalidationToken) {
-        await this.retireCrossProcessPluginInstances();
-        return this.ensureWorkspaceServers(options, true);
+    // The instances are published now, so the sweep can retire them; loop
+    // until a serve is BRACKETED by an unchanged token — a single rebuild
+    // could itself race a second mutation that starts after its preflight
+    // and publish a stale instance. Each extra iteration requires a real
+    // sibling mutation to have advanced the on-disk epoch mid-serve, so the
+    // loop terminates in practice; the cap turns a pathological mutation
+    // storm into an explicit error instead of serving stale instances.
+    for (let attempt = 0; ; attempt++) {
+      const result = await this.ensureWorkspaceServers(options, true);
+      if (this.pluginInvalidation === undefined || !this.pluginInvalidationTokenSeen) {
+        return result;
       }
+      const token = await this.pluginInvalidation.readToken();
+      if (token === this.lastPluginInvalidationToken) {
+        return result;
+      }
+      if (attempt >= 5) {
+        throw new Error(
+          "MCP startup kept racing concurrent plugin mutations; retry once plugin installs/updates settle"
+        );
+      }
+      await this.retireCrossProcessPluginInstances();
     }
-    return result;
   }
 
   /**
@@ -1587,6 +1659,14 @@ export class MCPServerManager {
     requestOptions: MCPWorkspaceRequestOptions,
     refreshToolCatalogs: boolean
   ): Promise<MCPToolsForWorkspaceResult> {
+    // A sibling process's plugin mutation must retire cached plugin
+    // instances BEFORE this serve returns them (and before the epoch
+    // snapshot below, so the recycle is visible to this startup). It must
+    // also run BEFORE the overlay below captures this call's overrides: the
+    // sweep refreshes the cached override snapshots from disk, and options
+    // captured earlier would pass pre-mutation enables into startup.
+    await this.retireCrossProcessPluginInstances();
+
     // Cold workspaces have no recorded state for applyWorkspaceOverrides to repair.
     // Overlay the newest overrides over a caller snapshot that may predate the mutation.
     let options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
@@ -1621,11 +1701,6 @@ export class MCPServerManager {
     // generation without replacing recorded options; capture it before config
     // reads so enablement repair can detect them.
     const configGenerationUsed = this.configService.configGeneration;
-
-    // A sibling process's plugin mutation must retire cached plugin
-    // instances BEFORE this serve returns them (and before the epoch
-    // snapshot below, so the recycle is visible to this startup).
-    await this.retireCrossProcessPluginInstances();
 
     // Snapshot BEFORE reading config: a plugin swap that lands after this
     // point may invalidate instances this call starts (see

@@ -304,6 +304,121 @@ describe("MCPServerManager", () => {
     expect(restarted).toHaveBeenCalledTimes(0);
   });
 
+  test("serves loop until a startup is bracketed by an unchanged mutation token", async () => {
+    // A single post-publication rebuild is not enough: a second sibling
+    // mutation starting after the rebuild's preflight would let the rebuild
+    // publish an instance from ITS replaced tree and serve it indefinitely.
+    // The serve must repeat until one startup sees the same token on both
+    // sides.
+    manager.dispose();
+    let token = "epoch-1";
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: { keyPrefix: "plugin:", readToken: () => Promise.resolve(token) },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-token-loop";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    // Seed the token on a different workspace (first serve only records it).
+    access.startServers = () => Promise.resolve(startResult([]));
+    await manager.getToolsForWorkspace(workspaceRequest("ws-token-seed"));
+
+    // Two consecutive startups each race a fresh sibling mutation; the third
+    // runs clean.
+    const closes = [
+      mock(() => Promise.resolve(undefined)),
+      mock(() => Promise.resolve(undefined)),
+      mock(() => Promise.resolve(undefined)),
+    ];
+    let starts = 0;
+    access.startServers = () => {
+      starts += 1;
+      if (starts <= 2) {
+        token = `epoch-${starts + 1}`; // Sibling mutation mid-startup.
+      }
+      return Promise.resolve(
+        startResult([[pluginKey, { tools: { echo: testTool() }, close: closes[starts - 1] }]])
+      );
+    };
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    // Both raced instances were retired; only the bracketed third serve's
+    // instance survives.
+    expect(starts).toBe(3);
+    expect(closes[0]).toHaveBeenCalledTimes(1);
+    expect(closes[1]).toHaveBeenCalledTimes(1);
+    expect(closes[2]).toHaveBeenCalledTimes(0);
+    expect(Object.keys(result.tools)).toHaveLength(1);
+  });
+
+  test("cross-process sweep refreshes cached override snapshots from disk", async () => {
+    // A sibling's uninstall prunes plugin keys from workspace override FILES.
+    // Cached copies — the per-call overlay cache AND recorded request options
+    // (which getPrompt()'s refresh reuses) — must converge to disk, or a
+    // pre-prune enable would restart a same-name reinstall's server without
+    // new consent.
+    manager.dispose();
+    let token = "epoch-1";
+    let diskOverrides: Record<string, unknown> = { enabledServers: ["plugin:abc123:echo"] };
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: {
+        keyPrefix: "plugin:",
+        readToken: () => Promise.resolve(token),
+        readWorkspaceOverrides: () => Promise.resolve(diskOverrides),
+      },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-disk-refresh";
+    const pluginKey = "plugin:abc123:echo";
+    // Project-level disabled: only the workspace override enables the server.
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js", true) })
+    );
+    const close = mock(() => Promise.resolve(undefined));
+    // Start only what enablement actually requested: the pruned second serve
+    // must derive an EMPTY start set, not merely discard a started instance.
+    access.startServers = (...args: unknown[]) => {
+      const servers = args[0] as Record<string, unknown>;
+      return Promise.resolve(
+        pluginKey in servers
+          ? startResult([[pluginKey, { tools: { echo: testTool() }, close }]])
+          : startResult([])
+      );
+    };
+
+    // First serve: the caller's snapshot enables the plugin server.
+    const staleCallerOptions = workspaceRequest(workspaceId, {
+      overrides: { enabledServers: [pluginKey] },
+    });
+    const first = await manager.getToolsForWorkspace(staleCallerOptions);
+    expect(Object.keys(first.tools)).toHaveLength(1);
+
+    // Sibling uninstall: the override file is pruned on disk, then the epoch
+    // bumps.
+    diskOverrides = {};
+    token = "epoch-2";
+
+    // Same STALE caller snapshot: the preflight sweep must reload disk state
+    // before the overlay captures this call's overrides, so the pruned
+    // (empty) overrides win and no replacement server starts.
+    const second = await manager.getToolsForWorkspace(staleCallerOptions);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Object.keys(second.tools)).toHaveLength(0);
+
+    // Both caches converged to disk: getPrompt()'s refresh (recorded
+    // options) can no longer resurrect the pre-prune enable.
+    const internals = access as unknown as {
+      latestWorkspaceOverrides: Map<string, unknown>;
+      lastWorkspaceRequestOptions: Map<string, { overrides?: unknown }>;
+    };
+    expect(internals.latestWorkspaceOverrides.get(workspaceId)).toEqual({});
+    expect(internals.lastWorkspaceRequestOptions.get(workspaceId)?.overrides).toEqual({});
+  });
+
   test("stopServersWithKeyPrefix invalidates instances published by an in-flight startup, then retries them", async () => {
     const workspaceId = "ws-swap-race";
     const pluginKey = "plugin:abc123:echo";
