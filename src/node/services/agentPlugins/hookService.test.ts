@@ -156,7 +156,7 @@ describe("readHookSourceCapped", () => {
     using tmp = new DisposableTempDir("hook-source-cap");
     const smallPath = path.join(tmp.path, "hooks.js");
     await fs.writeFile(smallPath, "({ 'tool.execute.before': () => undefined })", "utf8");
-    expect(await readHookSourceCapped(smallPath)).toBe(
+    expect(await readHookSourceCapped(smallPath, tmp.path)).toBe(
       "({ 'tool.execute.before': () => undefined })"
     );
 
@@ -164,7 +164,7 @@ describe("readHookSourceCapped", () => {
     await fs.writeFile(bigPath, `// ${"x".repeat(2 * 1024 * 1024)}\n({})`, "utf8");
     // try/catch instead of .rejects: bun:test types trip await-thenable.
     try {
-      await readHookSourceCapped(bigPath);
+      await readHookSourceCapped(bigPath, tmp.path);
       expect.unreachable("an oversized hooks.js must be refused at read time");
     } catch (error) {
       expect((error as Error).message).toContain("too large");
@@ -184,10 +184,35 @@ describe("readHookSourceCapped", () => {
     const linkPath = path.join(tmp.path, "hooks.js");
     await fs.symlink(outside, linkPath);
     try {
-      await readHookSourceCapped(linkPath);
+      await readHookSourceCapped(linkPath, tmp.path);
       expect.unreachable("a symlinked hooks.js must be refused at read time");
     } catch (error) {
       expect((error as Error).message).toContain("regular file");
+    }
+  });
+
+  test("refuses a hooks.js reached through a symlinked ancestor directory", async () => {
+    // The leaf lstat check cannot catch a replacement symlink at an ANCESTOR
+    // component (lib/hooks.js where `lib` becomes a link to an outside dir):
+    // lstat follows ancestor links and reports the outside file as regular
+    // with matching dev/ino. The post-open containment recheck must reject
+    // the resolved path escaping the plugin root.
+    using tmp = new DisposableTempDir("hook-source-ancestor-symlink");
+    const outsideDir = path.join(tmp.path, "outside");
+    await fs.mkdir(outsideDir);
+    await fs.writeFile(
+      path.join(outsideDir, "hooks.js"),
+      "({ 'tool.execute.before': () => undefined })",
+      "utf8"
+    );
+    const root = path.join(tmp.path, "plugin-root");
+    await fs.mkdir(root);
+    await fs.symlink(outsideDir, path.join(root, "lib"));
+    try {
+      await readHookSourceCapped(path.join(root, "lib", "hooks.js"), root);
+      expect.unreachable("an ancestor-symlinked hooks.js must be refused at read time");
+    } catch (error) {
+      expect((error as Error).message).toContain("outside containment root");
     }
   });
 });

@@ -327,7 +327,7 @@ export class AgentPluginHookService {
       }
       let source: string;
       try {
-        source = await readHookSourceCapped(plugin.hooksPath);
+        source = await readHookSourceCapped(plugin.hooksPath, plugin.rootPath);
       } catch (error) {
         log.warn(`Agent plugin hooks: failed to read ${plugin.hooksPath}; skipping`, { error });
         continue;
@@ -634,21 +634,28 @@ function annotateResult(result: unknown, annotation: string, pluginName: string)
  * fstat-reported byte count through the same handle also bounds the read if
  * the file grows mid-read. Exported for tests.
  */
-export async function readHookSourceCapped(hooksPath: string): Promise<string> {
+export async function readHookSourceCapped(hooksPath: string, pluginRoot: string): Promise<string> {
   const handle = await fsPromises.open(hooksPath, "r");
   try {
     const stat = await handle.stat({ bigint: true });
     // The open above FOLLOWS symlinks. A managed update can replace a
-    // consented regular hooks.js with an absolute symlink to an existing
-    // file outside the plugin root — staged validation only rejects links
-    // into the managed container, and discovery treats the escaping link as
-    // a capability REMOVAL — so if discovery measured the old regular file
-    // and the swap landed before this open, the canonical pathname now names
-    // that link and the outside file would be evaluated as hook code.
-    // Require the opened object to BE the regular file a non-following lstat
-    // sees at this path: a symlink fails isFile(), and any concurrent
-    // replacement fails the dev/ino identity match (over-blocking is safe —
-    // the read is skipped and the next discovery re-measures).
+    // consented regular hooks.js — or any ANCESTOR directory on its path
+    // (lib/hooks.js with `lib` becoming a link) — with an absolute symlink to
+    // existing content outside the plugin root: staged validation only
+    // rejects links into the managed container, and discovery treats the
+    // escaping link as a capability REMOVAL. If discovery measured the old
+    // tree and the swap landed before this open, the canonical pathname now
+    // traverses that link and outside content would be evaluated as hook
+    // code. Two post-open checks close this (a promotion is a single swap,
+    // so a link followed by the open is still present here):
+    // 1. Containment recheck: the fully-resolved path must stay inside the
+    //    plugin root, catching replacement links at any ancestor component.
+    // 2. Leaf identity: the opened object must BE the regular file a
+    //    non-following lstat sees at this path (a symlink fails isFile();
+    //    a concurrent replacement fails the dev/ino match).
+    // Over-blocking is safe — the read is skipped and re-measured next
+    // discovery.
+    await ensurePathContained(pluginRoot, hooksPath);
     const linkStat = await fsPromises.lstat(hooksPath, { bigint: true });
     if (!linkStat.isFile() || linkStat.dev !== stat.dev || linkStat.ino !== stat.ino) {
       throw new Error(
