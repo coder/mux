@@ -777,11 +777,17 @@ export class RefineService {
 
     // Timeline events narrate the same trajectory, so they get the same
     // cutoff: events recorded before the segment's boundary row belong to
-    // discarded (reset) or already-summarized (compaction) context.
+    // discarded (reset) or already-summarized (compaction) context. FAIL
+    // CLOSED when the boundary cannot be correlated: a boundary row without
+    // a usable timestamp must omit the timeline entirely rather than let
+    // pre-reset user-controlled digests through unbounded.
     const boundaryIndex = findLatestContextBoundaryIndex(messagesResult.data);
-    const timelineSinceTs =
-      boundaryIndex >= 0 ? messagesResult.data[boundaryIndex].metadata?.timestamp : undefined;
-    const timelineText = await this.buildTimelineText(workspaceId, timelineSinceTs);
+    const boundaryRow = boundaryIndex >= 0 ? messagesResult.data[boundaryIndex] : undefined;
+    const timelineSinceTs = boundaryRow?.metadata?.timestamp;
+    const timelineText =
+      boundaryRow !== undefined && typeof timelineSinceTs !== "number"
+        ? undefined
+        : await this.buildTimelineText(workspaceId, timelineSinceTs);
 
     // Model: reuse the dream-agent inherit cascade — refine is the same class
     // of background self-maintenance agent, so a per-workspace dream override
@@ -897,6 +903,28 @@ export class RefineService {
         );
       }
       await using _stagingLock = stagingLock;
+
+      // TOCTOU guard: the history snapshot above was taken before the model
+      // streamed. A /clear --soft during generation appends a reset boundary
+      // (resetContext cancels in-flight passes, but a pass admitted around
+      // that drain can still race); publishing now would land a proposal
+      // derived from the DISCARDED pre-reset rows AFTER the marker, exactly
+      // where the approval-hash scan accepts it. Verify under the staging
+      // lock that the latest context boundary is still the one this pass
+      // distilled from, and fail closed otherwise.
+      const recheckResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+      if (!recheckResult.success) {
+        return Err(`could not re-verify workspace history before staging: ${recheckResult.error}`);
+      }
+      const recheckBoundaryIndex = findLatestContextBoundaryIndex(recheckResult.data);
+      const recheckBoundaryId =
+        recheckBoundaryIndex >= 0 ? recheckResult.data[recheckBoundaryIndex].id : null;
+      if (recheckBoundaryId !== (boundaryRow?.id ?? null)) {
+        return Err(
+          "the workspace context was reset or compacted while the refine pass was running; " +
+            "the distilled proposal no longer describes the active context — run /refine again"
+        );
+      }
 
       // Every completed pass REPLACES the staged set (one per workspace):
       // stale proposals from an older trajectory must not linger behind a
@@ -1038,9 +1066,12 @@ export class RefineService {
         limit: REFINE_TIMELINE_EVENT_LIMIT,
       });
       // Same confinement as the transcript (see runLocked): events from
-      // before the active segment's boundary row are excluded.
+      // before the active segment's boundary row are excluded. STRICTLY
+      // after: timestamps are millisecond-resolution, so a pre-reset event
+      // sharing the boundary's millisecond must be dropped (excluding a
+      // legitimate same-millisecond post-reset event is the safe direction).
       const events =
-        sinceTs === undefined ? page.events : page.events.filter((event) => event.ts >= sinceTs);
+        sinceTs === undefined ? page.events : page.events.filter((event) => event.ts > sinceTs);
       if (events.length === 0) return undefined;
       // list() returns newest-first; present oldest-first for the model.
       return [...events]

@@ -10008,6 +10008,18 @@ export class WorkspaceService extends EventEmitter {
         );
       }
 
+      // A refine pass distills the PRE-reset transcript. Letting it stream on
+      // and publish AFTER the boundary lands would make its proposal the
+      // newest hashed row of the post-reset segment — approvable edits
+      // derived from the very context this reset discards. Cancel and drain
+      // it first (never rejects): a pass already in its write section
+      // finishes before the boundary is appended, leaving its proposal
+      // pre-boundary where the approval-hash scan refuses it. The residual
+      // window (a pass admitted after this drain) is closed by the
+      // boundary-identity recheck refineService performs under its staging
+      // lock before publishing.
+      await this.refinePassCanceller?.cancelInFlightRefinePass(workspaceId);
+
       const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
       if (!historyResult.success) {
         return Err(`Failed to read active context before reset: ${historyResult.error}`);
