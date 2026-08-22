@@ -95,6 +95,7 @@ import { createContextResetBoundaryMessageId } from "@/node/services/utils/messa
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import {
   clearPendingBranchSummary,
+  deriveSideChannelModelCandidates,
   startAbandonedBranchSummaryInBackground,
 } from "@/node/services/branchSummary";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
@@ -8412,6 +8413,11 @@ export class WorkspaceService extends EventEmitter {
           abandonedMessages: abandonedBranchMessages,
           isExperimentEnabled: (experimentId) => this.isExperimentEnabled(experimentId),
           guardTailMessageId: sourceMessageId,
+          // The fork target's metadata carries no model settings yet (its
+          // first send would populate them, but that send awaits this very
+          // summary), so candidates must be snapshotted from the SOURCE
+          // workspace or generation silently no-ops on an empty list.
+          modelCandidates: deriveSideChannelModelCandidates(sourceMetadata),
           // Side-channel spend must reach session usage / the cost UI.
           ...(this.sessionUsageService ? { sessionUsageService: this.sessionUsageService } : {}),
         });
