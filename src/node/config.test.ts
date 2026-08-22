@@ -462,6 +462,40 @@ describe("Config", () => {
       }
     });
 
+    it("reuses a later usable duplicate when the first cannot be secured", () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const untightenable = `${configFile}.corrupt-1`;
+      const usable = `${configFile}.corrupt-2`;
+      fs.writeFileSync(untightenable, corruptData);
+      fs.writeFileSync(usable, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      const origChmod = fs.chmodSync.bind(fs);
+      const chmodSpy = spyOn(fs, "chmodSync").mockImplementation((file, mode) => {
+        if (file === untightenable) {
+          throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+        }
+        origChmod(file, mode);
+      });
+      // Creating a fresh sidecar must not be needed: the usable duplicate is reused.
+      const origWrite = fs.writeFileSync.bind(fs);
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+        if (typeof file === "string" && file.includes(".corrupt-") && file !== untightenable) {
+          throw new Error("unexpected sidecar creation");
+        }
+        origWrite(file, data, options);
+      });
+
+      config.loadConfigOrDefault();
+
+      expect(corruptBackups().sort()).toEqual([untightenable, usable].sort());
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain(usable);
+      writeSpy.mockRestore();
+      chmodSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
     it("aborts an edit write when the corrupt file changed after the edit loaded it", async () => {
       const configFile = configFilePath();
       const corruptA = '{ "projects": ';

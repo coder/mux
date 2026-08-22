@@ -984,30 +984,25 @@ export class Config {
       try {
         const configDir = path.dirname(this.configFile);
         const corruptPrefix = `${path.basename(this.configFile)}.corrupt-`;
-        const duplicate = fs.readdirSync(configDir, { withFileTypes: true }).find((entry) => {
-          if (!entry.isFile() || !entry.name.startsWith(corruptPrefix)) {
-            return false;
-          }
-          // An unreadable stale sidecar must not abort the scan; that would block backup
-          // creation (and therefore settings edits) until it is manually removed.
-          try {
-            return fs.readFileSync(path.join(configDir, entry.name)).equals(rawBytes);
-          } catch {
-            return false;
-          }
-        });
-
-        // A reused sidecar from an older build may be world-readable; tighten it to 0600
-        // before trusting it as the backup. If tightening fails (e.g. owned by another
-        // user), fall through and create a fresh restricted sidecar instead.
+        // Reuse a byte-identical sidecar only if it can also be secured: one from an older
+        // build may be world-readable, so tighten it to 0600 before trusting it as the
+        // backup. Skip candidates that are unreadable or untightenable (e.g. owned by
+        // another user) and keep scanning; a later usable duplicate must still be found
+        // even when creating a fresh sidecar would fail (read-only dir, full disk).
         let reusedPath: string | null = null;
-        if (duplicate) {
-          const duplicatePath = path.join(configDir, duplicate.name);
+        for (const entry of fs.readdirSync(configDir, { withFileTypes: true })) {
+          if (!entry.isFile() || !entry.name.startsWith(corruptPrefix)) {
+            continue;
+          }
+          const candidatePath = path.join(configDir, entry.name);
           try {
-            fs.chmodSync(duplicatePath, 0o600);
-            reusedPath = duplicatePath;
+            if (fs.readFileSync(candidatePath).equals(rawBytes)) {
+              fs.chmodSync(candidatePath, 0o600);
+              reusedPath = candidatePath;
+              break;
+            }
           } catch {
-            reusedPath = null;
+            // Unusable candidate; keep scanning.
           }
         }
         if (reusedPath) {
