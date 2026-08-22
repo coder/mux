@@ -1236,11 +1236,13 @@ describe("createCodeExecutionTool", () => {
     });
 
     it("truncates handle-tier returns when the guest made vars unusable (store failure)", async () => {
-      // r14: with `vars = null`, storeResultHandle fails for every value in
-      // the offloadable tier (16KB..4MB). Keeping the FULL value inline on
-      // that failure path would let a prompt-influenced program push
-      // megabytes into durable history/provider context; the record must be
-      // the same bounded truncated shape as the over-cap tier.
+      // r14: a failed store must never keep the FULL value inline — a
+      // prompt-influenced program could push megabytes into durable
+      // history/provider context; the record must be the same bounded
+      // truncated shape as the over-cap tier. Since r28 normalizes null and
+      // primitive vars back to a plain object, the store-failure vector is a
+      // write-swallowing Proxy: the assignment "succeeds" but stores nothing,
+      // and the in-eval read-back check fails the store cleanly.
       using tmp = new DisposableTempDir("code-exec-offload");
       const host = new SandboxHostService();
       const tool = await createCodeExecutionTool(
@@ -1252,7 +1254,9 @@ describe("createCodeExecutionTool", () => {
 
       const size = 100_000; // well over the threshold, far under the cap
       const result = (await tool.execute!(
-        { code: `vars = null; return "z".repeat(${size});` },
+        {
+          code: `vars = new Proxy({}, { set: function() { return true; } }); return "z".repeat(${size});`,
+        },
         mockToolCallOptions
       )) as PTCExecutionResult;
       expect(result.success).toBe(true);
@@ -1263,6 +1267,41 @@ describe("createCodeExecutionTool", () => {
       // Bounded: nothing model-visible carries the full payload.
       expect(JSON.stringify(result).length).toBeLessThan(16 * 1024);
       await host.disposeScope("ws-store-fail");
+    });
+
+    it("recovers a guest-primitive vars: the advertised handle actually resolves", async () => {
+      // Codex r28: `vars = 1` (unlike `vars = null`) did not throw on
+      // property writes in non-strict guest code — the handle assignment
+      // silently no-oped, storeResultHandle still returned the key, and the
+      // model was told to slice vars.__h1 which never existed. The store now
+      // normalizes the (already unusable) primitive namespace back to a
+      // plain object, so the handle must be real and usable in a follow-up.
+      using tmp = new DisposableTempDir("code-exec-offload");
+      const host = new SandboxHostService();
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        persistentRunner(host, "ws-primitive-vars", tmp.path)
+      );
+
+      const result = (await tool.execute!(
+        { code: `vars = 1; return "z".repeat(100_000);` },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(result.success).toBe(true);
+
+      const record = result.result as { truncated?: boolean; handle?: string };
+      expect(record.truncated).toBeUndefined();
+      expect(record.handle).toBe("vars.__h1");
+
+      const followUp = (await tool.execute!(
+        { code: "return vars.__h1.length;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(followUp.success).toBe(true);
+      expect(followUp.result).toBe(100_000);
+      await host.disposeScope("ws-primitive-vars");
     });
 
     it("truncates unserializable returns (BigInt bypass of the offload tiers)", async () => {

@@ -198,8 +198,10 @@ async function offloadValue(
 
   // Store in vars FIRST so the model is never pointed at a missing handle.
   // On failure the value must NOT stay inline either (r14): the guest can
-  // force this path deliberately (`vars = null`) and a handle-tier value kept
-  // inline would push megabytes into durable history and provider context —
+  // force this path deliberately (e.g. a write-swallowing Proxy; null and
+  // primitive vars are normalized away in-store since r28) and a handle-tier
+  // value kept inline would push megabytes into durable history and provider
+  // context —
   // truncate to the same bounded record as the over-cap tier. The error
   // detail is deliberately not echoed into the note: guest-influenced eval
   // errors can be arbitrarily large, and the log line above suffices.

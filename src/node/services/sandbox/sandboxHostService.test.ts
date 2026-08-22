@@ -1214,6 +1214,31 @@ describe("SandboxHostService", () => {
     await host.disposeScope("ws-seq-ceiling");
   });
 
+  test("storeResultHandle recovers a guest-primitive vars namespace", async () => {
+    // Codex r28: with `vars = 1` (unlike `vars = null`, which threw),
+    // non-strict property writes silently no-op — storeResultHandle returned
+    // __h1 while nothing was stored, pointing the model at a handle that
+    // never existed. The namespace is normalized back to a plain object
+    // before the handle is assigned and the write is verified in-eval.
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-primitive-vars",
+      sessionDir: tmp.path,
+    });
+
+    const seeded = await mount.runtime.eval("vars = 1; return true;");
+    expect(seeded.success).toBe(true);
+
+    const key = await mount.storeResultHandle(JSON.stringify({ n: 42 }), 10_000);
+    const read = await mount.runtime.eval(`return vars[${JSON.stringify(key)}].n;`);
+    expect(read.success).toBe(true);
+    expect(read.result).toBe(42);
+    await host.disposeScope("ws-primitive-vars");
+  });
+
   test("retention measures UTF-8 bytes, not UTF-16 code units (multibyte payloads)", async () => {
     // Codex r24: sizes were measured as JSON.stringify().length — UTF-16
     // code units — under-counting multibyte payloads by up to 4x. Handles

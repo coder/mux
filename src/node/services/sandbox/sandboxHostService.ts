@@ -522,10 +522,23 @@ export class SandboxMount {
       ${GUEST_UTF8_LEN_SOURCE}
       ${GUEST_NEXT_HANDLE_SEQ_SOURCE}
       const value = JSON.parse(${literal});
+      // r28: a guest-primitive vars (vars = 1) silently swallows property
+      // writes in non-strict code — the handle assignment no-oped while the
+      // key was still returned, pointing the model at a handle that never
+      // existed (vars = null at least threw and failed cleanly). A
+      // primitive/null namespace is already unusable state (every read
+      // yields undefined or throws), so resetting it to a plain object is
+      // strictly an improvement — the same recovery setVarsProperty applies
+      // for loads.
+      if (typeof vars !== "object" || vars === null) vars = {};
       const seq = nextHandleSeq();
       vars.__handleSeq = seq;
       const key = "__h" + seq;
       vars[key] = value;
+      // Verify the write actually stored (a guest Proxy/setter can still
+      // swallow it): fail the eval so the caller degrades to a bounded
+      // truncated record instead of advertising a missing handle.
+      if (vars[key] !== value) throw new Error("vars handle assignment did not store");
       const others = [];
       for (const k of Object.keys(vars)) {
         if (k === key) continue;
@@ -587,6 +600,9 @@ export class SandboxMount {
       const newLoads = ${JSON.stringify(args.newLoadKeys)};
       const protectedKeys = ${JSON.stringify(args.protectedKeys)};
       const cap = ${args.capBytes};
+      // Same guest-primitive recovery as storeResultHandle (r28): the
+      // registry writes below would silently no-op on a primitive vars.
+      if (typeof vars !== "object" || vars === null) vars = {};
       const metaRaw = vars.__loadMeta;
       // Tolerate a guest-clobbered registry (vars is guest-writable).
       const meta = typeof metaRaw === "object" && metaRaw !== null ? metaRaw : {};
