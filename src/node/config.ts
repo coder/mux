@@ -994,7 +994,13 @@ export class Config {
           if (!entry.isFile() || !entry.name.startsWith(corruptPrefix)) {
             return false;
           }
-          return fs.readFileSync(path.join(configDir, entry.name)).equals(rawBytes);
+          // An unreadable stale sidecar must not abort the scan; that would block backup
+          // creation (and therefore settings edits) until it is manually removed.
+          try {
+            return fs.readFileSync(path.join(configDir, entry.name)).equals(rawBytes);
+          } catch {
+            return false;
+          }
         });
 
         if (duplicate) {
@@ -1031,9 +1037,11 @@ export class Config {
     // overwrite the corrupt source.
     state.backupSignature = backupConfirmed ? contentSignature : null;
 
-    // Log on a new failure, and once more when preservation transitions from unconfirmed to
-    // confirmed so the sidecar path becomes visible; silent otherwise to avoid per-load spam.
-    if (alreadyLogged && !(backupConfirmed && !wasConfirmed)) {
+    // Log on a new failure and on preservation transitions in either direction: gaining a
+    // backup surfaces the sidecar path, and losing one (sidecar deleted, recreation failed)
+    // surfaces the actionable backup error while edits are blocked. Silent otherwise to
+    // avoid per-load spam.
+    if (alreadyLogged && backupConfirmed === wasConfirmed) {
       return;
     }
     state.failureSignature = failureSignature;

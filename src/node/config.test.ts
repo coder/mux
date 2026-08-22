@@ -296,6 +296,66 @@ describe("Config", () => {
       errorSpy.mockRestore();
     });
 
+    it("skips an unreadable stale sidecar and still creates a fresh backup", () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const stalePath = `${configFile}.corrupt-1`;
+      fs.writeFileSync(stalePath, "older unrelated snapshot");
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      const origRead = fs.readFileSync.bind(fs);
+      const readSpy = spyOn(fs, "readFileSync").mockImplementation(((
+        file: fs.PathOrFileDescriptor,
+        options?: Parameters<typeof fs.readFileSync>[1]
+      ) => {
+        if (file === stalePath) {
+          throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+        }
+        return origRead(file, options);
+      }) as typeof fs.readFileSync);
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.projects.size).toBe(0);
+      const fresh = corruptBackups().filter((p) => p !== stalePath);
+      expect(fresh).toHaveLength(1);
+      expect(origRead(fresh[0])).toEqual(Buffer.from(corruptData));
+      readSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it("logs again when a previously confirmed backup can no longer be restored", () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      config.loadConfigOrDefault();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+
+      const [backupPath] = corruptBackups();
+      fs.rmSync(backupPath);
+      const origWrite = fs.writeFileSync.bind(fs);
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+        if (typeof file === "string" && file.includes(".corrupt-")) {
+          throw new Error("disk full");
+        }
+        origWrite(file, data, options);
+      });
+
+      // Losing the backup must surface the new failure, not stay deduped.
+      config.loadConfigOrDefault();
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+      expect(String(errorSpy.mock.calls[1]?.[0])).toContain("Backup failed");
+
+      // The still-failing state stays deduped afterwards.
+      config.loadConfigOrDefault();
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+
+      writeSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
     it("logs a corrupt config once across Config instances on the same path", () => {
       const corruptData = '{ "projects": ';
       fs.writeFileSync(configFilePath(), corruptData);
