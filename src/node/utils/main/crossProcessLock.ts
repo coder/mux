@@ -284,20 +284,30 @@ export async function acquireCrossProcessLock(
   // reclaim mutex (so a renewal cannot clobber a successor after a stall);
   // only holders that STOPPED renewing (crashed, wedged past the ceiling,
   // or pid-reused) age out.
-  const startRenewal = (token: string): (() => void) => {
+  const startRenewal = (token: string): (() => Promise<void>) => {
     let renewing = false;
+    let stopped = false;
+    // The in-flight tick, joined by stop: clearing the interval only stops
+    // FUTURE ticks, and a tick already holding the reclaim mutex could
+    // otherwise outlast release's bounded retry budget and then re-stamp a
+    // fresh lease onto a lock whose transaction already finished — blocking
+    // siblings until the stale ceiling instead of immediately.
+    let inFlight: Promise<void> = Promise.resolve();
     const interval = setInterval(
       () => {
-        if (renewing) {
+        if (renewing || stopped) {
           return;
         }
         renewing = true;
-        void (async () => {
+        inFlight = (async () => {
           const mutex = await enterLockMutex(lockPath);
           if (mutex === undefined) {
             return; // Contended: try again next tick.
           }
           try {
+            if (stopped) {
+              return; // Release began while we waited for the mutex.
+            }
             const current = await readLockHolder(lockPath);
             if (current?.token !== token) {
               return; // No longer ours: a reclaimer took over; stop touching it.
@@ -307,7 +317,7 @@ export async function acquireCrossProcessLock(
               tempPath,
               JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() })
             );
-            if (await mutex.owns()) {
+            if (!stopped && (await mutex.owns())) {
               await fsPromises.rename(tempPath, lockPath);
             } else {
               await fsPromises.rm(tempPath, { force: true }).catch(() => undefined);
@@ -324,13 +334,24 @@ export async function acquireCrossProcessLock(
       Math.max(250, Math.floor(staleMs / 4))
     );
     interval.unref?.();
-    return () => clearInterval(interval);
+    return async () => {
+      // Order matters: the flag is visible to the in-flight tick before the
+      // join, so a tick still waiting on the mutex exits without writing,
+      // and one already past the holder read skips the rename. The join is
+      // unbounded on purpose — a rename can land only inside `inFlight`, so
+      // release must not proceed (or give up) while it is unsettled; the
+      // tick is a handful of local fs ops, and a filesystem wedged past that
+      // stalls every other lock operation anyway.
+      stopped = true;
+      clearInterval(interval);
+      await inFlight;
+    };
   };
 
   const releaseFor = (token: string) => {
     const stopRenewal = startRenewal(token);
     return async () => {
-      stopRenewal();
+      await stopRenewal();
       for (let attempt = 0; attempt < 40; attempt++) {
         const mutex = await enterLockMutex(lockPath);
         if (mutex !== undefined) {

@@ -128,6 +128,34 @@ describe("acquireCrossProcessLock", () => {
     await release2();
   }, 10_000);
 
+  test("release during active renewals leaves the lock immediately reacquirable", async () => {
+    // stopRenewal joins the in-flight renewal tick: releasing mid-tick must
+    // never let a resumed renewal re-stamp a fresh lease onto the released
+    // lock (which would block siblings until the stale ceiling). Release at
+    // staggered offsets against a fast renewal interval, asserting the file
+    // is gone and a competitor can acquire instantly every time.
+    const lockPath = await tempLockPath();
+    for (const holdMs of [260, 310, 380, 430]) {
+      const release = await acquireCrossProcessLock({
+        lockPath,
+        acquireTimeoutMs: 400,
+        staleMs: 1_000, // renewal ticks every 250ms
+        timeoutMessage: "lock busy",
+      });
+      await new Promise((resolve) => setTimeout(resolve, holdMs));
+      await release();
+      expect(await pathExists(lockPath)).toBe(false);
+      const release2 = await acquireCrossProcessLock({
+        lockPath,
+        acquireTimeoutMs: 400,
+        staleMs: 1_000,
+        timeoutMessage: "lock busy",
+      });
+      await release2();
+      expect(await pathExists(lockPath)).toBe(false);
+    }
+  }, 10_000);
+
   test("contending acquirers over a stale lock are mutually exclusive", async () => {
     const lockPath = await tempLockPath();
     await fsPromises.writeFile(
