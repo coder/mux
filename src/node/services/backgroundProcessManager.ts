@@ -439,6 +439,20 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     }
   }
 
+  /**
+   * Retire a terminating process's monitor according to the caller's disposition: `flush` delivers
+   * coalesced matches as one final wake, while `discard` retracts them because the caller no longer
+   * wants this condition to wake the agent. Shared by both terminate() exit paths so the
+   * already-terminated shortcut and the live-kill path can never drift apart.
+   */
+  private resolveMonitorForTermination(proc: BackgroundProcess, shouldFlush: boolean): void {
+    if (shouldFlush) {
+      this.stopMonitor(proc, true);
+    } else {
+      this.cancelMonitor(proc);
+    }
+  }
+
   private scheduleMonitorFlush(
     proc: BackgroundProcess,
     monitor: BackgroundProcessMonitorState
@@ -1518,21 +1532,13 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     // If already terminated, return success (idempotent) after resolving any pending monitor flush.
     if (proc.status === "exited" || proc.status === "killed" || proc.status === "failed") {
-      if (shouldFlushMonitor) {
-        this.stopMonitor(proc, true);
-      } else {
-        this.cancelMonitor(proc);
-      }
+      this.resolveMonitorForTermination(proc, shouldFlushMonitor);
       log.debug(`Process ${processId} already terminated with status: ${proc.status}`);
       return { success: true };
     }
 
     try {
-      if (shouldFlushMonitor) {
-        this.stopMonitor(proc, true);
-      } else {
-        this.cancelMonitor(proc);
-      }
+      this.resolveMonitorForTermination(proc, shouldFlushMonitor);
 
       await proc.handle.terminate();
 

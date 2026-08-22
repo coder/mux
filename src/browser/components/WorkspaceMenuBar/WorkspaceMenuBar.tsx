@@ -27,7 +27,7 @@ import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { resolvePopoverErrorAnchor, usePopoverError } from "@/browser/hooks/usePopoverError";
 import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { DebugLlmRequestModal } from "../DebugLlmRequestModal/DebugLlmRequestModal";
@@ -48,7 +48,10 @@ import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
+import {
+  MOBILE_TOUCH_MEDIA_QUERY,
+  WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX,
+} from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceMenuBarProps {
@@ -163,7 +166,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const handleOpenTerminal = useCallback(() => {
     // On mobile touch devices, always use popout since the right sidebar is hidden
-    const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    const isMobileTouch = window.matchMedia(MOBILE_TOUCH_MEDIA_QUERY).matches;
     if (onOpenTerminal && !isMobileTouch) {
       onOpenTerminal();
     } else {
@@ -173,23 +176,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
 
   const isTouchMobileScreen =
-    typeof window !== "undefined" &&
-    window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    typeof window !== "undefined" && window.matchMedia(MOBILE_TOUCH_MEDIA_QUERY).matches;
 
   const isDevcontainerWorkspace = isDevcontainerRuntime(runtimeConfig);
   const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
 
-  const getMoreMenuAnchor = useCallback(() => {
-    const rect = moreActionsButtonRef.current?.getBoundingClientRect();
-    if (!rect) {
-      return undefined;
-    }
-
-    return {
-      top: rect.top + window.scrollY,
-      left: rect.right + 10,
-    };
-  }, []);
+  const getMoreMenuAnchor = useCallback(
+    () => resolvePopoverErrorAnchor(moreActionsButtonRef.current),
+    []
+  );
 
   const handleOpenTouchFullscreenReview = useCallback(() => {
     window.dispatchEvent(
@@ -237,11 +232,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           return;
         }
         if (!res.success) {
-          const rect = anchorEl?.getBoundingClientRect();
           archiveError.showError(
             workspaceId,
             res.error ?? "Failed to archive chat",
-            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+            resolvePopoverErrorAnchor(anchorEl)
           );
         }
       } finally {
@@ -268,11 +262,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         // Run preflight to check for untracked files that can't be preserved.
         const preflight = await preflightArchiveWorkspace(workspaceId);
         if (!preflight.success) {
-          const rect = anchorEl?.getBoundingClientRect();
           archiveError.showError(
             workspaceId,
             preflight.error ?? "Failed to check archive readiness",
-            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+            resolvePopoverErrorAnchor(anchorEl)
           );
           return;
         }
@@ -301,17 +294,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const handleForkChat = useCallback(
     async (anchorEl: HTMLElement) => {
+      const anchor = resolvePopoverErrorAnchor(anchorEl);
       if (!api) {
-        const rect = anchorEl.getBoundingClientRect();
-        forkError.showError(workspaceId, "Not connected to server", {
-          top: rect.top + window.scrollY,
-          left: rect.right + 10,
-        });
+        forkError.showError(workspaceId, "Not connected to server", anchor);
         return;
       }
-
-      const rect = anchorEl.getBoundingClientRect();
-      const anchor = { top: rect.top + window.scrollY, left: rect.right + 10 };
 
       try {
         const result = await forkWorkspace({
@@ -486,6 +473,46 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   // those controls and the MCP/editor/terminal buttons become unclickable.
   const isDesktop = isDesktopMode();
 
+  // The notification settings panel is reachable two ways: the hover tooltip and the
+  // click popover. Both render the identical control set, so build the tree once and
+  // render it in both slots to stop the two copies from drifting apart.
+  const notificationSettingsContent = (
+    <div className="flex flex-col gap-2">
+      <label className="flex cursor-pointer items-center gap-2">
+        <Checkbox
+          checked={notifyOnResponse}
+          onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
+        />
+        <span className="text-foreground">
+          Notify on all responses{" "}
+          <span className="text-muted-foreground">
+            ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
+          </span>
+        </span>
+      </label>
+      <label className="flex cursor-pointer items-start gap-2">
+        <Checkbox
+          checked={autoEnableNotifications}
+          onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
+        />
+        <span className="text-muted-foreground">
+          Auto-enable for new workspaces in this project
+        </span>
+      </label>
+      <p className="text-muted-foreground border-separator-light border-t pt-2">
+        Agents can also notify on specific events.{" "}
+        <a
+          href="https://mux.coder.com/config/notifications"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent hover:underline"
+        >
+          Learn more
+        </a>
+      </p>
+    </div>
+  );
+
   return (
     <div
       data-testid="workspace-menu-bar"
@@ -588,40 +615,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="end">
-              <div className="flex flex-col gap-2">
-                <label className="flex cursor-pointer items-center gap-2">
-                  <Checkbox
-                    checked={notifyOnResponse}
-                    onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
-                  />
-                  <span className="text-foreground">
-                    Notify on all responses{" "}
-                    <span className="text-muted-foreground">
-                      ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
-                    </span>
-                  </span>
-                </label>
-                <label className="flex cursor-pointer items-start gap-2">
-                  <Checkbox
-                    checked={autoEnableNotifications}
-                    onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
-                  />
-                  <span className="text-muted-foreground">
-                    Auto-enable for new workspaces in this project
-                  </span>
-                </label>
-                <p className="text-muted-foreground border-separator-light border-t pt-2">
-                  Agents can also notify on specific events.{" "}
-                  <a
-                    href="https://mux.coder.com/config/notifications"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent hover:underline"
-                  >
-                    Learn more
-                  </a>
-                </p>
-              </div>
+              {notificationSettingsContent}
             </TooltipContent>
           </Tooltip>
 
@@ -630,40 +624,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             align="end"
             className="bg-modal-bg border-separator-light w-64 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
           >
-            <div className="flex flex-col gap-2">
-              <label className="flex cursor-pointer items-center gap-2">
-                <Checkbox
-                  checked={notifyOnResponse}
-                  onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
-                />
-                <span className="text-foreground">
-                  Notify on all responses{" "}
-                  <span className="text-muted-foreground">
-                    ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
-                  </span>
-                </span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2">
-                <Checkbox
-                  checked={autoEnableNotifications}
-                  onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
-                />
-                <span className="text-muted-foreground">
-                  Auto-enable for new workspaces in this project
-                </span>
-              </label>
-              <p className="text-muted-foreground border-separator-light border-t pt-2">
-                Agents can also notify on specific events.{" "}
-                <a
-                  href="https://mux.coder.com/config/notifications"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-accent hover:underline"
-                >
-                  Learn more
-                </a>
-              </p>
-            </div>
+            {notificationSettingsContent}
           </PopoverContent>
         </Popover>
         <SkillIndicator

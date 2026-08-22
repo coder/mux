@@ -41,6 +41,7 @@ import {
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfos,
   shouldBypassDeferredMessages,
+  isBashMonitorWakeMessage,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashCollapsedSummaryModeProvider } from "@/browser/features/Tools/BashCollapsedSummaryModeContext";
@@ -764,7 +765,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     const userHistoryIds: string[] = [];
     for (const message of deferredMessages) {
       // Monitor wake events should not interrupt navigation between human prompts.
-      if (message.type === "user" && message.bashMonitorWake == null) {
+      if (message.type === "user" && !isBashMonitorWakeMessage(message)) {
         userHistoryIds.push(message.historyId);
       }
     }

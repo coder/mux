@@ -725,8 +725,8 @@ export function ExperimentsSection() {
     return request;
   }, [api]);
 
-  // Only show user-overridable experiments (non-overridable ones are hidden since users can't
-  // change them). Memory sub-experiments render nested under the Agent Memory row instead.
+  // Hide experiments that opt out of Settings via showInSettings: false. Memory
+  // sub-experiments render nested under the Agent Memory row instead.
   const experiments = useMemo(
     () =>
       allExperiments.filter(

@@ -29,6 +29,7 @@ import type {
 import type { TimelineSubscriptionEvent } from "@/common/orpc/schemas/timeline";
 import { TIMELINE_DEFAULT_PAGE_LIMIT } from "@/node/services/timelineService";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { MCPHeaderValue, MCPServerInfo } from "@/common/types/mcp";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
   createAuthMiddleware,
@@ -787,6 +788,76 @@ async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<stri
   }
 
   return null;
+}
+
+/**
+ * Resolve the OAuth callback redirect URI for MCP server flows from the request
+ * headers. Prefers the `Origin` header (used verbatim when it parses as a URL),
+ * then falls back to the forwarded/`Host` header with the forwarded proto
+ * (defaulting to `http`). Returns `undefined` when no usable Host header exists.
+ *
+ * Extracted so the global and per-project `startServerFlow` handlers share one
+ * copy of this security-sensitive resolution instead of drifting apart.
+ */
+function resolveMcpOauthRedirectUri(headers: ORPCContext["headers"]): string | undefined {
+  const callbackPath = "/auth/mcp-oauth/callback";
+
+  const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
+  if (origin) {
+    try {
+      return new URL(callbackPath, origin).toString();
+    } catch {
+      // Fall back to Host header.
+    }
+  }
+
+  const hostHeader = headers?.["x-forwarded-host"] ?? headers?.host;
+  const host = typeof hostHeader === "string" ? hostHeader.split(",")[0]?.trim() : "";
+  if (!host) {
+    return undefined;
+  }
+
+  const protoHeader = headers?.["x-forwarded-proto"];
+  const forwardedProto = typeof protoHeader === "string" ? protoHeader.split(",")[0]?.trim() : "";
+  const proto = forwardedProto.length ? forwardedProto : "http";
+
+  return `${proto}://${host}${callbackPath}`;
+}
+
+/**
+ * Derive the `has_headers` / `uses_secret_headers` flags reported alongside
+ * `mcp_server_config_changed` telemetry from an MCP header map.
+ *
+ * A header counts as "secret" when it is stored as a `{ secret: <key> }`
+ * reference instead of a literal string, which lets us measure secret-indirection
+ * usage without ever capturing header names or values.
+ */
+function describeMcpHeaderTelemetry(headers: Record<string, MCPHeaderValue> | undefined): {
+  hasHeaders: boolean;
+  usesSecretHeaders: boolean;
+} {
+  return {
+    hasHeaders: Boolean(headers && Object.keys(headers).length > 0),
+    usesSecretHeaders: Boolean(
+      headers &&
+      Object.values(headers).some((v) => typeof v === "object" && v !== null && "secret" in v)
+    ),
+  };
+}
+
+/**
+ * Same flags, but for an already-persisted server config. stdio servers cannot
+ * carry headers at all (the field only exists on the HTTP-ish variants), so they
+ * always report `false` — matching the `transport !== "stdio" && …` guards that
+ * every `mcp_server_config_changed` capture site used to repeat inline.
+ */
+function describeMcpServerHeaderTelemetry(server: MCPServerInfo): {
+  hasHeaders: boolean;
+  usesSecretHeaders: boolean;
+} {
+  return server.transport === "stdio"
+    ? { hasHeaders: false, usesSecretHeaders: false }
+    : describeMcpHeaderTelemetry(server.headers);
 }
 
 /**
@@ -2921,13 +2992,7 @@ export const router = (authToken?: string) => {
             }
           }
 
-          const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
-          const usesSecretHeaders = Boolean(
-            input.headers &&
-            Object.values(input.headers).some(
-              (v) => typeof v === "object" && v !== null && "secret" in v
-            )
-          );
+          const { hasHeaders, usesSecretHeaders } = describeMcpHeaderTelemetry(input.headers);
 
           const action = (() => {
             if (!existingServer) {
@@ -2984,17 +3049,7 @@ export const router = (authToken?: string) => {
           const result = await context.mcpConfigService.removeServer(input.name);
 
           if (result.success && server) {
-            const hasHeaders =
-              server.transport !== "stdio" &&
-              Boolean(server.headers && Object.keys(server.headers).length > 0);
-            const usesSecretHeaders =
-              server.transport !== "stdio" &&
-              Boolean(
-                server.headers &&
-                Object.values(server.headers).some(
-                  (v) => typeof v === "object" && v !== null && "secret" in v
-                )
-              );
+            const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
             context.telemetryService.capture({
               event: "mcp_server_config_changed",
@@ -3116,17 +3171,7 @@ export const router = (authToken?: string) => {
           const result = await context.mcpConfigService.setServerEnabled(input.name, input.enabled);
 
           if (result.success && server) {
-            const hasHeaders =
-              server.transport !== "stdio" &&
-              Boolean(server.headers && Object.keys(server.headers).length > 0);
-            const usesSecretHeaders =
-              server.transport !== "stdio" &&
-              Boolean(
-                server.headers &&
-                Object.values(server.headers).some(
-                  (v) => typeof v === "object" && v !== null && "secret" in v
-                )
-              );
+            const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
             context.telemetryService.capture({
               event: "mcp_server_config_changed",
@@ -3160,17 +3205,7 @@ export const router = (authToken?: string) => {
           );
 
           if (result.success && server) {
-            const hasHeaders =
-              server.transport !== "stdio" &&
-              Boolean(server.headers && Object.keys(server.headers).length > 0);
-            const usesSecretHeaders =
-              server.transport !== "stdio" &&
-              Boolean(
-                server.headers &&
-                Object.values(server.headers).some(
-                  (v) => typeof v === "object" && v !== null && "secret" in v
-                )
-              );
+            const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
             context.telemetryService.capture({
               event: "mcp_server_config_changed",
@@ -3220,34 +3255,10 @@ export const router = (authToken?: string) => {
           // Use mux home as a stable fallback so existing flow codepaths remain unchanged.
           const projectPath = input.projectPath ?? context.config.rootDir;
 
-          const headers = context.headers;
-
-          const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
-          if (origin) {
-            try {
-              const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
-              return context.mcpOauthService.startServerFlow({
-                ...input,
-                projectPath,
-                redirectUri,
-              });
-            } catch {
-              // Fall back to Host header.
-            }
-          }
-
-          const hostHeader = headers?.["x-forwarded-host"] ?? headers?.host;
-          const host = typeof hostHeader === "string" ? hostHeader.split(",")[0]?.trim() : "";
-          if (!host) {
+          const redirectUri = resolveMcpOauthRedirectUri(context.headers);
+          if (!redirectUri) {
             return Err("Missing Host header");
           }
-
-          const protoHeader = headers?.["x-forwarded-proto"];
-          const forwardedProto =
-            typeof protoHeader === "string" ? protoHeader.split(",")[0]?.trim() : "";
-          const proto = forwardedProto.length ? forwardedProto : "http";
-
-          const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
 
           return context.mcpOauthService.startServerFlow({
             ...input,
@@ -3494,13 +3505,7 @@ export const router = (authToken?: string) => {
                 return { success: false, error: "MCP transport is disabled by policy" };
               }
             }
-            const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
-            const usesSecretHeaders = Boolean(
-              input.headers &&
-              Object.values(input.headers).some(
-                (v) => typeof v === "object" && v !== null && "secret" in v
-              )
-            );
+            const { hasHeaders, usesSecretHeaders } = describeMcpHeaderTelemetry(input.headers);
 
             const action = (() => {
               if (!existingServer) {
@@ -3557,17 +3562,7 @@ export const router = (authToken?: string) => {
             const result = await context.mcpConfigService.removeServer(input.name);
 
             if (result.success && server) {
-              const hasHeaders =
-                server.transport !== "stdio" &&
-                Boolean(server.headers && Object.keys(server.headers).length > 0);
-              const usesSecretHeaders =
-                server.transport !== "stdio" &&
-                Boolean(
-                  server.headers &&
-                  Object.values(server.headers).some(
-                    (v) => typeof v === "object" && v !== null && "secret" in v
-                  )
-                );
+              const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
               context.telemetryService.capture({
                 event: "mcp_server_config_changed",
@@ -3674,17 +3669,7 @@ export const router = (authToken?: string) => {
             );
 
             if (result.success && server) {
-              const hasHeaders =
-                server.transport !== "stdio" &&
-                Boolean(server.headers && Object.keys(server.headers).length > 0);
-              const usesSecretHeaders =
-                server.transport !== "stdio" &&
-                Boolean(
-                  server.headers &&
-                  Object.values(server.headers).some(
-                    (v) => typeof v === "object" && v !== null && "secret" in v
-                  )
-                );
+              const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
               context.telemetryService.capture({
                 event: "mcp_server_config_changed",
@@ -3718,17 +3703,7 @@ export const router = (authToken?: string) => {
             );
 
             if (result.success && server) {
-              const hasHeaders =
-                server.transport !== "stdio" &&
-                Boolean(server.headers && Object.keys(server.headers).length > 0);
-              const usesSecretHeaders =
-                server.transport !== "stdio" &&
-                Boolean(
-                  server.headers &&
-                  Object.values(server.headers).some(
-                    (v) => typeof v === "object" && v !== null && "secret" in v
-                  )
-                );
+              const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
               context.telemetryService.capture({
                 event: "mcp_server_config_changed",
@@ -3770,30 +3745,10 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcpOauth.startServerFlow.input)
           .output(schemas.projects.mcpOauth.startServerFlow.output)
           .handler(async ({ context, input }) => {
-            const headers = context.headers;
-
-            const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
-            if (origin) {
-              try {
-                const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
-                return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
-              } catch {
-                // Fall back to Host header.
-              }
-            }
-
-            const hostHeader = headers?.["x-forwarded-host"] ?? headers?.host;
-            const host = typeof hostHeader === "string" ? hostHeader.split(",")[0]?.trim() : "";
-            if (!host) {
+            const redirectUri = resolveMcpOauthRedirectUri(context.headers);
+            if (!redirectUri) {
               return Err("Missing Host header");
             }
-
-            const protoHeader = headers?.["x-forwarded-proto"];
-            const forwardedProto =
-              typeof protoHeader === "string" ? protoHeader.split(",")[0]?.trim() : "";
-            const proto = forwardedProto.length ? forwardedProto : "http";
-
-            const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
 
             return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
           }),
