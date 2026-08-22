@@ -15,6 +15,7 @@ import crypto from "crypto";
 import type { IJSRuntime, IJSRuntimeFactory, KernelRecordBounds, RuntimeLimits } from "./runtime";
 import type { PTCEvent, PTCExecutionResult, PTCToolCallRecord, PTCConsoleRecord } from "./types";
 import { CONSOLE_CAPTURE_BUDGET_BYTES } from "@/constants/kernelOutput";
+import { sliceUtf8Bytes } from "@/common/utils/sliceUtf8Bytes";
 
 /** Capture-time console retention accounting for one eval (see setupConsole). */
 interface ConsoleCaptureBudget {
@@ -587,7 +588,9 @@ export class QuickJSRuntime implements IJSRuntime {
     return {
       __kernelBounded: true,
       bytes,
-      preview: `${serialized.slice(0, capBytes)}…[${bytes} bytes total; truncated]`,
+      // capBytes is a byte budget: slice by UTF-8 bytes, not code units
+      // (multibyte text would otherwise retain up to ~4x the cap).
+      preview: `${sliceUtf8Bytes(serialized, capBytes)}…[${bytes} bytes total; truncated]`,
     };
   }
 
@@ -610,7 +613,8 @@ export class QuickJSRuntime implements IJSRuntime {
     const capBytes = this.kernelRecordBounds.argsCapBytes;
     const bytes = Buffer.byteLength(errorStr, "utf8");
     if (bytes <= capBytes) return errorStr;
-    return `${errorStr.slice(0, capBytes)}…[${bytes} bytes total; truncated]`;
+    // Byte-safe truncation for the same reason as boundCapture.
+    return `${sliceUtf8Bytes(errorStr, capBytes)}…[${bytes} bytes total; truncated]`;
   }
 
   private boundCaptureResult(value: unknown): unknown {

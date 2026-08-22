@@ -1147,6 +1147,60 @@ describe("createCodeExecutionTool", () => {
       await host.disposeScope("ws-error-bound-mb");
     });
 
+    it("bounds capture-time events by UTF-8 bytes, not UTF-16 code units", async () => {
+      // Emitted events are bounded at CAPTURE time inside the runtime and
+      // stream straight into session history — post-eval compaction never
+      // re-bounds them — so the runtime's own truncation must slice by UTF-8
+      // bytes: code-unit slicing retains ~3x the byte cap for CJK text.
+      using tmp = new DisposableTempDir("code-exec-offload");
+      const host = new SandboxHostService();
+      const multibyteTools: Record<string, Tool> = {
+        sink: createMockTool("sink", z.object({ content: z.string() }), () => "ok"),
+        touchy: createMockTool("touchy", z.object({ path: z.string() }), (input) => {
+          throw new Error(
+            `ENAMETOOLONG: name too long, open '${(input as { path: string }).path}'`
+          );
+        }),
+      };
+      const emitted: Array<{ toolName?: string; args?: unknown; error?: string }> = [];
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(multibyteTools),
+        (event) => {
+          emitted.push(event as { toolName?: string; args?: unknown; error?: string });
+        },
+        persistentRunner(host, "ws-event-bound-mb", tmp.path)
+      );
+
+      const result = (await tool.execute!(
+        {
+          code:
+            "mux.sink({content: 'あ'.repeat(100_000)}); " +
+            "try { mux.touchy({path: 'あ'.repeat(100_000)}); } catch (e) {} return 'done';",
+        },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(result.success).toBe(true);
+
+      // Oversized multibyte args: the capture-time preview stays within the
+      // byte cap (plus small marker overhead), not just within the same
+      // number of code units.
+      const sinkEvents = emitted.filter((e) => e.toolName === "sink" && e.args !== undefined);
+      expect(sinkEvents.length).toBeGreaterThan(0);
+      for (const event of sinkEvents) {
+        const marker = event.args as { __kernelBounded?: boolean; preview?: string };
+        expect(marker.__kernelBounded).toBe(true);
+        expect(Buffer.byteLength(marker.preview!, "utf8")).toBeLessThan(3 * 1024);
+      }
+      // Oversized multibyte errors: same byte-safe bound at capture time.
+      const errorEvents = emitted.filter((e) => e.toolName === "touchy" && e.error !== undefined);
+      expect(errorEvents.length).toBeGreaterThan(0);
+      for (const event of errorEvents) {
+        expect(Buffer.byteLength(event.error!, "utf8")).toBeLessThan(3 * 1024);
+      }
+      await host.disposeScope("ws-event-bound-mb");
+    });
+
     it("truncates over-cap return values to a bounded preview (no handle, no inline value)", async () => {
       // A value over the retention cap can be neither a handle (retention
       // would protect it while it blows the snapshot budget) nor inline (it

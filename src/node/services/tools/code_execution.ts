@@ -25,6 +25,7 @@ import {
   RESULT_HANDLE_VARS_CAP_BYTES,
 } from "@/constants/resultHandles";
 import { KERNEL_COMPACT_ARGS_CAP_BYTES, KERNEL_CONSOLE_CAP_BYTES } from "@/constants/kernelOutput";
+import { sliceUtf8Bytes } from "@/common/utils/sliceUtf8Bytes";
 
 // Default limits
 const DEFAULT_MEMORY_BYTES = 64 * 1024 * 1024; // 64MB
@@ -349,21 +350,6 @@ function compactKernelToolCallRecords(result: PTCExecutionResult, loadActive: bo
       duration_ms: record.duration_ms,
     };
   });
-}
-
-/**
- * Truncate to at most `maxBytes` of UTF-8 without splitting a multibyte
- * sequence. The caps here are byte budgets (measured with Buffer.byteLength),
- * but String.prototype.slice counts UTF-16 code units — multibyte-heavy text
- * sliced by code units can retain up to ~4x the nominal byte cap and bypass
- * the documented model-context bound. Encode, cut at the cap, and strip the
- * replacement char a split trailing sequence decodes to.
- */
-function sliceUtf8Bytes(text: string, maxBytes: number): string {
-  const encoded = new TextEncoder().encode(text);
-  if (encoded.length <= maxBytes) return text;
-  const decoded = new TextDecoder("utf-8", { fatal: false }).decode(encoded.subarray(0, maxBytes));
-  return decoded.replace(/\uFFFD+$/u, "");
 }
 
 /**
