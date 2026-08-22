@@ -7,6 +7,7 @@
  *
  * Commands:
  *   update           - Regenerate all logo sources and derived assets
+ *   check            - Verify tracked assets without writing files
  *   png              - Generate build/icon.png (512x512)
  *   icns             - Generate build/icon.icns (macOS app icon)
  *   linux-icons      - Generate build/icons/{16x16..512x512}.png (Linux icon set)
@@ -90,11 +91,10 @@ type LogoTargetConfig = RasterTargetConfig | SvgTargetConfig;
 const MONO_ICON = { source: SOURCE_BLACK, bg: false } as const;
 const APP_ICON = { source: SOURCE_WHITE, bg: true } as const;
 
-// Crop the centered square source to the outlined "x" + cursor bounds so the
-// mark fills small tray images without clipping the glyph or cursor.
-// Content bounds: x 13.13…58.88, y 24.5…47.5 → 45.75×23 units. Keep
-// roughly one output pixel of horizontal breathing room at the 24px tray size.
-const TRAY_MARK_CROP = "11 24 50 24.5";
+// Crop to the centered ribbon-mark bounds so it fills small tray images while
+// retaining enough breathing room to preserve the open center at 24px.
+// Content bounds: x 10…62, y 6…58. The 60-unit crop yields 1.6px margins at 24px.
+const TRAY_MARK_CROP = "6 2 60 60";
 
 // Targets to update (path -> config)
 const LOGO_TARGETS = {
@@ -115,14 +115,10 @@ const LOGO_TARGETS = {
   // iOS Safari uses apple-touch-icon for home screen installs.
   "public/apple-touch-icon.png": { size: 180, ...APP_ICON },
 
-  // Electron Tray Icons – Wide Xum Mark (Monochrome on Transparent)
+  // Electron Tray Icons – Xum Mark (Monochrome on Transparent)
   //
-  // The source SVGs have heavy internal padding (mark uses ~32% of canvas).
-  // We crop to TRAY_MARK_CROP before rendering so the mark fills the output.
-  //
+  // Crop the source's outer padding so the open-center mark stays clear at 24px.
   // Pixel dimensions: 24×24 @1x → 48×48 @2x → 72×72 @3x.
-  // Square canvas; the mark (aspect ≈ 1.84:1) is height-constrained and
-  // centered horizontally with transparent side padding.
   //
   // macOS treats the black variant as a template image (adapts to light/dark
   // menu bar automatically). Windows/Linux switch between black/white at
@@ -232,19 +228,17 @@ async function generateFavicon(source: string, output: string) {
   console.warn("  ⚠ ImageMagick not found, favicon.ico is single-resolution");
 }
 
-async function generateThemeFaviconSvg(output: string) {
-  const svg = await readFile(SOURCE_BLACK, "utf8");
+function renderThemeFaviconSvg(svg: string) {
   const withCurrentColor = svg.replace(/fill="(black|white)"/g, 'fill="currentColor"');
-  const themedSvg = withCurrentColor.replace(
-    /<svg[^>]*>/,
-    (match) => `${match}\n${THEME_FAVICON_STYLE}`
-  );
-  await writeFile(output, themedSvg);
+  return withCurrentColor.replace(/<svg[^>]*>/, (match) => `${match}\n${THEME_FAVICON_STYLE}`);
 }
 
-async function replaceInlineWordmark(relativePath: string, className: string) {
-  const outputPath = path.join(ROOT, relativePath);
-  const html = await readFile(outputPath, "utf8");
+async function generateThemeFaviconSvg(output: string) {
+  const svg = await readFile(SOURCE_BLACK, "utf8");
+  await writeFile(output, renderThemeFaviconSvg(svg));
+}
+
+function replaceInlineWordmarkContent(html: string, relativePath: string, className: string) {
   const pattern = new RegExp(
     String.raw`^([ \t]*)<svg class="${className}"[\s\S]*?^[ \t]*</svg>`,
     "m"
@@ -259,7 +253,13 @@ async function replaceInlineWordmark(relativePath: string, className: string) {
     .split("\n")
     .map((line) => `${indent}${line}`)
     .join("\n");
-  await writeFile(outputPath, html.replace(pattern, svg));
+  return html.replace(pattern, svg);
+}
+
+async function replaceInlineWordmark(relativePath: string, className: string) {
+  const outputPath = path.join(ROOT, relativePath);
+  const html = await readFile(outputPath, "utf8");
+  await writeFile(outputPath, replaceInlineWordmarkContent(html, relativePath, className));
 }
 
 async function generateSourceLogos() {
@@ -308,6 +308,92 @@ async function updateAllLogos() {
   console.log(`✓ public/favicon-dark.ico`);
 
   console.log("\n✅ All logos updated successfully!");
+}
+
+function assertFresh(relativePath: string, actual: string | Buffer, expected: string | Buffer) {
+  const matches =
+    typeof actual === "string" && typeof expected === "string"
+      ? actual === expected
+      : Buffer.from(actual).equals(Buffer.from(expected));
+  if (!matches) {
+    throw new Error(`${relativePath} is stale; run bun scripts/generate-icons.ts update`);
+  }
+}
+
+async function validateImage(
+  relativePath: string,
+  expectedDimensions: readonly (readonly [number, number])[]
+) {
+  const outputPath = path.join(ROOT, relativePath);
+  const metadata = await sharp(outputPath, { page: 0 }).metadata();
+  const dimensionsMatch = expectedDimensions.some(
+    ([width, height]) => metadata.width === width && metadata.height === height
+  );
+  if (!dimensionsMatch) {
+    throw new Error(
+      `${relativePath} has unexpected dimensions ${metadata.width}x${metadata.height}`
+    );
+  }
+
+  const stats = await sharp(outputPath, { page: 0 }).ensureAlpha().stats();
+  const alpha = stats.channels[3];
+  const hasPixelVariation = stats.channels.some((channel) => channel.min !== channel.max);
+  if (!alpha || alpha.max === 0 || !hasPixelVariation) {
+    throw new Error(`${relativePath} has no visible, non-uniform pixels`);
+  }
+}
+
+async function checkGeneratedAssets() {
+  console.log("Checking generated logo assets...\n");
+
+  const squareBlack = renderSquareLogo("black");
+  const squareWhite = renderSquareLogo("white");
+  const textTargets = {
+    "docs/img/logo-black.svg": squareBlack,
+    "docs/img/logo-white.svg": squareWhite,
+    ...WORDMARK_TARGETS,
+    "src/browser/assets/icons/xum.svg": squareBlack,
+    "docs/favicon.svg": renderThemeFaviconSvg(squareBlack),
+  } as const;
+
+  for (const [relativePath, expected] of Object.entries(textTargets)) {
+    const actual = await readFile(path.join(ROOT, relativePath), "utf8");
+    assertFresh(relativePath, actual, expected);
+    await validateImage(relativePath, [
+      [
+        Math.round(Number(expected.match(/width="([\d.]+)"/)?.[1])),
+        Math.round(Number(expected.match(/height="([\d.]+)"/)?.[1])),
+      ],
+    ]);
+    console.log(`✓ ${relativePath}`);
+  }
+
+  for (const [relativePath, className] of Object.entries(INLINE_WORDMARK_TARGETS)) {
+    const actual = await readFile(path.join(ROOT, relativePath), "utf8");
+    const expected = replaceInlineWordmarkContent(actual, relativePath, className);
+    assertFresh(relativePath, actual, expected);
+    console.log(`✓ ${relativePath}`);
+  }
+
+  for (const [relativePath, config] of Object.entries(LOGO_TARGETS)) {
+    if ("svg" in config) continue;
+
+    const outputPath = path.join(ROOT, relativePath);
+    const actual = await readFile(outputPath);
+    const expected = await (await generateRasterIcon(config)).toBuffer();
+    assertFresh(relativePath, actual, expected);
+    const [width, height] = Array.isArray(config.size) ? config.size : [config.size, config.size];
+    await validateImage(relativePath, [[width, height]]);
+    console.log(`✓ ${relativePath}`);
+  }
+
+  const faviconDimensions = FAVICON_SIZES.map((size) => [size, size] as const);
+  await validateImage("public/favicon.ico", faviconDimensions);
+  console.log("✓ public/favicon.ico");
+  await validateImage("public/favicon-dark.ico", faviconDimensions);
+  console.log("✓ public/favicon-dark.ico");
+
+  console.log("\n✅ All tracked logo assets are fresh and parseable!");
 }
 
 async function generateBuildPng() {
@@ -383,6 +469,10 @@ if (commands.has("update")) {
   await updateAllLogos();
 }
 
+if (commands.has("check")) {
+  await checkGeneratedAssets();
+}
+
 if (commands.has("linux-icons")) {
   await mkdir(BUILD_DIR, { recursive: true });
   await generateLinuxIcons();
@@ -402,8 +492,9 @@ if (commands.has("png") || commands.has("icns")) {
       await generateIcns();
     } catch (e) {
       console.warn("Failed to generate ICNS:", e);
+    } finally {
+      // Only the ICNS process owns this directory; parallel PNG builds must not remove it.
+      await rm(ICONSET_DIR, { recursive: true, force: true });
     }
   }
-
-  await rm(ICONSET_DIR, { recursive: true, force: true });
 }
