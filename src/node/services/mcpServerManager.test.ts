@@ -583,6 +583,45 @@ describe("MCPServerManager", () => {
     expect(internals.lastWorkspaceRequestOptions.get(workspaceId)?.overrides).toEqual({});
   });
 
+  test("a cold workspace's first serve loads disk overrides instead of trusting the caller snapshot", async () => {
+    // Two processes, one home: the caller read its snapshot BEFORE a sibling
+    // uninstall + same-name reinstall pruned the enable from the override
+    // file. This manager never served the workspace (no cached snapshot for
+    // the sweep to refresh) and its first token observation records the
+    // already-advanced epoch, so the bracket sees nothing to retire — disk
+    // must win on the first serve, or the stale enable overrides the
+    // replacement server's default-disabled state.
+    manager.dispose();
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: {
+        keyPrefix: "plugin:",
+        readToken: () => Promise.resolve("epoch-post-mutation"),
+        readWorkspaceOverrides: () => Promise.resolve({}), // pruned on disk
+      },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js", true) })
+    );
+    let startedPluginServer = false;
+    access.startServers = (...args: unknown[]) => {
+      const servers = args[0] as Record<string, unknown>;
+      if (pluginKey in servers) {
+        startedPluginServer = true;
+      }
+      return Promise.resolve(startResult([]));
+    };
+
+    const staleCallerOptions = workspaceRequest("ws-cold-first-serve", {
+      overrides: { enabledServers: [pluginKey] },
+    });
+    const result = await manager.getToolsForWorkspace(staleCallerOptions);
+    expect(startedPluginServer).toBe(false);
+    expect(Object.keys(result.tools)).toHaveLength(0);
+  });
+
   test("stopServersWithKeyPrefix invalidates instances published by an in-flight startup, then retries them", async () => {
     const workspaceId = "ws-swap-race";
     const pluginKey = "plugin:abc123:echo";

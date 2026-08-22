@@ -1277,6 +1277,49 @@ export class MCPServerManager {
   }
 
   /**
+   * Authoritative overrides for a workspace's FIRST serve on this manager.
+   * The caller's snapshot may have been read from disk BEFORE a sibling
+   * process's uninstall + same-name reinstall pruned its plugin keys, and
+   * the epoch bracket cannot catch that staleness here: a cold manager's
+   * first token observation records the already-advanced token, and later
+   * sweeps refresh only workspaces with recorded options — a never-served
+   * workspace has none. Disk is authoritative (every override write
+   * persists before publishing), so read it now; when it cannot be read,
+   * scrub plugin keys from the caller snapshot so a stale enable can never
+   * override a replacement server's default-disabled state. Off-host
+   * workspaces are skipped (plugin servers are never offered there, and the
+   * read would exec remotely).
+   */
+  private async loadFirstServeWorkspaceOverrides(
+    requestOptions: MCPWorkspaceRequestOptions
+  ): Promise<WorkspaceMCPOverrides | undefined> {
+    if (
+      this.pluginInvalidation === undefined ||
+      this.lastWorkspaceRequestOptions.has(requestOptions.workspaceId)
+    ) {
+      return requestOptions.overrides;
+    }
+    const execsOffHost =
+      requestOptions.runtime instanceof RemoteRuntime ||
+      requestOptions.runtime instanceof DevcontainerRuntime;
+    if (execsOffHost) {
+      return requestOptions.overrides;
+    }
+    const readOverrides = this.pluginInvalidation.readWorkspaceOverrides;
+    if (readOverrides !== undefined) {
+      try {
+        return await readOverrides(requestOptions.workspaceId);
+      } catch (error) {
+        log.warn("[MCP] Failed to load workspace overrides for a first serve", {
+          workspaceId: requestOptions.workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+    return this.scrubPluginOverrideKeys(requestOptions.overrides);
+  }
+
+  /**
    * Stop the idle cleanup interval. Call when shutting down.
    */
   dispose(): void {
@@ -1700,7 +1743,10 @@ export class MCPServerManager {
           ...requestOptions,
           overrides: this.latestWorkspaceOverrides.get(requestOptions.workspaceId),
         }
-      : requestOptions;
+      : {
+          ...requestOptions,
+          overrides: await this.loadFirstServeWorkspaceOverrides(requestOptions),
+        };
     // Same cold-workspace gap for project trust: a revocation landing while a
     // stream's pre-await trusted snapshot is still in flight has no recorded
     // options to repair, so overlay the newest trust the manager has seen.
