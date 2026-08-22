@@ -660,11 +660,15 @@ async function main(): Promise<number> {
     // Direct CLI registration bypasses WorkspaceService.create, so a
     // preserved checkout could carry a stale `plugin:` MCP override into a
     // same-name reinstall on the first send; sanitize before announcing.
+    // realConfig: the ephemeral CLI config has no workspace records, so the
+    // live-sibling scan needs the persistent one or it would prune enables a
+    // desktop workspace on this checkout still owns.
     sanitizeCliWorkspaceRegistration: (args) =>
       workspaceService.sanitizeCliRegisteredWorkspace(
         args.workspaceId,
         args.workspacePath,
-        args.runtimeConfig
+        args.runtimeConfig,
+        realConfig
       ),
   });
   // Register with WorkspaceService so TaskService operations that target the parent

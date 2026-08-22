@@ -2774,7 +2774,8 @@ export class WorkspaceService extends EventEmitter {
   async sanitizeMaterializedTaskWorkspace(
     workspaceId: string,
     workspacePath: string,
-    runtimeConfig: RuntimeConfig | undefined
+    runtimeConfig: RuntimeConfig | undefined,
+    persistentSiblingConfig?: Pick<Config, "loadConfigOrDefault">
   ): Promise<string | undefined> {
     const hostLocal =
       runtimeConfig === undefined ||
@@ -2783,7 +2784,11 @@ export class WorkspaceService extends EventEmitter {
     if (!hostLocal) {
       return undefined;
     }
-    return this.sanitizeStalePluginOverridesForNewWorkspace(workspaceId, workspacePath);
+    return this.sanitizeStalePluginOverridesForNewWorkspace(
+      workspaceId,
+      workspacePath,
+      persistentSiblingConfig
+    );
   }
 
   /**
@@ -2799,14 +2804,24 @@ export class WorkspaceService extends EventEmitter {
   async sanitizeCliRegisteredWorkspace(
     workspaceId: string,
     workspacePath: string,
-    runtimeConfig: RuntimeConfig | undefined
+    runtimeConfig: RuntimeConfig | undefined,
+    /**
+     * CLI sessions run on an EPHEMERAL config whose project entries carry no
+     * workspace records, so the live-sibling scan below would never see a
+     * desktop workspace registered for the same checkout — and would prune
+     * plugin enables that live consent context still owns from the shared
+     * .xum/mcp.local.jsonc. Callers on a temp config must pass the persistent
+     * config so those siblings are visible.
+     */
+    persistentSiblingConfig?: Pick<Config, "loadConfigOrDefault">
   ): Promise<string | undefined> {
     this.pendingPluginSanitizations.add(workspaceId);
     try {
       const sanitizeError = await this.sanitizeMaterializedTaskWorkspace(
         workspaceId,
         workspacePath,
-        runtimeConfig
+        runtimeConfig,
+        persistentSiblingConfig
       );
       if (sanitizeError !== undefined) {
         await this.rollbackUnsanitizedWorkspaceRegistration(workspaceId);
@@ -2842,7 +2857,8 @@ export class WorkspaceService extends EventEmitter {
    */
   private async sanitizeStalePluginOverridesForNewWorkspace(
     workspaceId: string,
-    workspacePath: string
+    workspacePath: string,
+    persistentSiblingConfig?: Pick<Config, "loadConfigOrDefault">
   ): Promise<string | undefined> {
     if (!this.workspaceMcpOverridesService) {
       return undefined;
@@ -2877,23 +2893,32 @@ export class WorkspaceService extends EventEmitter {
       runtimeConfig.type === "worktree";
     const normalizedPath = stripTrailingSlashes(workspacePath);
     const canonicalPath = await canonicalize(workspacePath);
-    const config = this.config.loadConfigOrDefault();
-    for (const project of config.projects.values()) {
-      for (const workspace of project.workspaces) {
-        if (
-          workspace.id === workspaceId ||
-          // Registered-but-unsanitized entries from an overlapping creation
-          // are not live consent contexts (see pendingPluginSanitizations).
-          (workspace.id !== undefined && this.pendingPluginSanitizations.has(workspace.id)) ||
-          !isHostLocalConfig(workspace.runtimeConfig)
-        ) {
-          continue;
-        }
-        if (
-          stripTrailingSlashes(workspace.path) === normalizedPath ||
-          (await canonicalize(workspace.path)) === canonicalPath
-        ) {
-          return undefined;
+    // Scan the service's own config AND (when provided) the persistent one:
+    // ephemeral CLI configs carry no workspace records, so a desktop
+    // workspace live on the same checkout is only visible in the latter.
+    const configSources = [
+      this.config,
+      ...(persistentSiblingConfig ? [persistentSiblingConfig] : []),
+    ];
+    for (const configSource of configSources) {
+      const config = configSource.loadConfigOrDefault();
+      for (const project of config.projects.values()) {
+        for (const workspace of project.workspaces) {
+          if (
+            workspace.id === workspaceId ||
+            // Registered-but-unsanitized entries from an overlapping creation
+            // are not live consent contexts (see pendingPluginSanitizations).
+            (workspace.id !== undefined && this.pendingPluginSanitizations.has(workspace.id)) ||
+            !isHostLocalConfig(workspace.runtimeConfig)
+          ) {
+            continue;
+          }
+          if (
+            stripTrailingSlashes(workspace.path) === normalizedPath ||
+            (await canonicalize(workspace.path)) === canonicalPath
+          ) {
+            return undefined;
+          }
         }
       }
     }

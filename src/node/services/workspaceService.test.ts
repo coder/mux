@@ -8674,7 +8674,8 @@ describe("WorkspaceService registration-time plugin override sanitization", () =
   interface SanitizeAccess {
     sanitizeStalePluginOverridesForNewWorkspace(
       workspaceId: string,
-      workspacePath: string
+      workspacePath: string,
+      persistentSiblingConfig?: Pick<Config, "loadConfigOrDefault">
     ): Promise<string | undefined>;
     pendingPluginSanitizations: Set<string>;
     rollbackUnsanitizedWorkspaceRegistration(workspaceId: string): Promise<boolean>;
@@ -8706,6 +8707,51 @@ describe("WorkspaceService registration-time plugin override sanitization", () =
       service as unknown as SanitizeAccess
     ).sanitizeStalePluginOverridesForNewWorkspace("ws-new", "/tmp/proj");
     expect(error).toBeUndefined();
+    expect(pruned).toEqual(["ws-new:plugin:"]);
+  });
+
+  test("skips sanitization when the live sibling is only visible in the persistent config", async () => {
+    // xum run / xum workflow register on an EPHEMERAL temp config whose
+    // project entries carry no workspace records; a desktop workspace live on
+    // the same checkout exists only in the persistent config. Pruning would
+    // strip enables that live consent context still owns from the shared
+    // .xum/mcp.local.jsonc — the persistent sibling must force a skip, while
+    // a persistent record for a DIFFERENT checkout must not.
+    const service = makeService([{ id: "ws-new", path: "/tmp/proj" }]);
+    const pruned: string[] = [];
+    service.setWorkspaceMcpOverridesService({
+      prunePluginOverrideKeys: (workspaceId, keyPrefix) => {
+        pruned.push(`${workspaceId}:${keyPrefix}`);
+        return Promise.resolve();
+      },
+    });
+    const persistentWith = (workspacePath: string): Pick<Config, "loadConfigOrDefault"> =>
+      ({
+        loadConfigOrDefault: () => ({
+          projects: new Map([
+            ["/tmp/proj", { workspaces: [{ id: "ws-desktop", path: workspacePath }] }],
+          ]),
+        }),
+      }) as unknown as Pick<Config, "loadConfigOrDefault">;
+
+    const skip = await (
+      service as unknown as SanitizeAccess
+    ).sanitizeStalePluginOverridesForNewWorkspace(
+      "ws-new",
+      "/tmp/proj",
+      persistentWith("/tmp/proj")
+    );
+    expect(skip).toBeUndefined();
+    expect(pruned).toEqual([]);
+
+    const prune = await (
+      service as unknown as SanitizeAccess
+    ).sanitizeStalePluginOverridesForNewWorkspace(
+      "ws-new",
+      "/tmp/proj",
+      persistentWith("/tmp/other")
+    );
+    expect(prune).toBeUndefined();
     expect(pruned).toEqual(["ws-new:plugin:"]);
   });
 
