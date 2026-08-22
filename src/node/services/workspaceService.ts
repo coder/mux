@@ -66,7 +66,13 @@ import { targetWorkspaceBucketToLayer } from "@/common/types/agentAiSettings";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { resolveAgentAiSettings } from "@/common/utils/ai/resolveAgentAiSettings";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
-import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import {
+  formatBranchWorkspaceNameConflict,
+  getBranchWorkspaceNameConflict,
+  sanitizeBranchNameForWorkspace,
+  validateWorkspaceBranchName,
+  validateWorkspaceName,
+} from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
 import {
   CHAT_FILE_NAME,
@@ -4323,10 +4329,19 @@ export class WorkspaceService extends EventEmitter {
       resolvedBranchName = branchName;
     }
 
-    // Validate workspace name (covers both caller-provided and auto-generated names)
-    const validation = validateWorkspaceName(resolvedBranchName);
+    const validation = validateWorkspaceBranchName(resolvedBranchName);
     if (!validation.valid) {
-      return Err(validation.error ?? "Invalid workspace name");
+      return Err(validation.error ?? "Invalid branch name");
+    }
+
+    const initialWorkspaceName = sanitizeBranchNameForWorkspace(resolvedBranchName);
+    // Sanitized collisions must fail so distinct Git branches cannot share one workspace identity.
+    const initialConflict = getBranchWorkspaceNameConflict(
+      resolvedBranchName,
+      (projectConfig.workspaces ?? []).map((workspace) => workspace.name)
+    );
+    if (initialConflict) {
+      return Err(initialConflict);
     }
 
     // Generate stable workspace ID
@@ -4385,8 +4400,9 @@ export class WorkspaceService extends EventEmitter {
     const initLogger = this.createInitLogger(workspaceId);
 
     try {
-      // Create workspace with automatic collision retry
       let finalBranchName = resolvedBranchName;
+      let finalWorkspaceName = initialWorkspaceName;
+      const hasSanitizedWorkspaceName = finalBranchName !== finalWorkspaceName;
       let createResult: { success: boolean; workspacePath?: string; error?: string };
 
       // If runtime uses config-level collision detection (e.g., Coder - can't reach host),
@@ -4397,24 +4413,34 @@ export class WorkspaceService extends EventEmitter {
             (w) => w.name
           )
         );
+        const configConflict = getBranchWorkspaceNameConflict(finalBranchName, existingNames);
+        if (configConflict) {
+          initLogger.logComplete(-1);
+          return Err(configConflict);
+        }
+
         for (
           let i = 0;
-          i < MAX_WORKSPACE_NAME_COLLISION_RETRIES && existingNames.has(finalBranchName);
+          i < MAX_WORKSPACE_NAME_COLLISION_RETRIES && existingNames.has(finalWorkspaceName);
           i++
         ) {
-          log.debug(`Workspace name collision for "${finalBranchName}", adding suffix`);
+          log.debug(`Workspace name collision for "${finalWorkspaceName}", adding suffix`);
           finalBranchName = appendCollisionSuffix(resolvedBranchName);
+          finalWorkspaceName = sanitizeBranchNameForWorkspace(finalBranchName);
         }
       }
 
       const createEnv = await secretsToRecord(this.config.getEffectiveSecrets(owningProjectPath));
+      const maxCollisionRetries = hasSanitizedWorkspaceName
+        ? 0
+        : MAX_WORKSPACE_NAME_COLLISION_RETRIES;
 
-      for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
+      for (let attempt = 0; attempt <= maxCollisionRetries; attempt++) {
         createResult = await runtime.createWorkspace({
           projectPath: owningProjectPath,
           branchName: finalBranchName,
           trunkBranch: normalizedTrunkBranch,
-          directoryName: finalBranchName,
+          directoryName: finalWorkspaceName,
           initLogger,
           abortSignal: initAbortController.signal,
           env: createEnv,
@@ -4423,13 +4449,18 @@ export class WorkspaceService extends EventEmitter {
 
         if (createResult.success) break;
 
-        // If collision and not last attempt, retry with suffix
+        if (hasSanitizedWorkspaceName && isWorkspaceNameCollision(createResult.error)) {
+          initLogger.logComplete(-1);
+          return Err(formatBranchWorkspaceNameConflict(finalBranchName));
+        }
+
         if (
           isWorkspaceNameCollision(createResult.error) &&
           attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
         ) {
-          log.debug(`Workspace name collision for "${finalBranchName}", retrying with suffix`);
+          log.debug(`Workspace name collision for "${finalWorkspaceName}", retrying with suffix`);
           finalBranchName = appendCollisionSuffix(resolvedBranchName);
+          finalWorkspaceName = sanitizeBranchNameForWorkspace(finalBranchName);
           continue;
         }
         break;
@@ -4442,7 +4473,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Let runtime finalize config (e.g., derive names, compute host) after collision handling
       if (runtime.finalizeConfig) {
-        const finalizeResult = await runtime.finalizeConfig(finalBranchName, finalRuntimeConfig);
+        const finalizeResult = await runtime.finalizeConfig(finalWorkspaceName, finalRuntimeConfig);
         if (!finalizeResult.success) {
           initLogger.logComplete(-1);
           return Err(finalizeResult.error);
@@ -4454,7 +4485,7 @@ export class WorkspaceService extends EventEmitter {
       // Let runtime validate before persisting (e.g., external collision checks)
       if (runtime.validateBeforePersist) {
         const validateResult = await runtime.validateBeforePersist(
-          finalBranchName,
+          finalWorkspaceName,
           finalRuntimeConfig
         );
         if (!validateResult.success) {
@@ -4468,7 +4499,7 @@ export class WorkspaceService extends EventEmitter {
 
       const metadata = {
         id: workspaceId,
-        name: finalBranchName,
+        name: finalWorkspaceName,
         title,
         projectName,
         projectPath: owningProjectPath,
@@ -4497,7 +4528,7 @@ export class WorkspaceService extends EventEmitter {
           projectConfig.workspaces.push({
             path: createResult!.workspacePath!,
             id: workspaceId,
-            name: finalBranchName,
+            name: finalWorkspaceName,
             title,
             createdAt: metadata.createdAt,
             runtimeConfig: finalRuntimeConfig,
@@ -4549,7 +4580,9 @@ export class WorkspaceService extends EventEmitter {
               const deleteResult = await runtime
                 .deleteWorkspace(
                   owningProjectPath,
-                  finalBranchName,
+                  // Worktree directories are named after the sanitized
+                  // workspace name (branch names may contain "/").
+                  finalWorkspaceName,
                   false,
                   undefined,
                   projectConfig.trusted ?? false
@@ -4655,10 +4688,11 @@ export class WorkspaceService extends EventEmitter {
     let initLogger: ReturnType<WorkspaceService["createInitLogger"]> | null = null;
 
     try {
-      const validation = validateWorkspaceName(branchName);
+      const validation = validateWorkspaceBranchName(branchName);
       if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
+        return Err(validation.error ?? "Invalid branch name");
       }
+      const workspaceName = sanitizeBranchNameForWorkspace(branchName);
 
       const normalizedProjects = projects.map((project) => ({
         projectPath: stripTrailingSlashes(project.projectPath),
@@ -4688,6 +4722,24 @@ export class WorkspaceService extends EventEmitter {
             `Project ${project.projectName} must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page.`
           );
         }
+      }
+
+      const existingWorkspaceNames = [
+        ...(configSnapshot.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces ?? []).map(
+          (workspace) => workspace.name
+        ),
+        ...normalizedProjects.flatMap((project) =>
+          (
+            configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.workspaces ?? []
+          ).map((workspace) => workspace.name)
+        ),
+      ];
+      const workspaceNameConflict = getBranchWorkspaceNameConflict(
+        branchName,
+        existingWorkspaceNames
+      );
+      if (workspaceNameConflict) {
+        return Err(workspaceNameConflict);
       }
 
       const workspaceId = this.config.generateStableId();
@@ -4778,7 +4830,7 @@ export class WorkspaceService extends EventEmitter {
         project,
         runtime: createRuntime(finalRuntimeConfig, {
           projectPath: project.projectPath,
-          workspaceName: branchName,
+          workspaceName,
         }),
       }));
 
@@ -4799,7 +4851,7 @@ export class WorkspaceService extends EventEmitter {
             // also drop an older same-named branch in worktree runtimes.
             await createdWorkspace.runtime.deleteWorkspace(
               createdWorkspace.project.projectPath,
-              branchName,
+              workspaceName,
               false,
               initAbortController.signal,
               trusted
@@ -4845,7 +4897,7 @@ export class WorkspaceService extends EventEmitter {
           projectPath: projectRuntimeEntry.project.projectPath,
           branchName,
           trunkBranch: projectTrunkBranch,
-          directoryName: branchName,
+          directoryName: workspaceName,
           initLogger,
           abortSignal: initAbortController.signal,
           env: createEnv,
@@ -4855,6 +4907,9 @@ export class WorkspaceService extends EventEmitter {
         if (!createResult.success || !createResult.workspacePath) {
           await rollbackCreatedWorkspaces();
           initLogger.logComplete(-1);
+          if (branchName !== workspaceName && isWorkspaceNameCollision(createResult.error)) {
+            return Err(formatBranchWorkspaceNameConflict(branchName));
+          }
           return Err(
             createResult.error ??
               `Failed to create workspace for project ${projectRuntimeEntry.project.projectName}`
@@ -4873,7 +4928,7 @@ export class WorkspaceService extends EventEmitter {
       let containerPath: string;
       try {
         containerPath = await containerManager.createContainer(
-          branchName,
+          workspaceName,
           createdWorkspaces.map((workspace) => ({
             projectName: workspace.project.projectName,
             workspacePath: workspace.workspacePath,
@@ -4884,7 +4939,7 @@ export class WorkspaceService extends EventEmitter {
         const containerAlreadyExists = isErrnoWithCode(error, "EEXIST");
         if (!containerAlreadyExists) {
           try {
-            await containerManager.removeContainer(branchName);
+            await containerManager.removeContainer(workspaceName);
           } catch (cleanupError: unknown) {
             log.error("Failed to clean up multi-project container after create failure", {
               workspaceId,
@@ -4895,7 +4950,10 @@ export class WorkspaceService extends EventEmitter {
         }
         initLogger.logComplete(-1);
         if (containerAlreadyExists) {
-          return Err(`Failed to create multi-project container: ${branchName} already exists`);
+          if (branchName !== workspaceName) {
+            return Err(formatBranchWorkspaceNameConflict(branchName));
+          }
+          return Err(`Failed to create multi-project container: ${workspaceName} already exists`);
         }
         return Err(`Failed to create multi-project container: ${getErrorMessage(error)}`);
       }
@@ -4911,7 +4969,7 @@ export class WorkspaceService extends EventEmitter {
         multiProjectConfig.workspaces.push({
           path: containerPath,
           id: workspaceId,
-          name: branchName,
+          name: workspaceName,
           title,
           createdAt,
           runtimeConfig: finalRuntimeConfig,
