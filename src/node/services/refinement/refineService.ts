@@ -163,12 +163,25 @@ export function createRefineSummaryMessage(
     // rendering stays feasible; approval is bound to these bytes via
     // stagedSetHash.
     for (const [index, edit] of mode.edits.entries()) {
+      const payload = JSON.stringify(edit.input, null, 2);
+      // SECURITY: a backtick run in the payload could close a fixed ```
+      // fence early (lenient renderers accept closers JSON quoting would not
+      // stop), letting a prompt-influenced payload render part of itself as
+      // Markdown — counterfeit headings or "nothing applied" prose — outside
+      // the code block that the explicit-review boundary depends on. Use a
+      // fence strictly longer than the longest backtick run anywhere in the
+      // payload so it can never terminate early.
+      const longestBacktickRun = (payload.match(/`+/gu) ?? []).reduce(
+        (max, run) => Math.max(max, run.length),
+        0
+      );
+      const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
       lines.push(
         `- [staged ${index + 1}/${mode.edits.length}] ${edit.description}`,
         "",
-        "```json",
-        JSON.stringify(edit.input, null, 2),
-        "```",
+        `${fence}json`,
+        payload,
+        fence,
         ""
       );
     }

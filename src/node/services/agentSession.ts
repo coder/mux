@@ -6214,10 +6214,24 @@ export class AgentSession {
           `Failed to read history for targeted follow-up recovery: ${historyResult.error}`
         );
       }
-      summaryMessage = historyResult.data.find((message) => message.id === summaryMessageId);
-      if (!summaryMessage) {
+      const summaryIndex = historyResult.data.findIndex(
+        (message) => message.id === summaryMessageId
+      );
+      if (summaryIndex === -1) {
         return false;
       }
+      // Same staleness rule as the startup-recovery branch below: background
+      // writers (family-message and refine-summary rows) can append between
+      // the compaction boundary committing and this stream-end dispatch. Any
+      // non-copy row after the targeted summary means the follow-up would
+      // continue after unrelated content — do not fire.
+      const onlyTailCopiesAfterSummary = historyResult.data
+        .slice(summaryIndex + 1)
+        .every((message) => message.metadata?.rlmPreservedTailCopy === true);
+      if (!onlyTailCopiesAfterSummary) {
+        return false;
+      }
+      summaryMessage = historyResult.data[summaryIndex];
     } else {
       // Read the last message from history — only need 1 message, avoid full-file read.
       // Startup recovery must retry on transient read failures, so bubble errors.

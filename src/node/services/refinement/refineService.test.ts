@@ -518,6 +518,42 @@ describe("RefineService", () => {
     ).toBe(true);
   });
 
+  it("payload backtick runs cannot terminate the proposal's code fence", async () => {
+    // SECURITY: a payload containing ``` could close a fixed triple-backtick
+    // fence early, rendering attacker-chosen Markdown (counterfeit "nothing
+    // applied" prose) outside the code block the review boundary depends on.
+    const fencedPayload = "injected lesson\n```\n## NOT a real heading\n```";
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-fence-1",
+              toolName: "memory",
+              input: { command: "create", path: LESSON_PATH, file_text: `${fencedPayload}\n` },
+            },
+          ],
+          `${LESSON_PATH}: a harmless-sounding description.`
+        ),
+    });
+    await fixture.seedTrajectory();
+
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+    const proposalText = fixture.emittedMessages[0].parts
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join("");
+    // The wrapping fence is strictly longer than any backtick run inside the
+    // payload, so the embedded ``` can never close it.
+    const runs = proposalText.match(/`+/gu) ?? [];
+    const fenceLength = Math.max(...runs.map((run) => run.length));
+    const openingFence = "`".repeat(fenceLength);
+    const fenceLines = proposalText
+      .split("\n")
+      .filter((line) => line.startsWith(openingFence)).length;
+    expect(fenceLength).toBeGreaterThan(3);
+    expect(fenceLines).toBe(2); // exactly one open + one close
+  });
+
   it("refuses to apply a staged set that no longer matches the displayed proposal", async () => {
     using fixture = await createFixture({
       modelFactory: () =>

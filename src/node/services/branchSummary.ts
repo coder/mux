@@ -277,6 +277,13 @@ export function trimSummaryToBoundary(text: string): string {
 
 async function generateAbandonedBranchSummaryText(input: {
   aiService: BranchSummaryAiService;
+  /**
+   * Routes the side-channel request into the workspace's devtools.jsonl:
+   * model creation installs its API-debug middleware only when a workspaceId
+   * is provided, and this call processes abandoned history that must stay
+   * inspectable through the documented debug flow.
+   */
+  workspaceId: string;
   candidates: string[];
   /** Trusted summarization instructions (buildAbandonedBranchSummarySystemPrompt). */
   system: string;
@@ -327,6 +334,7 @@ async function generateAbandonedBranchSummaryText(input: {
     const modelString = input.candidates[i];
     const modelResult = await input.aiService.createModelWithPinnedMetadata(modelString, {
       agentInitiated: true,
+      workspaceId: input.workspaceId,
     });
     if (!modelResult.success) {
       log.debug("Branch summary: skipping model candidate", {
@@ -639,6 +647,7 @@ export async function maybeAppendAbandonedBranchSummary(
     const sessionUsageService = input.sessionUsageService;
     const summaryText = await generateAbandonedBranchSummaryText({
       aiService: input.aiService,
+      workspaceId: input.workspaceId,
       candidates,
       system: buildAbandonedBranchSummarySystemPrompt(),
       prompt: buildAbandonedBranchSummaryPrompt(transcript),
