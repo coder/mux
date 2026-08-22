@@ -710,6 +710,7 @@ export class AgentSession {
   private dispatchingQueuedEntry?: {
     muxMetadata?: unknown;
     visibleProjection?: MessageQueueVisibleProjection;
+    persisted: boolean;
   };
 
   /** Correlation of the direct send currently in the PREPARING phase, if any. */
@@ -2505,7 +2506,7 @@ export class AgentSession {
       // retain a user entry that is between dequeue and durable transcript emission.
       listener({
         workspaceId: this.workspaceId,
-        message: this.getQueuedMessageChangedEvent(),
+        message: this.getQueuedMessageChangedEvent(false),
       });
 
       // Rehydrate pending auto-retry countdown state on reconnect/reload so
@@ -3248,6 +3249,9 @@ export class AgentSession {
       persistedCancelableMessageIds.push(userMessage.id);
       if (await cancelBeforeAcceptance()) {
         return Ok(undefined);
+      }
+      if (this.dispatchingQueuedEntry) {
+        this.dispatchingQueuedEntry.persisted = true;
       }
     }
 
@@ -5842,12 +5846,15 @@ export class AgentSession {
     }
   }
 
-  private getQueuedMessageChangedEvent(): Extract<
-    WorkspaceChatMessage,
-    { type: "queued-message-changed" }
-  > {
+  private getQueuedMessageChangedEvent(
+    includePersistedDispatching = true
+  ): Extract<WorkspaceChatMessage, { type: "queued-message-changed" }> {
     const pending = this.messageQueue.getVisibleProjection();
-    const dispatching = this.dispatchingQueuedEntry?.visibleProjection;
+    const dispatchingState = this.dispatchingQueuedEntry;
+    const dispatching =
+      !includePersistedDispatching && dispatchingState?.persisted
+        ? undefined
+        : dispatchingState?.visibleProjection;
     const reviews = [...(dispatching?.reviews ?? []), ...(pending.reviews ?? [])];
 
     return {
@@ -5861,6 +5868,7 @@ export class AgentSession {
       queueDispatchMode: dispatching?.queueDispatchMode ?? pending.queueDispatchMode,
       hasCompactionRequest:
         dispatching?.hasCompactionRequest === true || pending.hasCompactionRequest,
+      isDispatching: dispatching != null,
     };
   }
 
@@ -5905,6 +5913,7 @@ export class AgentSession {
       this.dispatchingQueuedEntry = {
         muxMetadata: options?.muxMetadata,
         visibleProjection,
+        persisted: false,
       };
       // PREPARING disables queue actions while the authoritative projection includes
       // the in-flight entry, preventing stale Edit/Send-now operations during persistence.

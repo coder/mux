@@ -516,8 +516,21 @@ describe("AgentSession queued message tool-call dispatch", () => {
 
   test("keeps a dequeued user message visible until its durable row is emitted", async () => {
     const workspaceId = "queue-dispatch-visible-handoff";
+    const goalSyncStarted = Promise.withResolvers<void>();
+    const goalSyncRelease = Promise.withResolvers<void>();
+    const workspaceGoalService = {
+      assertPricedModelForBudgetedGoal: mock(() => Promise.resolve(Ok(undefined))),
+      syncGoalModeWithChatTail: mock(async () => {
+        goalSyncStarted.resolve();
+        await goalSyncRelease.promise;
+      }),
+      clearPendingContinuationForManualUserMessage: mock(() => undefined),
+      acknowledgeUser: mock(() => Promise.resolve(null)),
+    } as unknown as WorkspaceGoalService;
     const { session, cleanup, historyService, events } = await createAgentSessionHarness({
       workspaceId,
+      workspaceGoalService,
+      initStateManagerOverrides: { replayInit: mock(() => Promise.resolve()) },
       captureEvents: true,
     });
     const originalAppend = historyService.appendToHistory.bind(historyService);
@@ -559,6 +572,20 @@ describe("AgentSession queued message tool-call dispatch", () => {
       expect(latestQueueEvent()?.queuedMessages).toEqual([followUp, nextFollowUp]);
 
       appendRelease.resolve();
+      await goalSyncStarted.promise;
+
+      // Reconnect replay already includes the persisted user row, so its queue snapshot must
+      // omit that dispatch while retaining later queued input.
+      const replayEvents: Array<(typeof events)[number]> = [];
+      await session.replayHistory(({ message }) => replayEvents.push(message));
+      expect(replayEvents.some(isFollowUpUserMessage)).toBe(true);
+      const replayQueueEvent = replayEvents.find(
+        (event) => event.type === "queued-message-changed"
+      );
+      expect(replayQueueEvent?.queuedMessages).toEqual([nextFollowUp]);
+      expect(replayQueueEvent?.isDispatching).toBe(false);
+
+      goalSyncRelease.resolve();
       expect(await waitForCondition(() => events.some(isFollowUpUserMessage))).toBe(true);
       expect(
         await waitForCondition(() => latestQueueEvent()?.queuedMessages.join() === nextFollowUp)
@@ -575,6 +602,7 @@ describe("AgentSession queued message tool-call dispatch", () => {
       expect(handoffIndex).toBeGreaterThan(userMessageIndex);
     } finally {
       appendRelease.resolve();
+      goalSyncRelease.resolve();
       appendSpy.mockRestore();
       session.dispose();
       await cleanup();

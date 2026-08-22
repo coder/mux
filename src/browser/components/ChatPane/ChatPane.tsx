@@ -860,10 +860,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   const handleEditQueuedMessage = useCallback(async () => {
     const queuedMessage = workspaceState?.queuedMessage;
-    if (!queuedMessage || workspaceState?.isStreamStarting) return;
+    if (!queuedMessage || queuedMessage.isDispatching) return;
 
     await restoreQueuedDraft(queuedMessage);
-  }, [restoreQueuedDraft, workspaceState?.isStreamStarting, workspaceState?.queuedMessage]);
+  }, [restoreQueuedDraft, workspaceState?.queuedMessage]);
 
   const sendQueuedImmediatelyInFlightRef = useRef<string | null>(null);
 
@@ -958,7 +958,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     if (!current) return;
 
     if (current.queuedMessage) {
-      if (!current.isStreamStarting) {
+      if (!current.queuedMessage.isDispatching) {
         await restoreQueuedDraft(current.queuedMessage);
       }
       return;
@@ -1820,7 +1820,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         node: (
           <QueuedMessage
             message={props.queuedMessage}
-            isDispatching={props.isStreamStarting}
             onEdit={() => void props.onEditQueuedMessage()}
             onChangeDispatchMode={props.onQueuedDispatchModeChange}
             onActionError={props.onQueuedActionError}

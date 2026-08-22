@@ -11,7 +11,6 @@ import { cn } from "@/common/lib/utils";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;
-  isDispatching?: boolean;
   className?: string;
   onEdit?: () => void;
   onChangeDispatchMode?: (mode: QueueDispatchMode) => Promise<void>;
@@ -45,7 +44,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
   const queueDispatchMode = props.message.queueDispatchMode ?? "tool-end";
   const queueStatusLabel =
     queueDispatchMode === "turn-end" ? "Sends after this turn" : "Sends after this step";
-  const isDispatching = props.isDispatching === true;
+  const isDispatching = props.message.isDispatching === true;
   const isActionPending = pendingAction != null;
 
   const handleDispatchModeChange = (mode: QueueDispatchMode) => {

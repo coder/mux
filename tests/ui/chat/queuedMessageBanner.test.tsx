@@ -68,8 +68,7 @@ describe("QueuedMessage banner", () => {
   test("keeps a dispatching message visible without editable queue actions", () => {
     const view = render(
       <QueuedMessage
-        message={createQueuedMessage()}
-        isDispatching
+        message={createQueuedMessage({ isDispatching: true })}
         onEdit={mock(() => {})}
         onChangeDispatchMode={mock(async () => {})}
         onSendImmediately={mock(async () => {})}
