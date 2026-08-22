@@ -102,6 +102,25 @@ describe("generateXumTypes", () => {
     expect(types).toMatch(/\{[^}]*success: true[^}]*\}[^|]*\|[^{]*\{/);
   });
 
+  test("generates result types for RLM family messaging tools (not unknown)", async () => {
+    const messageArgs = z.object({ message: z.string() });
+    const types = await generateXumTypes({
+      task_message_parent: createMockTool(messageArgs),
+      task_message_sibling: createMockTool(z.object({ task_id: z.string(), message: z.string() })),
+    });
+
+    // Both tools must resolve through RESULT_SCHEMAS so the kernel sees their
+    // status discriminants instead of an opaque unknown return type.
+    expect(types).toContain(
+      "function task_message_parent(args: TaskMessageParentArgs): TaskMessageParentResult"
+    );
+    expect(types).toContain(
+      "function task_message_sibling(args: TaskMessageSiblingArgs): TaskMessageSiblingResult"
+    );
+    expect(types).not.toContain("): unknown");
+    expect(types).toContain('status: "sent"');
+  });
+
   test("handles MCP tools with MCPCallToolResult", async () => {
     const mcpTool = createMockTool(
       z.object({

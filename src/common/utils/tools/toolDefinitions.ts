@@ -3265,6 +3265,11 @@ export type BridgeableToolName =
   | "task_apply_git_patch"
   | "task_list"
   | "task_send_message"
+  // Family messaging tools are bridged when the RLM experiment enables them;
+  // registering their result schemas keeps generateXumTypes from declaring
+  // them as returning unknown inside the kernel.
+  | "task_message_parent"
+  | "task_message_sibling"
   | "task_retitle"
   | "task_stop"
   | "task_remove"
@@ -3295,6 +3300,8 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_send_message: TaskSendMessageToolResultSchema,
+  task_message_parent: TaskMessageParentToolResultSchema,
+  task_message_sibling: TaskMessageSiblingToolResultSchema,
   task_retitle: TaskRetitleToolResultSchema,
   task_stop: TaskStopToolResultSchema,
   task_remove: TaskRemoveToolResultSchema,
