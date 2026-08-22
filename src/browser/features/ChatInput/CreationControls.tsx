@@ -776,7 +776,9 @@ function CreationControlsContent(props: CreationControlsProps) {
                      field-sizing-content focus:border focus:bg-bg-dark focus:outline-none 
                      disabled:opacity-50 max-w-[50vw] sm:max-w-[40vw] lg:max-w-[30vw]`,
                     nameState.autoGenerate ? "text-muted" : "text-foreground",
-                    nameState.error && "border-red-500"
+                    // focus:border-red-500 keeps the error border visible while typing;
+                    // focus:border-accent would otherwise override it.
+                    nameState.error && "border-red-500 focus:border-red-500"
                   )}
                 />
               </TooltipTrigger>
