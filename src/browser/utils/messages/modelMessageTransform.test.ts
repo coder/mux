@@ -705,6 +705,45 @@ describe("modelMessageTransform", () => {
       expect(transformModelMessages(messages, "google")).toEqual(messages);
     });
 
+    it("filters empty text parts from both sides of the merge", () => {
+      // History recorded with extended thinking can carry a signed-reasoning
+      // assistant row whose trailing text part is empty; when a synthetic
+      // summary merges into it (replayed with thinking off — reasoning parts
+      // inside mixed rows are preserved), the previous row's empty block must
+      // be dropped too, not just the incoming row's — Anthropic rejects empty
+      // text blocks. The signed reasoning part itself is preserved verbatim.
+      // (With thinking ON the summary row gains a placeholder reasoning part
+      // and is no longer text-only, so this merge does not fire there.)
+      const messages: ModelMessage[] = [
+        { role: "user", content: [{ type: "text", text: "question" }] },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "reasoning",
+              text: "thinking...",
+              providerOptions: { anthropic: { signature: "sig" } },
+            },
+            { type: "text", text: "" },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Summary of the abandoned branch: explored a race." }],
+        },
+      ];
+      const result = transformModelMessages(messages, "anthropic");
+      expect(result).toHaveLength(2);
+      expect(result[1].content).toEqual([
+        {
+          type: "reasoning",
+          text: "thinking...",
+          providerOptions: { anthropic: { signature: "sig" } },
+        },
+        { type: "text", text: "Summary of the abandoned branch: explored a race." },
+      ]);
+    });
+
     it("keeps a summary row standalone after a tool-call/tool-result pair", () => {
       // Tool-call/tool-result adjacency must stay intact: when the branch
       // point turn ended in tool calls, the summary follows the TOOL message
